@@ -1,0 +1,25 @@
+# Environment — NEVER commit API keys
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Output files
+output/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Cookies (sensitive)
+apollo_cookies.json
+linkedin_cookies.json
+
+# OS
+.DS_Store
+Thumbs.db
