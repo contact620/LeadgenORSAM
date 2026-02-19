@@ -1,22 +1,18 @@
 """
-Step 3a — Google Custom Search API + DuckDuckGo enricher.
+Step 3a — Serper + DuckDuckGo enricher.
 
 Finds LinkedIn profile URL and company website for each lead.
 
 LinkedIn search:
-  Uses Google Custom Search JSON API (free tier: 100 queries/day).
-  CSE must be configured to search linkedin.com only.
+  Uses Serper.dev (Google Search API wrapper) as primary source.
+  Falls back to DuckDuckGo if Serper is unavailable or key not set.
 
-  Setup:
-    1. Go to https://console.cloud.google.com/ → Enable "Custom Search API"
-    2. Get an API key and set GOOGLE_API_KEY in .env
-    3. Go to https://programmablesearchengine.google.com/ → Create a search engine
-       Add "linkedin.com" as the site to search
-    4. Copy the CX ID and set GOOGLE_CX in .env
+  Serper setup:
+    1. Go to https://serper.dev → create a free account (2500 queries/month, no credit card)
+    2. Copy the API key and set SERPER_API_KEY in .env
 
 Company website search:
-  Uses DuckDuckGo (free, no API key required) as fallback since Google CSE
-  no longer supports searching the entire web.
+  Uses Clearbit Autocomplete first, DuckDuckGo as fallback (both free, no key).
 """
 import logging
 import re
@@ -30,7 +26,7 @@ import config
 
 logger = logging.getLogger(__name__)
 
-GOOGLE_SEARCH_URL = "https://www.googleapis.com/customsearch/v1"
+GOOGLE_SEARCH_URL = "https://customsearch.googleapis.com/customsearch/v1"
 
 # Sites blocked when picking company website
 _BLOCKED_DOMAINS = {
@@ -40,44 +36,35 @@ _BLOCKED_DOMAINS = {
 }
 
 
-# ── Google CSE (LinkedIn only) ─────────────────────────────────────────────────
+# ── Serper.dev (LinkedIn search via Google index) ──────────────────────────────
 
-def _google_search(query: str) -> list[dict]:
-    """Execute a Google Custom Search query. Returns list of result items."""
-    if not config.GOOGLE_API_KEY or not config.GOOGLE_CX:
-        logger.warning("GOOGLE_API_KEY or GOOGLE_CX not set. Skipping Google search.")
+SERPER_URL = "https://google.serper.dev/search"
+
+
+def _serper_search(query: str) -> list[str]:
+    """Search via Serper.dev (Google wrapper). Returns list of result URLs."""
+    if not config.SERPER_API_KEY:
         return []
-
-    params = {
-        "key": config.GOOGLE_API_KEY,
-        "cx": config.GOOGLE_CX,
-        "q": query,
-        "num": 5,
-    }
     try:
-        resp = requests.get(GOOGLE_SEARCH_URL, params=params, timeout=10)
+        resp = requests.post(
+            SERPER_URL,
+            headers={"X-API-KEY": config.SERPER_API_KEY, "Content-Type": "application/json"},
+            json={"q": query, "num": 5},
+            timeout=10,
+        )
         resp.raise_for_status()
         data = resp.json()
-        return data.get("items", [])
+        return [r.get("link", "") for r in data.get("organic", []) if r.get("link")]
     except requests.exceptions.HTTPError as e:
         if resp.status_code == 429:
-            logger.warning("Google API rate limit hit. Waiting 60s...")
+            logger.warning("Serper rate limit hit. Waiting 60s...")
             time.sleep(60)
         else:
-            logger.error(f"Google Search HTTP error: {e}")
+            logger.error(f"Serper HTTP error: {e}")
         return []
     except Exception as e:
-        logger.error(f"Google Search error: {e}")
+        logger.error(f"Serper error: {e}")
         return []
-
-
-def _extract_linkedin_url(items: list[dict]) -> Optional[str]:
-    """Pick the first LinkedIn people profile URL from results."""
-    for item in items:
-        link = item.get("link", "")
-        if re.match(r"https?://(www\.)?linkedin\.com/in/", link):
-            return link
-    return None
 
 
 # ── Clearbit Autocomplete (company website) ────────────────────────────────────
@@ -98,24 +85,37 @@ def _clearbit_domain(company: str) -> Optional[str]:
         resp.raise_for_status()
         results = resp.json()
         if results:
-            domain = results[0].get("domain", "")
-            if domain:
+            hit = results[0]
+            domain = hit.get("domain", "")
+            returned_name = hit.get("name", "").lower()
+            # Validate: at least one significant word from the input must appear in returned name
+            input_words = [w for w in company.lower().split() if len(w) > 3]
+            if domain and input_words and any(w in returned_name for w in input_words):
                 return f"https://{domain}"
+            elif domain:
+                logger.debug(f"Clearbit rejected '{returned_name}' for '{company}' (name mismatch)")
     except Exception as e:
         logger.error(f"Clearbit lookup error for '{company}': {e}")
     return None
 
 
-def _ddg_search(query: str, max_results: int = 5) -> list[str]:
+def _ddg_search(query: str, max_results: int = 5, backend: str = "api") -> list[str]:
     """Search DuckDuckGo and return a list of result URLs (fallback)."""
     try:
         from duckduckgo_search import DDGS
-        from duckduckgo_search.exceptions import RatelimitException
-        results = DDGS().text(query, max_results=max_results)
+        results = DDGS().text(query, max_results=max_results, backend=backend, safesearch="off")
         return [r.get("href", "") for r in results if r.get("href")]
     except Exception as e:
         logger.warning(f"DuckDuckGo search unavailable: {e}")
         return []
+
+
+def _pick_linkedin_url(urls: list[str]) -> Optional[str]:
+    """Return the first linkedin.com/in/ profile URL from a list of URLs."""
+    for url in urls:
+        if re.match(r"https?://(www\.)?linkedin\.com/in/", url):
+            return url
+    return None
 
 
 def _pick_website(urls: list[str]) -> Optional[str]:
@@ -137,8 +137,16 @@ def _find_company_website(company: str) -> Optional[str]:
         logger.debug(f"Clearbit domain found for '{company}': {website}")
         return website
 
-    # Fallback: DuckDuckGo
-    logger.debug(f"Clearbit miss for '{company}', trying DuckDuckGo...")
+    # Fallback: Serper
+    if config.SERPER_API_KEY:
+        logger.debug(f"Clearbit miss for '{company}', trying Serper...")
+        urls = _serper_search(f"{company} official website")
+        website = _pick_website(urls)
+        if website:
+            return website
+
+    # Last resort: DuckDuckGo
+    logger.debug(f"Serper miss for '{company}', trying DuckDuckGo...")
     urls = _ddg_search(f"{company} official website")
     return _pick_website(urls)
 
@@ -162,14 +170,23 @@ def find_linkedin_and_website(lead: dict) -> dict:
     last = lead.get("last_name", "")
     company = lead.get("company", "")
 
-    # ── LinkedIn via Google CSE ───────────────────────────────────────────────
+    # ── LinkedIn: Serper first, DuckDuckGo fallback ──────────────────────────
     linkedin_query = f'{first} {last} {company} site:linkedin.com/in'
-    li_items = _google_search(linkedin_query)
-    lead["linkedin_url"] = _extract_linkedin_url(li_items)
+    lead["linkedin_url"] = None
+
+    serper_urls = _serper_search(linkedin_query)
+    lead["linkedin_url"] = _pick_linkedin_url(serper_urls)
     if lead["linkedin_url"]:
-        logger.debug(f"LinkedIn found for {first} {last}: {lead['linkedin_url']}")
-    else:
-        logger.debug(f"No LinkedIn found for {first} {last}")
+        logger.debug(f"LinkedIn (Serper) found for {first} {last}: {lead['linkedin_url']}")
+
+    if not lead["linkedin_url"]:
+        logger.debug(f"Serper miss for {first} {last}, trying DuckDuckGo...")
+        ddg_urls = _ddg_search(f'{first} {last} {company} site:linkedin.com/in', max_results=5, backend="html")
+        lead["linkedin_url"] = _pick_linkedin_url(ddg_urls)
+        if lead["linkedin_url"]:
+            logger.debug(f"LinkedIn (DDG) found for {first} {last}: {lead['linkedin_url']}")
+        else:
+            logger.debug(f"No LinkedIn found for {first} {last}")
 
     time.sleep(config.REQUEST_DELAY / 2)
 
@@ -203,12 +220,17 @@ def enrich_leads_google(leads: list[dict]) -> list[dict]:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s")
 
-    test_lead = {
-        "first_name": "Jean",
-        "last_name": "Dupont",
-        "company": "Acme Corp",
-    }
+    test_leads = [
+        {"first_name": "Scott", "last_name": "Paschall", "job_title": "Company Owner", "company": "Custom Concrete Creations", "location": "O'Fallon, Missouri"},
+        {"first_name": "Collen", "last_name": "Crosby", "job_title": "Owner", "company": "Crosby Roofing Columbia LLC", "location": "Lexington, South Carolina"},
+        {"first_name": "Sandro", "last_name": "Mahler", "job_title": "Photography Teacher, Owner", "company": "CSIA", "location": "Cureglia, Switzerland"},
+        {"first_name": "Arne", "last_name": "Kirchner", "job_title": "Director", "company": "Alp Financial", "location": "Lausanne, Switzerland"},
+        {"first_name": "Stephane", "last_name": "Tyc", "job_title": "Co-founder", "company": "Quincy Data", "location": "Paris, France"},
+    ]
 
-    result = find_linkedin_and_website(test_lead)
-    print(f"\nLinkedIn : {result.get('linkedin_url')}")
-    print(f"Website  : {result.get('website')}")
+    results = enrich_leads_google(test_leads)
+    print("\n=== Results ===")
+    for r in results:
+        print(f"\n{r['first_name']} {r['last_name']} ({r['company']})")
+        print(f"  LinkedIn : {r.get('linkedin_url')}")
+        print(f"  Website  : {r.get('website')}")

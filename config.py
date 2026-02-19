@@ -8,6 +8,7 @@ load_dotenv()
 # ── API Keys ──────────────────────────────────────────────────────────────────
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 GOOGLE_CX = os.getenv("GOOGLE_CX", "")
+SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
 DROPCONTACT_API_KEY = os.getenv("DROPCONTACT_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
