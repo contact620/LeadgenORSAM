@@ -50,7 +50,7 @@ def load_cookies(path: str) -> list[dict]:
             "path":     c.get("path", "/"),
             "httpOnly": c.get("httpOnly", False),
             "secure":   c.get("secure", False),
-            "sameSite": sameSite_map.get(c.get("sameSite", "lax").lower(), "Lax"),
+            "sameSite": sameSite_map.get((c.get("sameSite") or "lax").lower(), "Lax"),
         }
         exp = c.get("expirationDate") or c.get("expires")
         if exp:

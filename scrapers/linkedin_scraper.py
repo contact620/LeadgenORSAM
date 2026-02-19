@@ -192,20 +192,56 @@ async def scrape_hit_leads(hit_leads: list[dict]) -> list[dict]:
 
 
 if __name__ == "__main__":
+    import sys
+    sys.path.insert(0, ".")
+    from enrichers.gpt_enricher import enrich_leads_gpt
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-    # Test avec un faux lead — remplace linkedin_url et website par de vraies valeurs
-    test_leads = [
+    # Hit leads issus du test hit_calculator (score >= 50)
+    hit_leads = [
         {
-            "first_name": "Jean",
-            "last_name": "Dupont",
-            "linkedin_url": "https://www.linkedin.com/in/jean-dupont/",
-            "website": "https://example.com",
-        }
+            "first_name": "Scott",
+            "last_name": "Paschall",
+            "job_title": "",
+            "company": "Polish the Planet",
+            "location": "",
+            "email": "scott.paschall@mail.polishtheplanet.com",
+            "linkedin_url": "https://www.linkedin.com/in/scott-paschall-042253300",
+            "phone": None,
+            "website": None,
+            "hit_score": 70,
+            "is_hit": True,
+        },
+        {
+            "first_name": "Stephane",
+            "last_name": "Tyc",
+            "job_title": "",
+            "company": "Quincy Data",
+            "location": "",
+            "email": "stephane.tyc@quincy-data.com",
+            "linkedin_url": None,
+            "phone": "+1 872-260-5004",
+            "website": "https://quincy-data.com",
+            "hit_score": 70,
+            "is_hit": True,
+        },
     ]
 
-    result = asyncio.run(scrape_hit_leads(test_leads))
-    for lead in result:
-        print(f"\n--- {lead['first_name']} {lead['last_name']} ---")
-        print(f"LinkedIn text ({len(lead.get('linkedin_text',''))} chars): {lead.get('linkedin_text','')[:200]}")
-        print(f"Website text  ({len(lead.get('website_text',''))} chars): {lead.get('website_text','')[:200]}")
+    # Step 5a — Scrape LinkedIn + website
+    print("\n=== Step 5a — Scraping LinkedIn + website ===")
+    hit_leads = asyncio.run(scrape_hit_leads(hit_leads))
+    for lead in hit_leads:
+        name = f"{lead['first_name']} {lead['last_name']}"
+        print(f"\n--- {name} ---")
+        print(f"  LinkedIn text ({len(lead.get('linkedin_text', ''))} chars): {lead.get('linkedin_text', '')[:300]!r}")
+        print(f"  Website text  ({len(lead.get('website_text', ''))} chars): {lead.get('website_text', '')[:300]!r}")
+
+    # Step 5b — Claude enrichment
+    print("\n=== Step 5b — Claude enrichment ===")
+    hit_leads = enrich_leads_gpt(hit_leads)
+    for lead in hit_leads:
+        name = f"{lead['first_name']} {lead['last_name']}"
+        print(f"\n--- {name} ---")
+        print(f"  activity_summary : {lead.get('activity_summary')}")
+        print(f"  conversion_angle : {lead.get('conversion_angle')}")

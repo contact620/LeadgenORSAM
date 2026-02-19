@@ -9,6 +9,7 @@ Claude is only called for hit leads to keep costs low.
 """
 import json
 import logging
+import re
 import time
 from typing import Optional
 
@@ -71,6 +72,11 @@ def _call_claude(lead: dict) -> tuple[Optional[str], Optional[str]]:
         )
 
         content = message.content[0].text.strip()
+        logger.debug(f"Raw Claude response: {content!r}")
+        # Strip markdown code fences if present
+        if content.startswith("```"):
+            content = re.sub(r"^```[a-z]*\n?", "", content)
+            content = re.sub(r"\n?```$", "", content).strip()
         data = json.loads(content)
         summary = data.get("activity_summary", "").strip()
         angle = data.get("conversion_angle", "").strip()
