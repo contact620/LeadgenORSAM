@@ -88,7 +88,7 @@ def print_summary(all_leads: list[dict], hit_leads: list[dict], nohit_leads: lis
     print("  ORSAM — PIPELINE SUMMARY")
     print("=" * 60)
     print(f"  Total leads scraped    : {total}")
-    print(f"  Hit leads (score ≥ {config.HIT_THRESHOLD}) : {len(hit_leads)}")
+    print(f"  Hit leads (score >= {config.HIT_THRESHOLD}) : {len(hit_leads)}")
     print(f"  No-hit leads           : {len(nohit_leads)}")
     if total:
         emails = sum(1 for l in all_leads if l.get("email"))
