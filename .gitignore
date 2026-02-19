@@ -23,3 +23,6 @@ linkedin_cookies.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code context (not for repo)
+.claude/

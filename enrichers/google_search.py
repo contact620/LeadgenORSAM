@@ -198,3 +198,17 @@ def enrich_leads_google(leads: list[dict]) -> list[dict]:
         logger.info(f"Google enrichment [{i}/{total}]: {lead.get('first_name')} {lead.get('last_name')}")
         find_linkedin_and_website(lead)
     return leads
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s")
+
+    test_lead = {
+        "first_name": "Jean",
+        "last_name": "Dupont",
+        "company": "Acme Corp",
+    }
+
+    result = find_linkedin_and_website(test_lead)
+    print(f"\nLinkedIn : {result.get('linkedin_url')}")
+    print(f"Website  : {result.get('website')}")

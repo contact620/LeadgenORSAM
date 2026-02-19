@@ -162,3 +162,16 @@ def enrich_leads_dropcontact(leads: list[dict]) -> list[dict]:
 
     logger.info(f"Dropcontact enrichment complete. {enriched_count}/{total} emails found.")
     return leads
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+    test_leads = [
+        {"first_name": "Jean", "last_name": "Dupont", "company": "Acme Corp"},
+        {"first_name": "Marie", "last_name": "Martin", "company": "Beta SAS"},
+    ]
+
+    result = enrich_leads_dropcontact(test_leads)
+    for lead in result:
+        print(f"{lead['first_name']} {lead['last_name']} — email: {lead.get('email')} | phone: {lead.get('phone')}")

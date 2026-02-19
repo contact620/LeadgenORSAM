@@ -113,3 +113,24 @@ def enrich_leads_gpt(hit_leads: list[dict]) -> list[dict]:
 
     logger.info(f"GPT enrichment complete. {success}/{total} leads enriched.")
     return hit_leads
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+    test_leads = [
+        {
+            "first_name": "Jean",
+            "last_name": "Dupont",
+            "job_title": "CEO",
+            "company": "Acme Corp",
+            "location": "Paris",
+            "linkedin_text": "Jean Dupont est entrepreneur depuis 10 ans, spécialisé dans le SaaS B2B.",
+            "website_text": "Acme Corp développe des solutions de gestion pour les PME.",
+        }
+    ]
+
+    result = enrich_leads_gpt(test_leads)
+    for lead in result:
+        print(f"\nActivity summary : {lead.get('activity_summary')}")
+        print(f"Conversion angle : {lead.get('conversion_angle')}")

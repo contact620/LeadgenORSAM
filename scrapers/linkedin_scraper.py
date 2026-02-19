@@ -189,3 +189,23 @@ async def scrape_hit_leads(hit_leads: list[dict]) -> list[dict]:
 
     logger.info(f"Scraping complete for {total} hit leads.")
     return hit_leads
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+    # Test avec un faux lead — remplace linkedin_url et website par de vraies valeurs
+    test_leads = [
+        {
+            "first_name": "Jean",
+            "last_name": "Dupont",
+            "linkedin_url": "https://www.linkedin.com/in/jean-dupont/",
+            "website": "https://example.com",
+        }
+    ]
+
+    result = asyncio.run(scrape_hit_leads(test_leads))
+    for lead in result:
+        print(f"\n--- {lead['first_name']} {lead['last_name']} ---")
+        print(f"LinkedIn text ({len(lead.get('linkedin_text',''))} chars): {lead.get('linkedin_text','')[:200]}")
+        print(f"Website text  ({len(lead.get('website_text',''))} chars): {lead.get('website_text','')[:200]}")
