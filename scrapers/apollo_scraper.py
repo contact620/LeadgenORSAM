@@ -23,6 +23,7 @@ _STEALTH_JS = """() => {
 
 SELECTORS = {
     "next_page": [
+        "button[aria-label='Next']",
         "button[data-cy='next-page']",
         "button[aria-label='Next page']",
         "button[aria-label='Go to next page']",
@@ -31,15 +32,15 @@ SELECTORS = {
     ],
 }
 
-# JavaScript extractor — works regardless of Apollo CSS class changes
+# JavaScript extractor — Apollo uses div-based layout, contact links end with '?'
 _JS_EXTRACT = """() => {
     const results = [];
     const seen = new Set();
 
-    // Find all person-profile links (href contains /people/ or /contacts/)
+    // Apollo: name links have href="#/contacts/{id}?..." (WITH query string) and contain the name text
     const links = Array.from(document.querySelectorAll('a')).filter(a => {
         const h = a.getAttribute('href') || '';
-        return h.includes('/people/') || h.includes('/contacts/');
+        return (h.includes('/contacts/') || h.includes('/people/')) && h.includes('?');
     });
 
     for (const link of links) {
@@ -47,11 +48,15 @@ _JS_EXTRACT = """() => {
         if (!name || name.length < 2 || seen.has(name)) continue;
         seen.add(name);
 
-        // Walk up to the nearest row container
-        const row = link.closest('tr') ||
-                    link.closest('[class*="row"]') ||
-                    link.closest('[class*="item"]') ||
-                    link.closest('[class*="person"]');
+        // Walk up the DOM until we find a container with multiple links (the row)
+        let row = null;
+        let el = link.parentElement;
+        for (let i = 0; i < 8 && el; i++) {
+            const linkCount = el.querySelectorAll('a[href*="/contacts/"], a[href*="/accounts/"]').length;
+            if (linkCount >= 2) { row = el; break; }
+            el = el.parentElement;
+        }
+        if (!row) row = link.parentElement?.parentElement;
         if (!row) continue;
 
         const parts = name.split(' ');
@@ -63,21 +68,32 @@ _JS_EXTRACT = """() => {
             location:   ''
         };
 
-        // Company: any sibling link pointing to /companies/
-        const companyLink = row.querySelector('a[href*="/companies/"]');
-        if (companyLink) lead.company = (companyLink.textContent || '').trim();
+        const children = Array.from(row.children);
+        const nameIdx = children.findIndex(c => c === link || c.contains(link));
 
-        // Job title + location from table cells after the name cell
-        const tds = Array.from(row.querySelectorAll('td'));
-        const nameIdx = tds.findIndex(td => td.contains(link));
-        for (let i = nameIdx + 1; i < tds.length; i++) {
-            const td = tds[i];
-            if (td.querySelector('button, input, svg')) continue;
-            const text = (td.innerText || '').trim().split('\\n')[0].trim();
-            if (!text || text.length > 80) continue;
-            if (td.querySelector('a[href*="/companies/"]')) continue; // skip company cell
-            if (!lead.job_title) { lead.job_title = text; continue; }
-            if (!lead.location)  { lead.location  = text; break; }
+        // Company: div containing an account link — use its innerText
+        const companyDiv = children.find(c =>
+            c.querySelector('a[href*="/accounts/"]') || c.querySelector('a[href*="/companies/"]')
+        );
+        if (companyDiv) lead.company = (companyDiv.innerText || '').trim().split('\\n')[0].trim();
+
+        // Job title: first child right after the name cell
+        if (nameIdx + 1 < children.length) {
+            const jt = (children[nameIdx + 1].innerText || '').trim().split('\\n')[0].trim();
+            if (jt && jt.length < 100) lead.job_title = jt;
+        }
+
+        // Location: skip known noise (email/phone/action cells), pick first plausible city string
+        const SKIP_PHRASES = ['no email', 'unlock email', 'no phone', 'request phone', 'click to run', 'add to sequence'];
+        for (let i = nameIdx + 2; i < children.length; i++) {
+            const child = children[i];
+            if (child === companyDiv) continue;
+            const text = (child.innerText || '').trim().split('\\n')[0].trim();
+            if (!text || text.length > 60 || /^\\d+$/.test(text)) continue;
+            if (SKIP_PHRASES.some(p => text.toLowerCase().includes(p))) continue;
+            if (text.includes('@') || /^https?:\/\//.test(text)) continue;
+            lead.location = text;
+            break;
         }
 
         results.push(lead);
@@ -118,6 +134,25 @@ async def _scrape_page(page: Page) -> list[dict]:
         pass
     await asyncio.sleep(2)
 
+    # Debug: log sample of hrefs found on the page to understand Apollo's current structure
+    try:
+        sample_hrefs = await page.evaluate("""() => {
+            const links = Array.from(document.querySelectorAll('a'));
+            return links
+                .map(a => a.getAttribute('href'))
+                .filter(h => h && h.length > 1)
+                .slice(0, 30);
+        }""")
+        logger.debug(f"Sample hrefs on page: {sample_hrefs}")
+        # Log hrefs that look like profile links
+        profile_like = [h for h in sample_hrefs if any(k in (h or '') for k in ['/people', '/contacts', '/person', 'apollo'])]
+        if profile_like:
+            logger.info(f"Profile-like hrefs found: {profile_like[:5]}")
+        else:
+            logger.warning(f"No profile hrefs found. Sample hrefs: {sample_hrefs[:10]}")
+    except Exception as e:
+        logger.debug(f"Debug href scan failed: {e}")
+
     try:
         leads = await page.evaluate(_JS_EXTRACT)
         if leads:
@@ -148,8 +183,13 @@ async def _go_next_page(page: Page) -> bool:
                 if (await btn.get_attribute("aria-disabled")) == "true":
                     return False
                 await btn.click()
-                await page.wait_for_load_state("networkidle", timeout=15000)
-                await asyncio.sleep(config.REQUEST_DELAY)
+                # Apollo is a SPA — networkidle never fires due to background polling
+                # Wait for DOM + extra sleep for React re-render
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=5000)
+                except Exception:
+                    pass
+                await asyncio.sleep(config.REQUEST_DELAY + 2)
                 return True
         except Exception:
             continue
@@ -247,3 +287,16 @@ async def scrape_apollo(apollo_url: str, max_leads: int = None) -> list[dict]:
     all_leads = all_leads[:max_leads]
     logger.info(f"Apollo scraping complete. Total leads: {len(all_leads)}")
     return all_leads
+
+
+if __name__ == "__main__":
+    import sys
+    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s")
+
+    url = sys.argv[1] if len(sys.argv) > 1 else input("Apollo URL: ").strip()
+    max_leads = int(sys.argv[2]) if len(sys.argv) > 2 else 5
+
+    leads = asyncio.run(scrape_apollo(url, max_leads=max_leads))
+    print(f"\n{len(leads)} leads scraped:")
+    for l in leads:
+        print(l)

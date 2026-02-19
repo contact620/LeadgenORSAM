@@ -62,3 +62,21 @@ def score_all_leads(leads: list[dict]) -> tuple[list[dict], list[dict]]:
         logger.info(f"Average hit score: {avg:.1f}")
 
     return hit_leads, nohit_leads
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+    test_leads = [
+        {"first_name": "Jean",  "email": "jean@acme.com", "linkedin_url": "https://linkedin.com/in/jean", "phone": "+33600000000", "website": "https://acme.com"},
+        {"first_name": "Marie", "email": None,            "linkedin_url": "https://linkedin.com/in/marie", "phone": None, "website": None},
+        {"first_name": "Paul",  "email": None,            "linkedin_url": None, "phone": None, "website": None},
+    ]
+
+    hits, nohits = score_all_leads(test_leads)
+    print(f"\nHits ({len(hits)}):")
+    for l in hits:
+        print(f"  {l['first_name']} — score: {l['hit_score']}")
+    print(f"\nNo-hits ({len(nohits)}):")
+    for l in nohits:
+        print(f"  {l['first_name']} — score: {l['hit_score']}")
