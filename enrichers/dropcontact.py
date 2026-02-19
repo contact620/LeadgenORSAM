@@ -20,7 +20,7 @@ import config
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://api.dropcontact.com"
+BASE_URL = "https://api.dropcontact.io"
 POLL_INTERVAL = 5       # seconds between polls
 MAX_POLL_ATTEMPTS = 60  # 5 min max wait
 
@@ -168,8 +168,11 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     test_leads = [
-        {"first_name": "Jean", "last_name": "Dupont", "company": "Acme Corp"},
-        {"first_name": "Marie", "last_name": "Martin", "company": "Beta SAS"},
+        {"first_name": "Scott", "last_name": "Paschall", "company": "Custom Concrete Creations"},
+        {"first_name": "Collen", "last_name": "Crosby", "company": "Crosby Roofing Columbia LLC"},
+        {"first_name": "Sandro", "last_name": "Mahler", "company": "CSIA"},
+        {"first_name": "Arne", "last_name": "Kirchner", "company": "Alp Financial"},
+        {"first_name": "Stephane", "last_name": "Tyc", "company": "Quincy Data"},
     ]
 
     result = enrich_leads_dropcontact(test_leads)
