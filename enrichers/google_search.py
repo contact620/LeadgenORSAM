@@ -99,10 +99,10 @@ def _clearbit_domain(company: str) -> Optional[str]:
     return None
 
 
-def _ddg_search(query: str, max_results: int = 5, backend: str = "api") -> list[str]:
+def _ddg_search(query: str, max_results: int = 5, backend: str = "auto") -> list[str]:
     """Search DuckDuckGo and return a list of result URLs (fallback)."""
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
         results = DDGS().text(query, max_results=max_results, backend=backend, safesearch="off")
         return [r.get("href", "") for r in results if r.get("href")]
     except Exception as e:
@@ -181,7 +181,7 @@ def find_linkedin_and_website(lead: dict) -> dict:
 
     if not lead["linkedin_url"]:
         logger.debug(f"Serper miss for {first} {last}, trying DuckDuckGo...")
-        ddg_urls = _ddg_search(f'{first} {last} {company} site:linkedin.com/in', max_results=5, backend="html")
+        ddg_urls = _ddg_search(f'{first} {last} {company} site:linkedin.com/in', max_results=5)
         lead["linkedin_url"] = _pick_linkedin_url(ddg_urls)
         if lead["linkedin_url"]:
             logger.debug(f"LinkedIn (DDG) found for {first} {last}: {lead['linkedin_url']}")
