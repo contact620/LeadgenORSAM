@@ -6,11 +6,14 @@ import { getHealth, type HealthCheck } from '@/lib/api'
 interface Props {
   onSubmit: (url: string, maxLeads: number, skipGpt: boolean) => void
   disabled?: boolean
+  configReady?: boolean
+  defaultMaxLeads?: number
+  onOpenSettings?: () => void
 }
 
-export function ApolloForm({ onSubmit, disabled }: Props) {
+export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, onOpenSettings }: Props) {
   const [url, setUrl] = useState('')
-  const [maxLeads, setMaxLeads] = useState(200)
+  const [maxLeads, setMaxLeads] = useState(defaultMaxLeads ?? 200)
   const [skipGpt, setSkipGpt] = useState(false)
   const [showConfig, setShowConfig] = useState(false)
   const [health, setHealth] = useState<HealthCheck | null>(null)
@@ -44,20 +47,29 @@ export function ApolloForm({ onSubmit, disabled }: Props) {
         <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
           <div className="flex gap-3">
             <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-            <div className="text-sm">
+            <div className="text-sm flex-1">
               <p className="font-medium text-amber-800 mb-1">Configuration incomplète</p>
               {missingKeys.length > 0 && (
                 <p className="text-amber-700">Clés API manquantes : <span className="font-mono">{missingKeys.join(', ')}</span></p>
               )}
               {!health.apollo_cookies && (
-                <p className="text-amber-700">Cookies Apollo introuvables — créez <span className="font-mono">apollo_cookies.json</span></p>
+                <p className="text-amber-700">Cookies Apollo introuvables</p>
+              )}
+              {onOpenSettings && (
+                <button
+                  type="button"
+                  onClick={onOpenSettings}
+                  className="mt-2 text-xs font-medium text-amber-700 underline hover:text-amber-900 transition-colors"
+                >
+                  Ouvrir les Paramètres →
+                </button>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {health && !hasIssues && (
+      {(health && !hasIssues || configReady) && (
         <div className="mb-6 rounded-xl border border-green-200 bg-green-50 p-3 flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 text-green-600" />
           <span className="text-sm text-green-700 font-medium">Configuration OK — prêt à lancer</span>

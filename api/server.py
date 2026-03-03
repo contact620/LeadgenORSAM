@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from api.routes.pipeline import router as pipeline_router
 from api.routes.health import router as health_router
+from api.routes.config import router as config_router
 
 app = FastAPI(title="ORSAM Lead Gen API", version="1.0.0")
 
@@ -28,6 +29,7 @@ app.add_middleware(
 # ── API routes ─────────────────────────────────────────────────────────────────
 app.include_router(health_router, prefix="/api")
 app.include_router(pipeline_router, prefix="/api")
+app.include_router(config_router, prefix="/api")
 
 # ── Serve built frontend (production) ─────────────────────────────────────────
 _dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")

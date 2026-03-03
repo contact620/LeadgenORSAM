@@ -77,3 +77,56 @@ export async function getHealth(): Promise<HealthCheck> {
   if (!res.ok) throw new Error('Health check failed')
   return res.json()
 }
+
+// ── Config endpoints ───────────────────────────────────────────────────────────
+
+export interface ConfigStatus {
+  serper_api_key: boolean
+  dropcontact_api_key: boolean
+  anthropic_api_key: boolean
+  apollo_cookies: boolean
+  linkedin_cookies: boolean
+  hit_threshold: number
+  max_leads: number
+}
+
+export interface ConfigUpdate {
+  serper_api_key?: string
+  dropcontact_api_key?: string
+  anthropic_api_key?: string
+  hit_threshold?: number
+  max_leads?: number
+}
+
+export async function getConfig(): Promise<ConfigStatus> {
+  const res = await fetch('/api/config')
+  if (!res.ok) throw new Error('Failed to fetch config')
+  return res.json()
+}
+
+export async function saveConfig(data: ConfigUpdate): Promise<void> {
+  const res = await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail ?? 'Failed to save config')
+  }
+}
+
+export async function uploadCookies(
+  service: 'apollo' | 'linkedin',
+  jsonText: string,
+): Promise<{ count: number }> {
+  const blob = new Blob([jsonText], { type: 'application/json' })
+  const form = new FormData()
+  form.append('file', blob, `${service}_cookies.json`)
+  const res = await fetch(`/api/cookies/${service}`, { method: 'POST', body: form })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail ?? 'Failed to upload cookies')
+  }
+  return res.json()
+}
