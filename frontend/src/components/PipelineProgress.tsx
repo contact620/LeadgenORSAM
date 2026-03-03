@@ -10,9 +10,12 @@ const STEPS = [
   { id: 5, label: 'Enrichissement IA',     desc: 'GPT-4o-mini (leads hit uniquement)' },
 ]
 
-function mapApiStepToDisplay(apiStep: number): number {
-  if (apiStep <= 2) return apiStep
-  if (apiStep === 3) return 3
+function mapApiStepToDisplay(apiStep: number, stepProgress: number): number {
+  // API steps: 1=setup, 2=scraping Apollo, 3=enrichissement, 4=hit score, 5=IA
+  // Display steps: 1=scraping Apollo, 2=Google, 3=Dropcontact, 4=hit score, 5=IA
+  if (apiStep <= 1) return 0
+  if (apiStep === 2) return 1
+  if (apiStep === 3) return stepProgress >= 0.5 ? 3 : 2  // <0.5 = Google, >=0.5 = Dropcontact
   if (apiStep === 4) return 4
   return 5
 }
@@ -26,7 +29,7 @@ interface Props {
 }
 
 export function PipelineProgress({ status, latestEvent, events, error }: Props) {
-  const currentDisplayStep = latestEvent ? mapApiStepToDisplay(latestEvent.step) : 0
+  const currentDisplayStep = latestEvent ? mapApiStepToDisplay(latestEvent.step, latestEvent.progress) : 0
   const totalProgress = latestEvent?.total_progress ?? 0
   const pct = status === 'done' ? 100 : Math.round(totalProgress * 100)
 

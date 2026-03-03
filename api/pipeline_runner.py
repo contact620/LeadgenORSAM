@@ -68,6 +68,8 @@ class _QueueLogHandler(logging.Handler):
         self._job_id = job_id
         self._step = 1
         self._step_progress = 0.0
+        self._step_log_count = 0
+        self._max_total = 0.0  # high-watermark: progress never goes backward
 
     def _detect_step(self, msg: str) -> int:
         for step, pattern in STEP_PATTERNS:
@@ -85,15 +87,42 @@ class _QueueLogHandler(logging.Handler):
         if new_step != self._step:
             self._step = new_step
             self._step_progress = 0.0
+            self._step_log_count = 0
+        else:
+            self._step_log_count += 1
+            # Slowly advance within the step (asymptotic toward 0.90)
+            self._step_progress = min(self._step_progress + 0.03, 0.90)
+
+        raw_total = self._compute_total(self._step, self._step_progress)
+        total = max(raw_total, self._max_total)
+        self._max_total = total
 
         event = ProgressEvent(
             step=self._step,
             step_name=STEP_NAMES.get(self._step, ""),
             message=msg,
             progress=self._step_progress,
-            total_progress=self._compute_total(self._step, self._step_progress),
+            total_progress=total,
         )
 
+        payload = json.dumps({"type": "progress", "data": event.model_dump()})
+        asyncio.run_coroutine_threadsafe(self._queue.put(payload), self._loop)
+
+    def set_explicit_progress(self, step: int, step_prog: float, message: str = "") -> None:
+        """Emit a forced progress event at a step boundary (always advances the bar)."""
+        self._step = step
+        self._step_progress = step_prog
+        self._step_log_count = 0
+        total = self._compute_total(step, step_prog)
+        self._max_total = max(total, self._max_total)
+
+        event = ProgressEvent(
+            step=step,
+            step_name=STEP_NAMES.get(step, ""),
+            message=message,
+            progress=step_prog,
+            total_progress=self._max_total,
+        )
         payload = json.dumps({"type": "progress", "data": event.model_dump()})
         asyncio.run_coroutine_threadsafe(self._queue.put(payload), self._loop)
 
@@ -109,9 +138,12 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
     import asyncio as _asyncio
 
     # Attach log handler to root logger for this thread
+    # Set level to DEBUG so INFO logs from scrapers reach the handler
     handler = _QueueLogHandler(loop, queue, job_id)
     handler.setFormatter(logging.Formatter("%(message)s"))
     root_logger = logging.getLogger()
+    saved_level = root_logger.level
+    root_logger.setLevel(logging.DEBUG)
     root_logger.addHandler(handler)
 
     try:
@@ -122,31 +154,41 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         _asyncio.set_event_loop(new_loop)
 
         # ── Step 2: Apollo scraping ───────────────────────────────────────────
+        handler.set_explicit_progress(2, 0.0, "Lancement scraping Apollo...")
         from scrapers.apollo_scraper import scrape_apollo
         leads = new_loop.run_until_complete(scrape_apollo(url, max_leads=max_leads))
 
         if not leads:
             raise RuntimeError("No leads scraped from Apollo. Check cookies and URL.")
+        handler.set_explicit_progress(2, 1.0, f"Scraping terminé — {len(leads)} leads extraits")
 
         # ── Step 3a: Google enrichment ────────────────────────────────────────
+        handler.set_explicit_progress(3, 0.0, "Enrichissement Google (LinkedIn URL)...")
         from enrichers.google_search import enrich_leads_google
         leads = enrich_leads_google(leads)
 
         # ── Step 3b: Dropcontact enrichment ───────────────────────────────────
+        handler.set_explicit_progress(3, 0.5, "Enrichissement Dropcontact (email + téléphone)...")
         from enrichers.dropcontact import enrich_leads_dropcontact
         leads = enrich_leads_dropcontact(leads)
+        handler.set_explicit_progress(3, 1.0, "Enrichissement terminé")
 
         # ── Step 4: Hit score ─────────────────────────────────────────────────
+        handler.set_explicit_progress(4, 0.0, "Calcul des hit scores...")
         from processors.hit_calculator import score_all_leads
         hit_leads, nohit_leads = score_all_leads(leads)
+        handler.set_explicit_progress(4, 1.0, f"{len(hit_leads)} hit leads identifiés (seuil {pipeline_config.HIT_THRESHOLD})")
 
         # ── Step 5: AI enrichment (hit leads only) ────────────────────────────
         if not skip_gpt and hit_leads:
+            handler.set_explicit_progress(5, 0.0, "Scraping profils LinkedIn des hit leads...")
             from scrapers.linkedin_scraper import scrape_hit_leads
             hit_leads = new_loop.run_until_complete(scrape_hit_leads(hit_leads))
 
+            handler.set_explicit_progress(5, 0.5, "Appel Claude AI — enrichissement IA...")
             from enrichers.gpt_enricher import enrich_leads_gpt
             hit_leads = enrich_leads_gpt(hit_leads)
+            handler.set_explicit_progress(5, 1.0, "Enrichissement IA terminé")
         else:
             for lead in hit_leads:
                 lead.setdefault("activity_summary", None)
@@ -212,6 +254,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         asyncio.run_coroutine_threadsafe(queue.put(error_payload), loop)
     finally:
         root_logger.removeHandler(handler)
+        root_logger.setLevel(saved_level)
         # Signal queue end
         asyncio.run_coroutine_threadsafe(queue.put(None), loop)
 

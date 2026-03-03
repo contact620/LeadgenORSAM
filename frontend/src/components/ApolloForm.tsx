@@ -139,7 +139,7 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
               <div>
                 <label className="block text-xs font-medium mb-1.5" style={{ color: 'rgba(226,232,248,0.5)' }}>Leads max</label>
                 <input
-                  type="number" min={10} max={5000} value={maxLeads}
+                  type="number" min={1} max={5000} value={maxLeads}
                   onChange={e => setMaxLeads(Number(e.target.value))}
                   disabled={disabled}
                   className="surface-input w-full"
