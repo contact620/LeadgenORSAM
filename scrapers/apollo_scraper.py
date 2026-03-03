@@ -61,11 +61,12 @@ _JS_EXTRACT = """() => {
 
         const parts = name.split(' ');
         const lead = {
-            first_name: parts[0] || '',
-            last_name:  parts.slice(1).join(' '),
-            job_title:  '',
-            company:    '',
-            location:   ''
+            first_name:   parts[0] || '',
+            last_name:    parts.slice(1).join(' '),
+            job_title:    '',
+            company:      '',
+            location:     '',
+            linkedin_url: ''
         };
 
         const children = Array.from(row.children);
@@ -94,6 +95,14 @@ _JS_EXTRACT = """() => {
             if (text.includes('@') || /^https?:\/\//.test(text)) continue;
             lead.location = text;
             break;
+        }
+
+        // LinkedIn: look for a href containing linkedin.com/in/ within the row
+        const liLink = row.querySelector('a[href*="linkedin.com/in/"]');
+        if (liLink) {
+            let href = liLink.getAttribute('href') || '';
+            href = href.split('?')[0];  // remove tracking params
+            lead.linkedin_url = href;
         }
 
         results.push(lead);

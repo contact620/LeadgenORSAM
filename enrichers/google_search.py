@@ -170,23 +170,26 @@ def find_linkedin_and_website(lead: dict) -> dict:
     last = lead.get("last_name", "")
     company = lead.get("company", "")
 
-    # ── LinkedIn: Serper first, DuckDuckGo fallback ──────────────────────────
+    # ── LinkedIn: skip if already scraped from Apollo ────────────────────────
     linkedin_query = f'{first} {last} {company} site:linkedin.com/in'
-    lead["linkedin_url"] = None
+    if lead.get("linkedin_url"):
+        logger.debug(f"LinkedIn already set from Apollo for {first} {last}: {lead['linkedin_url']}")
+    else:
+        lead["linkedin_url"] = None
 
-    serper_urls = _serper_search(linkedin_query)
-    lead["linkedin_url"] = _pick_linkedin_url(serper_urls)
-    if lead["linkedin_url"]:
-        logger.debug(f"LinkedIn (Serper) found for {first} {last}: {lead['linkedin_url']}")
-
-    if not lead["linkedin_url"]:
-        logger.debug(f"Serper miss for {first} {last}, trying DuckDuckGo...")
-        ddg_urls = _ddg_search(f'{first} {last} {company} site:linkedin.com/in', max_results=5)
-        lead["linkedin_url"] = _pick_linkedin_url(ddg_urls)
+        serper_urls = _serper_search(linkedin_query)
+        lead["linkedin_url"] = _pick_linkedin_url(serper_urls)
         if lead["linkedin_url"]:
-            logger.debug(f"LinkedIn (DDG) found for {first} {last}: {lead['linkedin_url']}")
-        else:
-            logger.debug(f"No LinkedIn found for {first} {last}")
+            logger.debug(f"LinkedIn (Serper) found for {first} {last}: {lead['linkedin_url']}")
+
+        if not lead["linkedin_url"]:
+            logger.debug(f"Serper miss for {first} {last}, trying DuckDuckGo...")
+            ddg_urls = _ddg_search(f'{first} {last} {company} site:linkedin.com/in', max_results=5)
+            lead["linkedin_url"] = _pick_linkedin_url(ddg_urls)
+            if lead["linkedin_url"]:
+                logger.debug(f"LinkedIn (DDG) found for {first} {last}: {lead['linkedin_url']}")
+            else:
+                logger.debug(f"No LinkedIn found for {first} {last}")
 
     time.sleep(config.REQUEST_DELAY / 2)
 
