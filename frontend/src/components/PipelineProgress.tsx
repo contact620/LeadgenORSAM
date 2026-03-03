@@ -3,18 +3,16 @@ import { cn } from '@/lib/utils'
 import type { ProgressEvent, PipelineStatus } from '@/hooks/usePipeline'
 
 const STEPS = [
-  { id: 1, label: 'Scraping Apollo', desc: 'Extraction des leads via Playwright' },
+  { id: 1, label: 'Scraping Apollo',       desc: 'Extraction des leads via Playwright' },
   { id: 2, label: 'Enrichissement Google', desc: 'LinkedIn URL + site web' },
-  { id: 3, label: 'Dropcontact', desc: 'Email pro + téléphone' },
-  { id: 4, label: 'Calcul du hit score', desc: 'Score 0-100, seuil 50' },
-  { id: 5, label: 'Enrichissement IA', desc: 'GPT-4o-mini (leads hit uniquement)' },
+  { id: 3, label: 'Dropcontact',           desc: 'Email pro + téléphone' },
+  { id: 4, label: 'Calcul du hit score',   desc: 'Score 0-100, seuil 50' },
+  { id: 5, label: 'Enrichissement IA',     desc: 'GPT-4o-mini (leads hit uniquement)' },
 ]
 
-// Map logged step numbers (which use combined 3a/3b) to display steps
 function mapApiStepToDisplay(apiStep: number): number {
-  // API step 3 covers both 3a (Google) and 3b (Dropcontact) → display steps 2 & 3
   if (apiStep <= 2) return apiStep
-  if (apiStep === 3) return 3 // show as step 3 (Dropcontact), Google is step 2
+  if (apiStep === 3) return 3
   if (apiStep === 4) return 4
   return 5
 }
@@ -30,77 +28,85 @@ interface Props {
 export function PipelineProgress({ status, latestEvent, events, error }: Props) {
   const currentDisplayStep = latestEvent ? mapApiStepToDisplay(latestEvent.step) : 0
   const totalProgress = latestEvent?.total_progress ?? 0
+  const pct = status === 'done' ? 100 : Math.round(totalProgress * 100)
 
   return (
-    <div className="w-full max-w-2xl mx-auto space-y-6">
-      {/* Overall progress bar */}
-      <div>
-        <div className="flex justify-between text-sm mb-2">
-          <span className="font-medium text-gray-700">
-            {status === 'done' ? 'Pipeline terminé ✓' : status === 'error' ? 'Erreur' : 'Pipeline en cours...'}
+    <div className="w-full max-w-2xl mx-auto space-y-5">
+      {/* Overall progress */}
+      <div className="glass-card" style={{ padding: '20px 24px' }}>
+        <div className="flex justify-between text-sm mb-3">
+          <span className="font-medium" style={{ color: status === 'error' ? '#f87171' : status === 'done' ? '#34d399' : '#e2e8f8' }}>
+            {status === 'done' ? 'Pipeline terminé ✓' : status === 'error' ? 'Erreur' : 'Pipeline en cours…'}
           </span>
-          <span className="text-gray-500 font-mono text-xs">
-            {status === 'done' ? '100%' : `${Math.round(totalProgress * 100)}%`}
-          </span>
+          <span className="font-mono text-xs" style={{ color: 'rgba(226,232,248,0.4)' }}>{pct}%</span>
         </div>
-        <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+        <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
           <div
-            className={cn(
-              'h-full rounded-full transition-all duration-500',
-              status === 'error' ? 'bg-red-500' : status === 'done' ? 'bg-green-500' : 'bg-blue-500'
-            )}
-            style={{ width: status === 'done' ? '100%' : `${Math.round(totalProgress * 100)}%` }}
+            className="h-full rounded-full transition-all duration-500"
+            style={{
+              width: `${pct}%`,
+              background: status === 'error'
+                ? '#f87171'
+                : status === 'done'
+                  ? 'linear-gradient(90deg, #34d399, #4d9fff)'
+                  : 'linear-gradient(90deg, #4d9fff, #9b6bff)',
+            }}
           />
         </div>
       </div>
 
       {/* Error banner */}
       {status === 'error' && error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 flex gap-3">
-          <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+        <div className="rounded-xl p-4 flex gap-3" style={{ background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.2)' }}>
+          <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" style={{ color: '#f87171' }} />
           <div>
-            <p className="font-medium text-red-800 text-sm">Erreur pipeline</p>
-            <p className="text-red-700 text-sm mt-1">{error}</p>
+            <p className="font-medium text-sm mb-1" style={{ color: '#fca5a5' }}>Erreur pipeline</p>
+            <p className="text-sm" style={{ color: 'rgba(252,165,165,0.7)' }}>{error}</p>
           </div>
         </div>
       )}
 
       {/* Steps */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm divide-y divide-gray-100">
+      <div className="glass-card overflow-hidden">
         {STEPS.map((step, idx) => {
           const isCompleted = status === 'done' || currentDisplayStep > step.id
-          const isActive = status === 'running' && currentDisplayStep === step.id
-          const isPending = !isCompleted && !isActive
+          const isActive    = status === 'running' && currentDisplayStep === step.id
+          const isPending   = !isCompleted && !isActive
 
           return (
-            <div key={step.id} className={cn('flex items-start gap-4 px-5 py-4', isActive && 'bg-blue-50/50')}>
-              {/* Step icon */}
+            <div
+              key={step.id}
+              className="flex items-start gap-4 px-5 py-4"
+              style={{
+                borderBottom: idx < STEPS.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                background: isActive ? 'rgba(77,159,255,0.04)' : 'transparent',
+              }}
+            >
+              {/* Icon */}
               <div className="shrink-0 mt-0.5">
                 {isCompleted ? (
-                  <CheckCircle2 className="w-5 h-5 text-green-500" />
+                  <CheckCircle2 className="w-5 h-5" style={{ color: '#34d399' }} />
                 ) : isActive ? (
-                  <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+                  <Loader2 className="w-5 h-5 animate-spin" style={{ color: '#4d9fff' }} />
                 ) : (
-                  <Circle className={cn('w-5 h-5', isPending ? 'text-gray-300' : 'text-gray-400')} />
+                  <Circle className="w-5 h-5" style={{ color: isPending ? 'rgba(226,232,248,0.12)' : 'rgba(226,232,248,0.25)' }} />
                 )}
               </div>
 
-              {/* Step content */}
+              {/* Content */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className={cn(
-                    'text-sm font-medium',
-                    isCompleted ? 'text-green-700' : isActive ? 'text-blue-700' : 'text-gray-400'
-                  )}>
+                  <span
+                    className="text-sm font-medium"
+                    style={{ color: isCompleted ? '#34d399' : isActive ? '#63a0ff' : 'rgba(226,232,248,0.3)' }}
+                  >
                     {step.label}
                   </span>
-                  <span className="text-xs text-gray-400">#{idx + 1}</span>
+                  <span className="text-xs font-mono" style={{ color: 'rgba(226,232,248,0.2)' }}>#{idx + 1}</span>
                 </div>
-                <p className="text-xs text-gray-500 mt-0.5">{step.desc}</p>
-
-                {/* Live message for active step */}
+                <p className="text-xs mt-0.5" style={{ color: 'rgba(226,232,248,0.3)' }}>{step.desc}</p>
                 {isActive && latestEvent?.message && (
-                  <p className="mt-1.5 text-xs text-blue-600 font-mono truncate">
+                  <p className="mt-1.5 text-xs font-mono truncate" style={{ color: '#4d9fff' }}>
                     {latestEvent.message}
                   </p>
                 )}
@@ -112,12 +118,15 @@ export function PipelineProgress({ status, latestEvent, events, error }: Props) 
 
       {/* Log tail */}
       {events.length > 0 && (
-        <div className="bg-gray-900 rounded-xl p-4 max-h-48 overflow-y-auto">
-          <p className="text-xs text-gray-500 mb-2 font-mono uppercase tracking-wider">Logs</p>
+        <div
+          className="rounded-xl p-4 max-h-48 overflow-y-auto"
+          style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.06)' }}
+        >
+          <p className="text-xs font-mono mb-2 uppercase tracking-wider" style={{ color: 'rgba(226,232,248,0.2)' }}>Logs</p>
           <div className="space-y-1">
             {events.slice(-20).map((evt, i) => (
-              <p key={i} className="text-xs font-mono text-gray-300 leading-relaxed">
-                <span className="text-gray-500">[Step {evt.step}]</span>{' '}
+              <p key={i} className="text-xs font-mono leading-relaxed" style={{ color: 'rgba(226,232,248,0.5)' }}>
+                <span style={{ color: 'rgba(226,232,248,0.25)' }}>[Step {evt.step}]</span>{' '}
                 {evt.message}
               </p>
             ))}
