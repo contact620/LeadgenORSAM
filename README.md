@@ -25,8 +25,8 @@ Avant de commencer, installez ces deux logiciels :
 
 1. **Extraire le zip** dans un dossier de votre choix
 2. **Double-cliquer sur `setup.bat`** — le script installe tout automatiquement
-3. **Configurer les cles API** dans le fichier `.env` (voir section ci-dessous)
-4. **Ajouter les fichiers cookies** (voir section ci-dessous)
+3. **Configurer les cles API** dans le fichier `.env` (voir section ci-dessous) ou directement depuis l'interface web (page Parametres)
+4. **Ajouter les fichiers cookies** via le fichier `apollo_cookies.json` ou directement depuis l'interface web (page Parametres)
 5. **Verifier** en lancant `check.bat`
 6. **Demarrer** en lancant `start.bat`
 
@@ -36,7 +36,7 @@ L'interface web s'ouvre sur : **http://localhost:5173**
 
 ## Configuration du fichier `.env`
 
-Le fichier `.env` est cree automatiquement par `setup.bat`. Ouvrez-le avec un editeur de texte (Bloc-notes, VS Code, etc.) et remplissez vos cles API :
+Le fichier `.env` est cree automatiquement par `setup.bat`. Vous pouvez le remplir manuellement avec un editeur de texte, ou **configurer vos cles directement depuis l'interface web** (page Parametres) sans toucher au fichier :
 
 ```env
 # Serper.dev API (recherche LinkedIn via Google)
@@ -85,11 +85,78 @@ Les cookies permettent au scraper de se connecter a Apollo.io avec votre session
 
 1. Lancez `start.bat` (double-clic)
 2. Ouvrez **http://localhost:5173** dans votre navigateur
-3. Collez une URL de recherche Apollo.io
-4. Configurez les options (nombre de leads, enrichissement IA)
-5. Cliquez sur **Lancer**
-6. Suivez la progression en temps reel
-7. Telechargez le CSV une fois termine
+
+L'interface web offre une experience complete en 4 sections :
+
+#### Lancer un pipeline
+
+- **Coller une URL Apollo.io** dans le champ principal
+- **Parametres avances** (section depliable) :
+  - Nombre max de leads a scraper (1 a 5000, defaut 200)
+  - Option pour desactiver l'enrichissement IA (pipeline plus rapide)
+- **Indicateur de statut** : bandeau vert "Systeme operationnel" si tout est configure, ou bandeau jaune listant les elements manquants (cles API, cookies) avec lien direct vers les Parametres
+- **Grille des 5 etapes** du pipeline affichee sous le formulaire : Scraping Apollo, LinkedIn URL, Email+Tel, Score & Filtre, Enrichissement IA
+
+#### Suivi en temps reel
+
+Une fois le pipeline lance :
+
+- **Barre de progression globale** avec pourcentage mis a jour en continu (via SSE)
+- **Checklist 5 etapes** avec statut en direct : en attente (cercle gris), en cours (spinner bleu + message live), termine (check vert)
+- **Journal de logs** : les 20 derniers messages du pipeline affiches en temps reel dans une zone defilante
+
+#### Resultats et export
+
+A la fin du pipeline :
+
+- **Dashboard de stats** — 6 cartes resumant le run :
+
+| Carte | Contenu |
+|-------|---------|
+| Leads totaux | Nombre total de leads scrapes |
+| Leads hit | Nombre + pourcentage du total |
+| No-hit | Nombre + pourcentage |
+| Emails trouves | Pourcentage + compte absolu |
+| LinkedIn | Pourcentage + compte absolu |
+| Telephones | Pourcentage + compte absolu (+ sites web) |
+
+- **Barre de score moyen** avec legende du scoring : email +40, linkedin +30, phone +20, web +10, seuil hit : 50
+- **Tableau de leads** complet :
+  - Filtres par onglets : Tous / Hits / No-hit
+  - Recherche textuelle (nom, entreprise, poste, email)
+  - Colonnes : Nom, Poste, Entreprise (lien vers site web), Email (lien mailto), LinkedIn (lien externe), Score (barre visuelle), Hit (badge colore), Angle IA
+  - Clic sur une ligne pour deplier le detail IA : resume d'activite + angle de conversion generes par Claude
+  - Pagination (10 leads par page)
+- **Telechargement CSV** en un clic
+
+#### Historique des pipelines
+
+Accessible via le bouton **Historique** dans la barre de navigation :
+
+- **Liste de tous les runs passes** avec : date, duree, URL Apollo, nombre de leads (effectif / max), nombre de hits + pourcentage, score moyen, statut (Termine / Erreur)
+- **Consulter un run passe** : cliquer sur l'icone oeil pour retrouver le dashboard de stats complet + le tableau de leads (memes fonctionnalites que les resultats en direct)
+- **Telecharger le CSV** d'un ancien run directement depuis la liste
+- **Supprimer une entree** avec confirmation
+
+#### Parametres (page dediee)
+
+Accessible via le bouton **Parametres** dans la barre de navigation. Permet de tout configurer sans editer de fichier :
+
+**Cles API** — saisir ou modifier les cles directement depuis l'interface :
+- `SERPER_API_KEY` (obligatoire) — recherche LinkedIn via Google
+- `DROPCONTACT_API_KEY` (optionnel) — enrichissement email/telephone ignore si absent
+- `ANTHROPIC_API_KEY` (obligatoire) — enrichissement IA
+- Chaque cle affiche un badge de statut (vert "Configure" / rouge "Manquant")
+- Bouton oeil pour afficher/masquer la valeur
+- Bouton "Sauvegarder les cles" pour enregistrer
+
+**Cookies de session Apollo** — deux methodes disponibles :
+- **Upload fichier** : glisser-deposer ou parcourir un fichier `.json`
+- **Coller le JSON** : copier-coller le contenu directement dans un champ texte
+- Badge de statut indiquant si les cookies sont presents ou absents
+
+**Parametres du pipeline** :
+- Seuil de hit score (0-100, defaut 50) — score minimum pour qu'un lead soit considere comme "hit"
 
 ### Ligne de commande (CLI)
 
