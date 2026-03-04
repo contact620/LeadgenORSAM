@@ -1,13 +1,12 @@
 @echo off
-chcp 65001 >nul 2>&1
-setlocal enabledelayedexpansion
+setlocal
 
 echo ============================================================
 echo   ORSAM Lead Generation - Installation
 echo ============================================================
 echo.
 
-REM ── Check Python ───────────────────────────────────────────
+REM -- Check Python --
 set PYTHON_CMD=
 where python >nul 2>&1
 if %errorlevel%==0 (
@@ -28,7 +27,6 @@ if "%PYTHON_CMD%"=="" (
     echo IMPORTANT : Cochez "Add Python to PATH" pendant l'installation.
     echo Puis relancez setup.bat.
     echo.
-    start https://www.python.org/downloads/
     pause
     exit /b 1
 )
@@ -36,7 +34,7 @@ if "%PYTHON_CMD%"=="" (
 echo [OK] Python trouve : %PYTHON_CMD%
 %PYTHON_CMD% --version
 
-REM ── Check Python version >= 3.10 ──────────────────────────
+REM -- Check Python version >= 3.10 --
 for /f "tokens=2 delims= " %%v in ('%PYTHON_CMD% --version 2^>^&1') do set PYVER=%%v
 for /f "tokens=1,2 delims=." %%a in ("%PYVER%") do (
     if %%a LSS 3 (
@@ -53,7 +51,7 @@ for /f "tokens=1,2 delims=." %%a in ("%PYVER%") do (
 echo [OK] Version Python compatible : %PYVER%
 echo.
 
-REM ── Check Node.js ──────────────────────────────────────────
+REM -- Check Node.js --
 where node >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERREUR] Node.js n'est pas installe.
@@ -63,7 +61,6 @@ if %errorlevel% neq 0 (
     echo.
     echo Puis relancez setup.bat.
     echo.
-    start https://nodejs.org/
     pause
     exit /b 1
 )
@@ -72,7 +69,7 @@ echo [OK] Node.js trouve :
 node --version
 echo.
 
-REM ── Create Python venv ─────────────────────────────────────
+REM -- Create Python venv --
 if not exist "venv" (
     echo [1/5] Creation de l'environnement virtuel Python...
     %PYTHON_CMD% -m venv venv
@@ -87,7 +84,7 @@ if not exist "venv" (
 )
 echo.
 
-REM ── Activate venv and install pip dependencies ─────────────
+REM -- Activate venv and install pip dependencies --
 echo [2/5] Installation des dependances Python...
 call venv\Scripts\activate.bat
 pip install --upgrade pip >nul 2>&1
@@ -100,7 +97,7 @@ if %errorlevel% neq 0 (
 echo [OK] Dependances Python installees.
 echo.
 
-REM ── Install Playwright Chromium ────────────────────────────
+REM -- Install Playwright Chromium --
 echo [3/5] Installation du navigateur Playwright (Chromium)...
 playwright install chromium
 if %errorlevel% neq 0 (
@@ -111,7 +108,7 @@ if %errorlevel% neq 0 (
 echo [OK] Playwright Chromium installe.
 echo.
 
-REM ── Install frontend dependencies ──────────────────────────
+REM -- Install frontend dependencies --
 echo [4/5] Installation des dependances frontend (npm)...
 cd frontend
 call npm install
@@ -125,7 +122,7 @@ cd ..
 echo [OK] Dependances frontend installees.
 echo.
 
-REM ── Setup .env and output dir ──────────────────────────────
+REM -- Setup .env and output dir --
 echo [5/5] Configuration...
 if not exist ".env" (
     copy .env.example .env >nul
@@ -139,7 +136,7 @@ echo [OK] Dossier output/ pret.
 echo.
 
 echo ============================================================
-echo   Installation terminee !
+echo   Installation terminee
 echo ============================================================
 echo.
 echo Prochaines etapes :
