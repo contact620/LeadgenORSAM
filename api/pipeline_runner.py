@@ -26,6 +26,7 @@ from api.models import JobResult, JobStats, ProgressEvent
 # ── In-memory job store ────────────────────────────────────────────────────────
 _jobs: dict[str, JobResult] = {}
 _queues: dict[str, asyncio.Queue] = {}
+_job_meta: dict[str, dict] = {}  # apollo_url, max_leads, skip_gpt, started_at
 
 _executor = ThreadPoolExecutor(max_workers=4)
 
@@ -238,6 +239,27 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
             csv_path=csv_path,
         )
 
+        # ── Persist to history DB ────────────────────────────────────────────
+        from api.history import save_job as _save_hist
+        meta = _job_meta.get(job_id, {})
+        _save_hist(
+            job_id=job_id, status="done",
+            apollo_url=meta.get("apollo_url", ""),
+            max_leads=meta.get("max_leads", 0),
+            skip_gpt=meta.get("skip_gpt", False),
+            started_at=meta.get("started_at", ""),
+            finished_at=datetime.now().isoformat(),
+            total_leads=total,
+            hit_leads=len(hit_leads),
+            nohit_leads=len(nohit_leads),
+            email_pct=stats.email_pct,
+            linkedin_pct=stats.linkedin_pct,
+            phone_pct=stats.phone_pct,
+            website_pct=stats.website_pct,
+            avg_score=stats.avg_score,
+            csv_filename=csv_filename,
+        )
+
         # Signal done
         done_payload = json.dumps({"type": "done", "data": {"job_id": job_id}})
         asyncio.run_coroutine_threadsafe(queue.put(done_payload), loop)
@@ -248,6 +270,18 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         _jobs[job_id] = JobResult(
             job_id=job_id,
             status="error",
+            error=error_msg,
+        )
+        # Persist error to history
+        from api.history import save_job as _save_hist
+        meta = _job_meta.get(job_id, {})
+        _save_hist(
+            job_id=job_id, status="error",
+            apollo_url=meta.get("apollo_url", ""),
+            max_leads=meta.get("max_leads", 0),
+            skip_gpt=meta.get("skip_gpt", False),
+            started_at=meta.get("started_at", ""),
+            finished_at=datetime.now().isoformat(),
             error=error_msg,
         )
         error_payload = json.dumps({"type": "error", "data": {"message": error_msg}})
@@ -272,6 +306,12 @@ def start_job(url: str, max_leads: int, skip_gpt: bool) -> str:
 
     _jobs[job_id] = JobResult(job_id=job_id, status="running")
     _queues[job_id] = queue
+    _job_meta[job_id] = {
+        "apollo_url": url,
+        "max_leads": max_leads,
+        "skip_gpt": skip_gpt,
+        "started_at": datetime.now().isoformat(),
+    }
 
     _executor.submit(
         _run_pipeline_sync,

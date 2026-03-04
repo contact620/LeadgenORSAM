@@ -5,10 +5,11 @@ import { PipelineProgress } from '@/components/PipelineProgress'
 import { StatsBar } from '@/components/StatsBar'
 import { ResultsTable } from '@/components/ResultsTable'
 import { Settings } from '@/components/Settings'
-import { RotateCcw, Settings2, AlertCircle } from 'lucide-react'
+import { History } from '@/components/History'
+import { RotateCcw, Settings2, AlertCircle, Clock } from 'lucide-react'
 import { getConfig, type ConfigStatus } from '@/lib/api'
 
-type Page = 'main' | 'settings'
+type Page = 'main' | 'settings' | 'history'
 
 export default function App() {
   const { state, startPipeline, reset } = usePipeline()
@@ -100,6 +101,26 @@ export default function App() {
               </button>
             )}
             <button
+              onClick={() => setPage(page === 'history' ? 'main' : 'history')}
+              className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition-all"
+              style={page === 'history' ? {
+                color: '#4d9fff',
+                background: 'rgba(77,159,255,0.12)',
+                border: '1px solid rgba(77,159,255,0.2)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              } : {
+                color: 'rgba(226,232,248,0.5)',
+                border: '1px solid rgba(255,255,255,0.07)',
+                background: 'rgba(255,255,255,0.04)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Historique</span>
+            </button>
+            <button
               onClick={() => setPage(page === 'settings' ? 'main' : 'settings')}
               className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition-all"
               style={page === 'settings' ? {
@@ -163,6 +184,8 @@ export default function App() {
       <main className="relative z-10 max-w-4xl mx-auto px-4 py-10 space-y-10">
         {page === 'settings' ? (
           <Settings onBack={() => setPage('main')} onConfigChange={setConfig} />
+        ) : page === 'history' ? (
+          <History onBack={() => setPage('main')} />
         ) : (
           <>
             {status === 'idle' && (

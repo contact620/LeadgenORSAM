@@ -50,3 +50,24 @@ class JobResult(BaseModel):
     leads: list[dict] = []
     error: Optional[str] = None
     csv_path: Optional[str] = None
+
+
+class HistoryEntry(BaseModel):
+    job_id: str
+    status: str
+    apollo_url: str
+    max_leads: int
+    skip_gpt: bool
+    started_at: str
+    finished_at: Optional[str] = None
+    total_leads: int = 0
+    hit_leads: int = 0
+    nohit_leads: int = 0
+    email_pct: float = 0.0
+    linkedin_pct: float = 0.0
+    phone_pct: float = 0.0
+    website_pct: float = 0.0
+    avg_score: float = 0.0
+    csv_filename: Optional[str] = None
+    error: Optional[str] = None
+    csv_available: bool = False

@@ -85,16 +85,24 @@ async def get_results(job_id: str):
 async def download_csv(job_id: str):
     """Download the final CSV file for a completed job."""
     job = get_job(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if job.status != "done":
-        raise HTTPException(status_code=409, detail="Job is not complete yet")
-    if not job.csv_path or not os.path.exists(job.csv_path):
-        raise HTTPException(status_code=404, detail="CSV file not found")
+    if job and job.status == "done" and job.csv_path and os.path.exists(job.csv_path):
+        return FileResponse(
+            path=job.csv_path,
+            media_type="text/csv",
+            filename=os.path.basename(job.csv_path),
+        )
 
-    filename = os.path.basename(job.csv_path)
-    return FileResponse(
-        path=job.csv_path,
-        media_type="text/csv",
-        filename=filename,
-    )
+    # Fallback: check history DB
+    from api import history
+    import config as pipeline_config
+    entry = history.get_job(job_id)
+    if entry and entry.get("csv_filename"):
+        csv_path = os.path.join(pipeline_config.OUTPUT_DIR, entry["csv_filename"])
+        if os.path.exists(csv_path):
+            return FileResponse(
+                path=csv_path,
+                media_type="text/csv",
+                filename=entry["csv_filename"],
+            )
+
+    raise HTTPException(status_code=404, detail="CSV file not found")

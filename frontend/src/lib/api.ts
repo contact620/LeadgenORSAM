@@ -116,6 +116,48 @@ export async function saveConfig(data: ConfigUpdate): Promise<void> {
   }
 }
 
+// ── History endpoints ────────────────────────────────────────────────────────
+
+export interface HistoryEntry {
+  job_id: string
+  status: 'done' | 'error'
+  apollo_url: string
+  max_leads: number
+  skip_gpt: boolean
+  started_at: string
+  finished_at: string | null
+  total_leads: number
+  hit_leads: number
+  nohit_leads: number
+  email_pct: number
+  linkedin_pct: number
+  phone_pct: number
+  website_pct: number
+  avg_score: number
+  csv_filename: string | null
+  error: string | null
+  csv_available: boolean
+}
+
+export async function getHistory(limit = 50, offset = 0): Promise<HistoryEntry[]> {
+  const res = await fetch(`/api/history?limit=${limit}&offset=${offset}`)
+  if (!res.ok) throw new Error('Failed to fetch history')
+  return res.json()
+}
+
+export async function getHistoryLeads(jobId: string): Promise<Lead[]> {
+  const res = await fetch(`/api/history/${jobId}/leads`)
+  if (!res.ok) throw new Error('Failed to fetch leads')
+  return res.json()
+}
+
+export async function deleteHistoryEntry(jobId: string): Promise<void> {
+  const res = await fetch(`/api/history/${jobId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete entry')
+}
+
+// ── Cookie endpoints ─────────────────────────────────────────────────────────
+
 export async function uploadCookies(
   service: 'apollo' | 'linkedin',
   jsonText: string,
