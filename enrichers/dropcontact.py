@@ -17,6 +17,7 @@ from typing import Optional
 import requests
 
 import config
+from enrichers.retry import retry_api_call, AuthError
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +26,21 @@ POLL_INTERVAL = 15      # seconds between polls (Dropcontact recommends ~30s)
 MAX_POLL_ATTEMPTS = 40  # 10 min max wait
 
 
+_dropcontact_disabled = False
+
+
+def _reset_state():
+    """Reset module state between pipeline runs."""
+    global _dropcontact_disabled
+    _dropcontact_disabled = False
+
+
 def _post_batch(leads_batch: list[dict]) -> Optional[str]:
-    """Submit a batch to Dropcontact. Returns request_id."""
+    """Submit a batch to Dropcontact with retry. Returns request_id."""
+    global _dropcontact_disabled
+    if _dropcontact_disabled:
+        return None
+
     payload = {
         "data": [
             {
@@ -43,40 +57,59 @@ def _post_batch(leads_batch: list[dict]) -> Optional[str]:
         "X-Access-Token": config.DROPCONTACT_API_KEY,
         "Content-Type": "application/json",
     }
-    try:
+
+    def _do_request():
         resp = requests.post(f"{BASE_URL}/batch", json=payload, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         request_id = data.get("request_id")
         if not request_id:
-            logger.error(f"Dropcontact batch submission failed: {data}")
+            raise ValueError(f"Dropcontact returned no request_id: {data}")
         return request_id
+
+    try:
+        return retry_api_call(_do_request, max_retries=3, operation_name="Dropcontact POST /batch")
+    except AuthError as e:
+        _dropcontact_disabled = True
+        logger.error(f"Dropcontact auth failed — disabled for this run: {e}")
+        return None
     except Exception as e:
-        logger.error(f"Dropcontact POST /batch error: {e}")
+        logger.error(f"Dropcontact POST /batch failed after retries: {e}")
         return None
 
 
 def _poll_batch(request_id: str) -> Optional[list[dict]]:
-    """Poll Dropcontact until the batch is ready. Returns enriched data list."""
+    """Poll Dropcontact with progressive backoff until the batch is ready."""
     headers = {"X-Access-Token": config.DROPCONTACT_API_KEY}
+    poll_delay = float(POLL_INTERVAL)
+
     for attempt in range(MAX_POLL_ATTEMPTS):
         try:
             resp = requests.get(f"{BASE_URL}/batch/{request_id}", headers=headers, timeout=30)
             resp.raise_for_status()
             data = resp.json()
+        except requests.exceptions.HTTPError as e:
+            if resp is not None and resp.status_code in (401, 403):
+                logger.error(f"Dropcontact auth failed during polling: {e}")
+                return None
+            logger.error(f"Dropcontact poll HTTP error (attempt {attempt + 1}): {e}")
+            time.sleep(poll_delay)
+            poll_delay = min(poll_delay * 1.5, 60)
+            continue
         except Exception as e:
             logger.error(f"Dropcontact poll error (attempt {attempt + 1}): {e}")
-            time.sleep(POLL_INTERVAL)
+            time.sleep(poll_delay)
+            poll_delay = min(poll_delay * 1.5, 60)
             continue
 
         if data.get("success") and data.get("data"):
-            logger.info(f"Dropcontact batch {request_id} ready after {attempt + 1} polls ({(attempt + 1) * POLL_INTERVAL}s)")
+            logger.info(f"Dropcontact batch {request_id} ready after {attempt + 1} polls")
             return data["data"]
 
-        # Not ready yet
         reason = data.get("reason", "pending")
-        logger.info(f"Batch {request_id} not ready ({reason}), poll {attempt + 1}/{MAX_POLL_ATTEMPTS}, retrying in {POLL_INTERVAL}s...")
-        time.sleep(POLL_INTERVAL)
+        logger.info(f"Batch {request_id} not ready ({reason}), poll {attempt + 1}/{MAX_POLL_ATTEMPTS}, next in {poll_delay:.0f}s...")
+        time.sleep(poll_delay)
+        poll_delay = min(poll_delay * 1.2, 45)
 
     logger.error(f"Dropcontact batch {request_id} timed out after {MAX_POLL_ATTEMPTS} polls")
     return None

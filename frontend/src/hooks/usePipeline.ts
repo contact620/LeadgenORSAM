@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react'
+import { toast } from 'sonner'
 import { startJob, getResults, type JobResult, type RunRequest } from '@/lib/api'
 
 export interface ProgressEvent {
@@ -54,22 +55,40 @@ export function usePipeline() {
         }))
       })
 
+      es.addEventListener('warning', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data)
+          const msg = payload.data?.message ?? 'Avertissement enrichissement'
+          toast.warning(msg, { duration: 8000 })
+        } catch { /* ignore malformed warning */ }
+      })
+
       es.addEventListener('done', () => {
         es.close()
         esRef.current = null
-        getResults(job_id).then(result => {
-          setState(s => ({ ...s, status: 'done', result }))
-        })
+        getResults(job_id)
+          .then(result => {
+            setState(s => ({ ...s, status: 'done', result }))
+          })
+          .catch(err => {
+            setState(s => ({
+              ...s,
+              status: 'error',
+              error: `Pipeline terminé mais impossible de charger les résultats: ${err instanceof Error ? err.message : String(err)}`,
+            }))
+          })
       })
 
       es.addEventListener('error', (e: MessageEvent) => {
         es.close()
         esRef.current = null
-        let errorMsg = 'Pipeline failed'
+        let errorMsg = 'Erreur pipeline'
         try {
           const payload = JSON.parse(e.data)
           errorMsg = payload.data?.message ?? errorMsg
-        } catch {/* raw SSE error */}
+        } catch {
+          errorMsg = 'Connexion au serveur perdue pendant l\'exécution du pipeline'
+        }
         setState(s => ({ ...s, status: 'error', error: errorMsg }))
       })
 

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { toast } from 'sonner'
 import { Rocket, AlertCircle, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getHealth, type HealthCheck } from '@/lib/api'
@@ -19,7 +20,11 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
   const [health, setHealth] = useState<HealthCheck | null>(null)
 
   useEffect(() => {
-    getHealth().then(setHealth).catch(() => null)
+    getHealth().then(setHealth).catch(() => {
+      toast.error('Backend inaccessible', {
+        description: 'Vérifiez que le serveur est lancé sur le port 8000.',
+      })
+    })
   }, [])
 
   const handleSubmit = (e: React.FormEvent) => {

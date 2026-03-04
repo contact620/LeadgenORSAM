@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { toast } from 'sonner'
 import { Download, Eye, Trash2, AlertCircle, Clock, ExternalLink, ArrowLeft, Loader2 } from 'lucide-react'
 import { getHistory, getHistoryLeads, deleteHistoryEntry, getDownloadUrl, type HistoryEntry, type Lead, type JobResult } from '@/lib/api'
 import { StatsBar } from './StatsBar'
@@ -45,8 +46,10 @@ export function History({ onBack }: Props) {
     try {
       await deleteHistoryEntry(jobId)
       setEntries(prev => prev.filter(e => e.job_id !== jobId))
-    } catch {
-      // silent
+    } catch (err) {
+      toast.error('Échec de la suppression', {
+        description: err instanceof Error ? err.message : 'Erreur inconnue',
+      })
     }
   }
 
@@ -56,8 +59,11 @@ export function History({ onBack }: Props) {
     try {
       const leads = await getHistoryLeads(entry.job_id)
       setViewLeads(leads)
-    } catch {
+    } catch (err) {
       setViewLeads([])
+      toast.error('Impossible de charger les leads', {
+        description: err instanceof Error ? err.message : 'Le fichier CSV est peut-être manquant.',
+      })
     } finally {
       setViewLoading(false)
     }

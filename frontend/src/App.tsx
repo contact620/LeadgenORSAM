@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { toast } from 'sonner'
 import { usePipeline } from '@/hooks/usePipeline'
 import { ApolloForm } from '@/components/ApolloForm'
 import { PipelineProgress } from '@/components/PipelineProgress'
@@ -19,7 +20,11 @@ export default function App() {
   const [config, setConfig] = useState<ConfigStatus | null>(null)
 
   const refreshConfig = useCallback(() => {
-    getConfig().then(setConfig).catch(() => null)
+    getConfig().then(setConfig).catch((err) => {
+      toast.error('Impossible de charger la configuration', {
+        description: err instanceof Error ? err.message : 'Le backend est-il lancé ?',
+      })
+    })
   }, [])
 
   useEffect(() => { refreshConfig() }, [refreshConfig])

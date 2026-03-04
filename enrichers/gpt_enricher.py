@@ -16,6 +16,7 @@ from typing import Optional
 import anthropic
 
 import config
+from enrichers.retry import retry_api_call, AuthError
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +47,21 @@ Site web de l'entreprise (extrait) :
 Génère le JSON avec activity_summary et conversion_angle."""
 
 
+_claude_disabled = False
+
+
+def _reset_state():
+    """Reset module state between pipeline runs."""
+    global _claude_disabled
+    _claude_disabled = False
+
+
 def _call_claude(lead: dict) -> tuple[Optional[str], Optional[str]]:
-    """Call claude-haiku-4-5 for a single lead. Returns (activity_summary, conversion_angle)."""
+    """Call claude-haiku-4-5 for a single lead with retry. Returns (activity_summary, conversion_angle)."""
+    global _claude_disabled
+    if _claude_disabled:
+        return None, None
+
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
     linkedin_text = lead.get("linkedin_text", "") or "Non disponible"
@@ -63,27 +77,33 @@ def _call_claude(lead: dict) -> tuple[Optional[str], Optional[str]]:
         website_text=website_text[:1500],
     )
 
-    try:
+    name = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
+
+    def _do_request():
         message = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=300,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_prompt}],
         )
-
         content = message.content[0].text.strip()
         logger.debug(f"Raw Claude response: {content!r}")
-        # Strip markdown code fences if present
         if content.startswith("```"):
-            content = re.sub(r"^```[a-z]*\n?", "", content)
-            content = re.sub(r"\n?```$", "", content).strip()
-        data = json.loads(content)
-        summary = data.get("activity_summary", "").strip()
-        angle = data.get("conversion_angle", "").strip()
-        return summary, angle
+            content_clean = re.sub(r"^```[a-z]*\n?", "", content)
+            content_clean = re.sub(r"\n?```$", "", content_clean).strip()
+        else:
+            content_clean = content
+        data = json.loads(content_clean)
+        return data.get("activity_summary", "").strip(), data.get("conversion_angle", "").strip()
 
+    try:
+        return retry_api_call(_do_request, max_retries=3, operation_name=f"Claude AI ({name})")
+    except AuthError as e:
+        _claude_disabled = True
+        logger.error(f"Claude auth failed — disabled for this run: {e}")
+        return None, None
     except Exception as e:
-        logger.error(f"Claude error for {lead.get('first_name')} {lead.get('last_name')}: {e}")
+        logger.error(f"Claude enrichment failed after retries for {name}: {e}")
         return None, None
 
 
@@ -113,6 +133,13 @@ def enrich_leads_gpt(hit_leads: list[dict]) -> list[dict]:
 
         if summary:
             success += 1
+
+        if _claude_disabled:
+            logger.warning(f"Claude disabled — skipping remaining {total - i} leads")
+            for remaining in hit_leads[i:]:
+                remaining["activity_summary"] = None
+                remaining["conversion_angle"] = None
+            break
 
         if i < total:
             time.sleep(0.5)

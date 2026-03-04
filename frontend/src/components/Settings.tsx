@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { toast } from 'sonner'
 import {
   KeyRound, CheckCircle2, XCircle, Eye, EyeOff,
   Upload, Save, RefreshCw, Cookie, SlidersHorizontal,
   ArrowLeft, AlertCircle,
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
 import { getConfig, saveConfig, uploadCookies, type ConfigStatus } from '@/lib/api'
 
 interface Props {
@@ -202,7 +202,9 @@ export function Settings({ onBack, onConfigChange }: Props) {
   const [pipelineStatus, setPipelineStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
 
   const refreshConfig = useCallback(() => {
-    getConfig().then(c => { setConfig(c); setPipeline({ hitThreshold: c.hit_threshold }); onConfigChange?.(c) }).catch(() => null)
+    getConfig().then(c => { setConfig(c); setPipeline({ hitThreshold: c.hit_threshold }); onConfigChange?.(c) }).catch(() => {
+      toast.error('Impossible de rafraîchir la configuration')
+    })
   }, [onConfigChange])
 
   useEffect(() => { refreshConfig() }, [refreshConfig])

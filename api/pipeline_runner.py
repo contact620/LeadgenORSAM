@@ -109,6 +109,11 @@ class _QueueLogHandler(logging.Handler):
         payload = json.dumps({"type": "progress", "data": event.model_dump()})
         asyncio.run_coroutine_threadsafe(self._queue.put(payload), self._loop)
 
+        # Forward WARNING+ logs as SSE warning events (shown as toasts in frontend)
+        if record.levelno >= logging.WARNING:
+            warning_payload = json.dumps({"type": "warning", "data": {"message": msg}})
+            asyncio.run_coroutine_threadsafe(self._queue.put(warning_payload), self._loop)
+
     def set_explicit_progress(self, step: int, step_prog: float, message: str = "") -> None:
         """Emit a forced progress event at a step boundary (always advances the bar)."""
         self._step = step
@@ -149,6 +154,14 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
 
     try:
         _jobs[job_id].status = "running"
+
+        # Reset enricher state from any previous run
+        from enrichers.google_search import _reset_state as _reset_google
+        from enrichers.dropcontact import _reset_state as _reset_dc
+        from enrichers.gpt_enricher import _reset_state as _reset_gpt
+        _reset_google()
+        _reset_dc()
+        _reset_gpt()
 
         # Run async pipeline steps in a new event loop for this thread
         new_loop = _asyncio.new_event_loop()

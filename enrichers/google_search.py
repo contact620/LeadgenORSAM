@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 import requests
 
 import config
+from enrichers.retry import retry_api_call, AuthError
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +40,22 @@ _BLOCKED_DOMAINS = {
 SERPER_URL = "https://google.serper.dev/search"
 
 
+_serper_disabled = False
+
+
+def _reset_state():
+    """Reset module state between pipeline runs."""
+    global _serper_disabled
+    _serper_disabled = False
+
+
 def _serper_search(query: str) -> list[str]:
-    """Search via Serper.dev (Google wrapper). Returns list of result URLs."""
-    if not config.SERPER_API_KEY:
+    """Search via Serper.dev (Google wrapper) with retry. Returns list of result URLs."""
+    global _serper_disabled
+    if not config.SERPER_API_KEY or _serper_disabled:
         return []
-    try:
+
+    def _do_request():
         resp = requests.post(
             SERPER_URL,
             headers={"X-API-KEY": config.SERPER_API_KEY, "Content-Type": "application/json"},
@@ -53,15 +65,15 @@ def _serper_search(query: str) -> list[str]:
         resp.raise_for_status()
         data = resp.json()
         return [r.get("link", "") for r in data.get("organic", []) if r.get("link")]
-    except requests.exceptions.HTTPError as e:
-        if resp.status_code == 429:
-            logger.warning("Serper rate limit hit. Waiting 60s...")
-            time.sleep(60)
-        else:
-            logger.error(f"Serper HTTP error: {e}")
+
+    try:
+        return retry_api_call(_do_request, max_retries=3, operation_name="Serper search")
+    except AuthError as e:
+        _serper_disabled = True
+        logger.error(f"Serper auth failed — disabled for this run: {e}")
         return []
     except Exception as e:
-        logger.error(f"Serper error: {e}")
+        logger.warning(f"Serper search failed after retries: {e}")
         return []
 
 
@@ -72,8 +84,8 @@ CLEARBIT_URL = "https://autocomplete.clearbit.com/v1/companies/suggest"
 
 
 def _clearbit_domain(company: str) -> Optional[str]:
-    """Look up company domain via Clearbit Autocomplete (free, no key needed)."""
-    try:
+    """Look up company domain via Clearbit Autocomplete (free, no key needed) with retry."""
+    def _do_request():
         resp = requests.get(
             CLEARBIT_URL,
             params={"query": company},
@@ -81,30 +93,37 @@ def _clearbit_domain(company: str) -> Optional[str]:
             headers={"User-Agent": "Mozilla/5.0"},
         )
         resp.raise_for_status()
-        results = resp.json()
-        if results:
-            hit = results[0]
-            domain = hit.get("domain", "")
-            returned_name = hit.get("name", "").lower()
-            # Validate: at least one significant word from the input must appear in returned name
-            input_words = [w for w in company.lower().split() if len(w) > 3]
-            if domain and input_words and any(w in returned_name for w in input_words):
-                return f"https://{domain}"
-            elif domain:
-                logger.debug(f"Clearbit rejected '{returned_name}' for '{company}' (name mismatch)")
+        return resp.json()
+
+    try:
+        results = retry_api_call(_do_request, max_retries=2, operation_name=f"Clearbit ({company})")
     except Exception as e:
         logger.error(f"Clearbit lookup error for '{company}': {e}")
+        return None
+
+    if results:
+        hit = results[0]
+        domain = hit.get("domain", "")
+        returned_name = hit.get("name", "").lower()
+        input_words = [w for w in company.lower().split() if len(w) > 3]
+        if domain and input_words and any(w in returned_name for w in input_words):
+            return f"https://{domain}"
+        elif domain:
+            logger.debug(f"Clearbit rejected '{returned_name}' for '{company}' (name mismatch)")
     return None
 
 
 def _ddg_search(query: str, max_results: int = 5, backend: str = "auto") -> list[str]:
-    """Search DuckDuckGo and return a list of result URLs (fallback)."""
-    try:
+    """Search DuckDuckGo with retry. Returns list of result URLs (fallback)."""
+    def _do_search():
         from ddgs import DDGS
         results = DDGS().text(query, max_results=max_results, backend=backend, safesearch="off")
         return [r.get("href", "") for r in results if r.get("href")]
+
+    try:
+        return retry_api_call(_do_search, max_retries=2, operation_name="DuckDuckGo search")
     except Exception as e:
-        logger.warning(f"DuckDuckGo search unavailable: {e}")
+        logger.warning(f"DuckDuckGo search unavailable after retries: {e}")
         return []
 
 
