@@ -48,7 +48,6 @@ export interface HealthCheck {
   status: string
   missing_keys: string[]
   apollo_cookies: boolean
-  linkedin_cookies: boolean
   hit_threshold: number
   max_leads_default: number
 }
@@ -89,7 +88,6 @@ export interface ConfigStatus {
   dropcontact_api_key: boolean
   anthropic_api_key: boolean
   apollo_cookies: boolean
-  linkedin_cookies: boolean
   hit_threshold: number
   max_leads: number
 }
@@ -163,7 +161,7 @@ export async function deleteHistoryEntry(jobId: string): Promise<void> {
 // ── Cookie endpoints ─────────────────────────────────────────────────────────
 
 export async function uploadCookies(
-  service: 'apollo' | 'linkedin',
+  service: 'apollo',
   jsonText: string,
 ): Promise<{ count: number }> {
   const blob = new Blob([jsonText], { type: 'application/json' })

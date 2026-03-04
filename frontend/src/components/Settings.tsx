@@ -54,7 +54,7 @@ function SectionCard({ title, icon, children }: { title: string; icon: React.Rea
 // ── Cookie panel ────────────────────────────────────────────────────────────
 
 interface CookiePanelProps {
-  service: 'apollo' | 'linkedin'
+  service: 'apollo'
   label: string
   isPresent: boolean
   onUploaded: () => void
@@ -354,11 +354,10 @@ export function Settings({ onBack, onConfigChange }: Props) {
       <SectionCard title="Cookies de session" icon={<Cookie className="w-4 h-4" />}>
         <div className="space-y-6">
           <p className="text-xs" style={{ color: 'rgba(226,232,248,0.3)' }}>
-            Exportez vos cookies depuis l'extension <strong style={{ color: 'rgba(226,232,248,0.5)' }}>Cookie Editor</strong> sur Apollo.io et LinkedIn, puis importez-les ici.
+            Exportez vos cookies depuis l'extension <strong style={{ color: 'rgba(226,232,248,0.5)' }}>Cookie Editor</strong> sur Apollo.io, puis importez-les ici.
           </p>
           <div className="grid gap-6 sm:grid-cols-2">
             <CookiePanel service="apollo" label="Apollo.io" isPresent={config?.apollo_cookies ?? false} onUploaded={refreshConfig} />
-            <CookiePanel service="linkedin" label="LinkedIn" isPresent={config?.linkedin_cookies ?? false} onUploaded={refreshConfig} />
           </div>
         </div>
       </SectionCard>

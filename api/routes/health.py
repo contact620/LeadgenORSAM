@@ -13,13 +13,11 @@ router = APIRouter()
 def health_check():
     missing = pipeline_config.validate_config()
     apollo_cookies_ok = os.path.exists(pipeline_config.APOLLO_COOKIES_PATH)
-    linkedin_cookies_ok = os.path.exists(pipeline_config.LINKEDIN_COOKIES_PATH)
 
     return {
         "status": "ok",
         "missing_keys": missing,
         "apollo_cookies": apollo_cookies_ok,
-        "linkedin_cookies": linkedin_cookies_ok,
         "hit_threshold": pipeline_config.HIT_THRESHOLD,
         "max_leads_default": pipeline_config.MAX_LEADS,
     }

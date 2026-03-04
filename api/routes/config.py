@@ -40,7 +40,6 @@ def get_config():
         "dropcontact_api_key": bool(pipeline_config.DROPCONTACT_API_KEY),
         "anthropic_api_key": bool(pipeline_config.ANTHROPIC_API_KEY),
         "apollo_cookies": os.path.exists(pipeline_config.APOLLO_COOKIES_PATH),
-        "linkedin_cookies": os.path.exists(pipeline_config.LINKEDIN_COOKIES_PATH),
         "hit_threshold": pipeline_config.HIT_THRESHOLD,
         "max_leads": pipeline_config.MAX_LEADS,
     }
@@ -101,6 +100,3 @@ async def upload_apollo_cookies(file: UploadFile = File(...)):
     return await _save_cookies(file, pipeline_config.APOLLO_COOKIES_PATH)
 
 
-@router.post("/cookies/linkedin")
-async def upload_linkedin_cookies(file: UploadFile = File(...)):
-    return await _save_cookies(file, pipeline_config.LINKEDIN_COOKIES_PATH)

@@ -6,7 +6,7 @@ Pipeline en 5 étapes :
   2. Scraping Apollo            (Playwright headless)
   3. Enrichissement multi-sources  (Google Search + Dropcontact)
   4. Calcul du taux de hit     (score 0-100, seuil 50)
-  5. Enrichissement IA          (LinkedIn/web scraping + GPT-4o-mini)
+  5. Enrichissement IA          (web scraping + GPT-4o-mini)
 
 Usage:
   python main.py --url "https://app.apollo.io/#/people?..." [options]
@@ -33,7 +33,7 @@ from scrapers.apollo_scraper import scrape_apollo
 from enrichers.google_search import enrich_leads_google
 from enrichers.dropcontact import enrich_leads_dropcontact
 from processors.hit_calculator import score_all_leads
-from scrapers.linkedin_scraper import scrape_hit_leads
+from scrapers.website_scraper import scrape_hit_leads
 from enrichers.gpt_enricher import enrich_leads_gpt
 
 # ── CSV column order (matches PRD schema) ─────────────────────────────────────
@@ -148,8 +148,8 @@ async def run_pipeline(args):
     if not args.skip_gpt and hit_leads:
         logger.info(f"Step 5 — AI enrichment on {len(hit_leads)} hit leads...")
 
-        # 5a: Scrape LinkedIn + website
-        logger.info("Step 5a — Scraping LinkedIn profiles + websites...")
+        # 5a: Scrape company websites
+        logger.info("Step 5a — Scraping company websites...")
         hit_leads = await scrape_hit_leads(hit_leads)
 
         # 5b: GPT-4o-mini

@@ -6,15 +6,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-GOOGLE_CX = os.getenv("GOOGLE_CX", "")
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
 DROPCONTACT_API_KEY = os.getenv("DROPCONTACT_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 # ── File Paths ─────────────────────────────────────────────────────────────────
 APOLLO_COOKIES_PATH = os.getenv("APOLLO_COOKIES_PATH", "apollo_cookies.json")
-LINKEDIN_COOKIES_PATH = os.getenv("LINKEDIN_COOKIES_PATH", "linkedin_cookies.json")
 OUTPUT_DIR = "output"
 
 # ── Behavior ──────────────────────────────────────────────────────────────────
@@ -61,10 +58,6 @@ def load_cookies(path: str) -> list[dict]:
 
 def validate_config():
     missing = []
-    if not GOOGLE_API_KEY:
-        missing.append("GOOGLE_API_KEY")
-    if not GOOGLE_CX:
-        missing.append("GOOGLE_CX")
     # DROPCONTACT_API_KEY is optional — email/phone enrichment is skipped if absent
     if not ANTHROPIC_API_KEY:
         missing.append("ANTHROPIC_API_KEY")

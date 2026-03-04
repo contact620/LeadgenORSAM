@@ -196,8 +196,8 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
 
         # ── Step 5: AI enrichment (hit leads only) ────────────────────────────
         if not skip_gpt and hit_leads:
-            handler.set_explicit_progress(5, 0.0, "Scraping profils LinkedIn des hit leads...")
-            from scrapers.linkedin_scraper import scrape_hit_leads
+            handler.set_explicit_progress(5, 0.0, "Scraping sites web des hit leads...")
+            from scrapers.website_scraper import scrape_hit_leads
             hit_leads = new_loop.run_until_complete(scrape_hit_leads(hit_leads))
 
             handler.set_explicit_progress(5, 0.5, "Appel Claude AI — enrichissement IA...")

@@ -26,8 +26,6 @@ import config
 
 logger = logging.getLogger(__name__)
 
-GOOGLE_SEARCH_URL = "https://customsearch.googleapis.com/customsearch/v1"
-
 # Sites blocked when picking company website
 _BLOCKED_DOMAINS = {
     "linkedin.com", "facebook.com", "twitter.com", "instagram.com",
