@@ -15,7 +15,7 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
   const [url, setUrl] = useState('')
   const [maxLeads, setMaxLeads] = useState(defaultMaxLeads ?? 200)
   const [skipGpt, setSkipGpt] = useState(false)
-  const [showConfig, setShowConfig] = useState(false)
+  const [showConfig, setShowConfig] = useState(true)
   const [health, setHealth] = useState<HealthCheck | null>(null)
 
   useEffect(() => {
