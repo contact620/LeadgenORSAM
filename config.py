@@ -56,10 +56,16 @@ def load_cookies(path: str) -> list[dict]:
     return cookies
 
 
+def _is_placeholder(value: str) -> bool:
+    """Return True if the value looks like an unedited .env.example placeholder."""
+    v = value.strip().lower()
+    return not v or v.startswith("your_") or v in ("changeme", "xxx", "todo")
+
+
 def validate_config():
     missing = []
     # DROPCONTACT_API_KEY is optional — email/phone enrichment is skipped if absent
-    if not ANTHROPIC_API_KEY:
+    if _is_placeholder(ANTHROPIC_API_KEY):
         missing.append("ANTHROPIC_API_KEY")
     if missing:
         logging.warning(f"Missing environment variables: {', '.join(missing)}")

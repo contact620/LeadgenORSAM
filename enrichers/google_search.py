@@ -52,7 +52,7 @@ def _reset_state():
 def _serper_search(query: str) -> list[str]:
     """Search via Serper.dev (Google wrapper) with retry. Returns list of result URLs."""
     global _serper_disabled
-    if not config.SERPER_API_KEY or _serper_disabled:
+    if config._is_placeholder(config.SERPER_API_KEY) or _serper_disabled:
         return []
 
     def _do_request():
@@ -155,7 +155,7 @@ def _find_company_website(company: str) -> Optional[str]:
         return website
 
     # Fallback: Serper
-    if config.SERPER_API_KEY:
+    if not config._is_placeholder(config.SERPER_API_KEY):
         logger.debug(f"Clearbit miss for '{company}', trying Serper...")
         urls = _serper_search(f"{company} official website")
         website = _pick_website(urls)

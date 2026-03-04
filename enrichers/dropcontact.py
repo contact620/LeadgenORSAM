@@ -145,7 +145,7 @@ def enrich_leads_dropcontact(leads: list[dict]) -> list[dict]:
 
     Processes in batches of DROPCONTACT_BATCH_SIZE. Modifies leads in place.
     """
-    if not config.DROPCONTACT_API_KEY:
+    if config._is_placeholder(config.DROPCONTACT_API_KEY):
         logger.info("DROPCONTACT_API_KEY not set. Skipping email/phone enrichment.")
         for lead in leads:
             lead.setdefault("email", None)

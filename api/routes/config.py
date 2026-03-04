@@ -10,6 +10,7 @@ from typing import Optional
 from dotenv import set_key, load_dotenv
 
 import config as pipeline_config
+from config import _is_placeholder
 
 router = APIRouter()
 
@@ -36,9 +37,9 @@ def get_config():
     pipeline_config.MAX_LEADS = int(os.getenv("MAX_LEADS", "500"))
 
     return {
-        "serper_api_key": bool(pipeline_config.SERPER_API_KEY),
-        "dropcontact_api_key": bool(pipeline_config.DROPCONTACT_API_KEY),
-        "anthropic_api_key": bool(pipeline_config.ANTHROPIC_API_KEY),
+        "serper_api_key": not _is_placeholder(pipeline_config.SERPER_API_KEY),
+        "dropcontact_api_key": not _is_placeholder(pipeline_config.DROPCONTACT_API_KEY),
+        "anthropic_api_key": not _is_placeholder(pipeline_config.ANTHROPIC_API_KEY),
         "apollo_cookies": os.path.exists(pipeline_config.APOLLO_COOKIES_PATH),
         "hit_threshold": pipeline_config.HIT_THRESHOLD,
         "max_leads": pipeline_config.MAX_LEADS,

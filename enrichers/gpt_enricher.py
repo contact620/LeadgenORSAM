@@ -113,7 +113,7 @@ def enrich_leads_gpt(hit_leads: list[dict]) -> list[dict]:
       lead["activity_summary"]
       lead["conversion_angle"]
     """
-    if not config.ANTHROPIC_API_KEY:
+    if config._is_placeholder(config.ANTHROPIC_API_KEY):
         logger.error("ANTHROPIC_API_KEY not set. Skipping Claude enrichment.")
         for lead in hit_leads:
             lead["activity_summary"] = None
