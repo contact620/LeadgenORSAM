@@ -214,9 +214,34 @@ def enrich_leads_google(leads: list[dict]) -> list[dict]:
     Runs sequentially with rate limiting to avoid hitting API quotas.
     """
     total = len(leads)
+    # Count LinkedIn URLs already present from Apollo before enrichment
+    linkedin_from_apollo = sum(1 for l in leads if l.get("linkedin_url"))
+
     for i, lead in enumerate(leads, 1):
         logger.info(f"Google enrichment [{i}/{total}]: {lead.get('first_name')} {lead.get('last_name')}")
         find_linkedin_and_website(lead)
+
+    # Summary
+    linkedin_found = sum(1 for l in leads if l.get("linkedin_url"))
+    linkedin_new = linkedin_found - linkedin_from_apollo
+    website_found = sum(1 for l in leads if l.get("website"))
+    no_linkedin = [l for l in leads if not l.get("linkedin_url")]
+    no_website = [l for l in leads if not l.get("website")]
+
+    logger.info(
+        f"Google enrichment complete: "
+        f"{linkedin_found}/{total} LinkedIn ({linkedin_from_apollo} from Apollo, {linkedin_new} new), "
+        f"{website_found}/{total} websites"
+    )
+    if no_linkedin:
+        names = ", ".join(f"{l.get('first_name')} {l.get('last_name')}" for l in no_linkedin[:5])
+        suffix = f" (+{len(no_linkedin) - 5} others)" if len(no_linkedin) > 5 else ""
+        logger.info(f"No LinkedIn found for: {names}{suffix}")
+    if no_website:
+        names = ", ".join(f"{l.get('company', '?')}" for l in no_website[:5])
+        suffix = f" (+{len(no_website) - 5} others)" if len(no_website) > 5 else ""
+        logger.info(f"No website found for: {names}{suffix}")
+
     return leads
 
 

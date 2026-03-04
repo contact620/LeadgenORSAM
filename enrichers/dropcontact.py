@@ -21,8 +21,8 @@ import config
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.dropcontact.io"
-POLL_INTERVAL = 5       # seconds between polls
-MAX_POLL_ATTEMPTS = 60  # 5 min max wait
+POLL_INTERVAL = 15      # seconds between polls (Dropcontact recommends ~30s)
+MAX_POLL_ATTEMPTS = 40  # 10 min max wait
 
 
 def _post_batch(leads_batch: list[dict]) -> Optional[str]:
@@ -70,12 +70,12 @@ def _poll_batch(request_id: str) -> Optional[list[dict]]:
             continue
 
         if data.get("success") and data.get("data"):
-            logger.debug(f"Dropcontact batch {request_id} ready after {attempt + 1} polls")
+            logger.info(f"Dropcontact batch {request_id} ready after {attempt + 1} polls ({(attempt + 1) * POLL_INTERVAL}s)")
             return data["data"]
 
         # Not ready yet
         reason = data.get("reason", "pending")
-        logger.debug(f"Batch {request_id} not ready ({reason}), waiting {POLL_INTERVAL}s...")
+        logger.info(f"Batch {request_id} not ready ({reason}), poll {attempt + 1}/{MAX_POLL_ATTEMPTS}, retrying in {POLL_INTERVAL}s...")
         time.sleep(POLL_INTERVAL)
 
     logger.error(f"Dropcontact batch {request_id} timed out after {MAX_POLL_ATTEMPTS} polls")
@@ -155,12 +155,28 @@ def enrich_leads_dropcontact(leads: list[dict]) -> list[dict]:
                 lead["email"] = None
                 lead["phone"] = None
 
+        emails_in_batch = sum(1 for l in batch if l.get("email"))
+        phones_in_batch = sum(1 for l in batch if l.get("phone"))
         logger.info(
-            f"Batch {batch_num} done. "
-            f"{sum(1 for l in batch if l.get('email'))} emails found in this batch."
+            f"Batch {batch_num} done: "
+            f"{emails_in_batch}/{len(batch)} emails, {phones_in_batch}/{len(batch)} phones"
         )
 
-    logger.info(f"Dropcontact enrichment complete. {enriched_count}/{total} emails found.")
+        # Log leads that got no email
+        no_email = [l for l in batch if not l.get("email")]
+        if no_email:
+            names = ", ".join(
+                f"{l.get('first_name')} {l.get('last_name')} ({l.get('company', '?')})"
+                for l in no_email[:5]
+            )
+            suffix = f" (+{len(no_email) - 5} autres)" if len(no_email) > 5 else ""
+            logger.info(f"Dropcontact: no email for {len(no_email)} leads: {names}{suffix}")
+
+    phone_count = sum(1 for l in leads if l.get("phone"))
+    logger.info(
+        f"Dropcontact enrichment complete. "
+        f"{enriched_count}/{total} emails, {phone_count}/{total} phones found."
+    )
     return leads
 
 

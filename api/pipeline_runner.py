@@ -164,15 +164,29 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         handler.set_explicit_progress(2, 1.0, f"Scraping terminé — {len(leads)} leads extraits")
 
         # ── Step 3a: Google enrichment ────────────────────────────────────────
-        handler.set_explicit_progress(3, 0.0, "Enrichissement Google (LinkedIn URL)...")
+        handler.set_explicit_progress(3, 0.0, "Enrichissement Google (LinkedIn URL + site web)...")
         from enrichers.google_search import enrich_leads_google
         leads = enrich_leads_google(leads)
 
+        linkedin_count = sum(1 for l in leads if l.get("linkedin_url"))
+        website_count = sum(1 for l in leads if l.get("website"))
+        handler.set_explicit_progress(
+            3, 0.5,
+            f"Google terminé — {linkedin_count}/{len(leads)} LinkedIn, "
+            f"{website_count}/{len(leads)} sites web. Lancement Dropcontact..."
+        )
+
         # ── Step 3b: Dropcontact enrichment ───────────────────────────────────
-        handler.set_explicit_progress(3, 0.5, "Enrichissement Dropcontact (email + téléphone)...")
         from enrichers.dropcontact import enrich_leads_dropcontact
         leads = enrich_leads_dropcontact(leads)
-        handler.set_explicit_progress(3, 1.0, "Enrichissement terminé")
+
+        email_count = sum(1 for l in leads if l.get("email"))
+        phone_count = sum(1 for l in leads if l.get("phone"))
+        handler.set_explicit_progress(
+            3, 1.0,
+            f"Enrichissement terminé — {email_count}/{len(leads)} emails, "
+            f"{phone_count}/{len(leads)} téléphones"
+        )
 
         # ── Step 4: Hit score ─────────────────────────────────────────────────
         handler.set_explicit_progress(4, 0.0, "Calcul des hit scores...")
@@ -219,12 +233,19 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         def pct(field):
             return round(100 * sum(1 for l in leads if l.get(field)) / total, 1) if total else 0.0
 
+        def cnt(field):
+            return sum(1 for l in leads if l.get(field))
+
         stats = JobStats(
             email_pct=pct("email"),
             linkedin_pct=pct("linkedin_url"),
             phone_pct=pct("phone"),
             website_pct=pct("website"),
             avg_score=round(sum(l.get("hit_score", 0) for l in leads) / total, 1) if total else 0.0,
+            email_count=cnt("email"),
+            linkedin_count=cnt("linkedin_url"),
+            phone_count=cnt("phone"),
+            website_count=cnt("website"),
         )
 
         # ── Update job state ──────────────────────────────────────────────────

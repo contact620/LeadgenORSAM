@@ -10,6 +10,10 @@ export interface JobStats {
   phone_pct: number
   website_pct: number
   avg_score: number
+  email_count: number
+  linkedin_count: number
+  phone_count: number
+  website_count: number
 }
 
 export interface Lead {

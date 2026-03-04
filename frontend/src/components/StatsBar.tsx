@@ -47,9 +47,9 @@ export function StatsBar({ result }: Props) {
         <StatCard icon={<Users className="w-4 h-4" style={{ color: '#4d9fff' }} />} accentColor="#4d9fff" glowColor="rgba(77,159,255,0.15)" label="Leads totaux" value={total_leads} />
         <StatCard icon={<Zap className="w-4 h-4" style={{ color: '#34d399' }} />} accentColor="#34d399" glowColor="rgba(52,211,153,0.15)" label="Leads hit" value={hit_leads} sub={`${hitRate}% du total`} />
         <StatCard icon={<Users className="w-4 h-4" style={{ color: 'rgba(226,232,248,0.3)' }} />} accentColor="rgba(226,232,248,0.3)" glowColor="rgba(226,232,248,0.05)" label="No-hit" value={nohit_leads} sub={`${100 - hitRate}% du total`} />
-        <StatCard icon={<Mail className="w-4 h-4" style={{ color: '#9b6bff' }} />} accentColor="#9b6bff" glowColor="rgba(155,107,255,0.15)" label="Emails trouvés" value={`${stats.email_pct}%`} />
-        <StatCard icon={<Linkedin className="w-4 h-4" style={{ color: '#4d9fff' }} />} accentColor="#4d9fff" glowColor="rgba(77,159,255,0.15)" label="LinkedIn" value={`${stats.linkedin_pct}%`} />
-        <StatCard icon={<Phone className="w-4 h-4" style={{ color: '#22d3ee' }} />} accentColor="#22d3ee" glowColor="rgba(34,211,238,0.15)" label="Téléphones" value={`${stats.phone_pct}%`} sub={`Site: ${stats.website_pct}%`} />
+        <StatCard icon={<Mail className="w-4 h-4" style={{ color: '#9b6bff' }} />} accentColor="#9b6bff" glowColor="rgba(155,107,255,0.15)" label="Emails trouvés" value={`${stats.email_pct}%`} sub={`${stats.email_count ?? 0} / ${total_leads} leads`} />
+        <StatCard icon={<Linkedin className="w-4 h-4" style={{ color: '#4d9fff' }} />} accentColor="#4d9fff" glowColor="rgba(77,159,255,0.15)" label="LinkedIn" value={`${stats.linkedin_pct}%`} sub={`${stats.linkedin_count ?? 0} / ${total_leads} leads`} />
+        <StatCard icon={<Phone className="w-4 h-4" style={{ color: '#22d3ee' }} />} accentColor="#22d3ee" glowColor="rgba(34,211,238,0.15)" label="Téléphones" value={`${stats.phone_pct}%`} sub={`${stats.phone_count ?? 0} / ${total_leads} · Site: ${stats.website_count ?? 0} / ${total_leads}`} />
       </div>
 
       {/* Score bar */}

@@ -38,6 +38,10 @@ class JobStats(BaseModel):
     phone_pct: float = 0.0
     website_pct: float = 0.0
     avg_score: float = 0.0
+    email_count: int = 0
+    linkedin_count: int = 0
+    phone_count: int = 0
+    website_count: int = 0
 
 
 class JobResult(BaseModel):
