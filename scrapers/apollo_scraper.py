@@ -37,7 +37,7 @@ _JS_EXTRACT = """() => {
     const results = [];
     const seen = new Set();
 
-    // Apollo: name links have href="#/contacts/{id}?..." (WITH query string) and contain the name text
+    // Apollo: name links have href="#/contacts/{id}?..." or "#/people/{id}?..."
     const links = Array.from(document.querySelectorAll('a')).filter(a => {
         const h = a.getAttribute('href') || '';
         return (h.includes('/contacts/') || h.includes('/people/')) && h.includes('?');
@@ -48,15 +48,24 @@ _JS_EXTRACT = """() => {
         if (!name || name.length < 2 || seen.has(name)) continue;
         seen.add(name);
 
-        // Walk up the DOM until we find a container with multiple links (the row)
-        let row = null;
+        // Strategy 1: find the table row (<tr>) containing this link
+        const tr = link.closest('tr');
+
+        // Strategy 2: walk up to find a div-based row container
+        let divRow = null;
         let el = link.parentElement;
-        for (let i = 0; i < 8 && el; i++) {
-            const linkCount = el.querySelectorAll('a[href*="/contacts/"], a[href*="/accounts/"]').length;
-            if (linkCount >= 2) { row = el; break; }
+        for (let i = 0; i < 10 && el; i++) {
+            // Look for a row-like container: has multiple links or has role="row"
+            if (el.getAttribute('role') === 'row' ||
+                el.tagName === 'TR' ||
+                el.querySelectorAll('a[href*="/contacts/"], a[href*="/accounts/"], a[href*="/companies/"]').length >= 2) {
+                divRow = el;
+                break;
+            }
             el = el.parentElement;
         }
-        if (!row) row = link.parentElement?.parentElement;
+
+        const row = tr || divRow || link.parentElement?.parentElement?.parentElement;
         if (!row) continue;
 
         const parts = name.split(' ');
@@ -69,39 +78,97 @@ _JS_EXTRACT = """() => {
             linkedin_url: ''
         };
 
-        const children = Array.from(row.children);
-        const nameIdx = children.findIndex(c => c === link || c.contains(link));
+        // --- Extract from table cells (<td>) if in a table ---
+        if (tr) {
+            const cells = Array.from(tr.querySelectorAll('td'));
+            const nameCell = cells.findIndex(c => c === link.closest('td') || c.contains(link));
 
-        // Company: div containing an account link — use its innerText
-        const companyDiv = children.find(c =>
-            c.querySelector('a[href*="/accounts/"]') || c.querySelector('a[href*="/companies/"]')
-        );
-        if (companyDiv) lead.company = (companyDiv.innerText || '').trim().split('\\n')[0].trim();
+            // Job title: typically the cell right after the name cell
+            if (nameCell >= 0 && nameCell + 1 < cells.length) {
+                const jt = (cells[nameCell + 1].innerText || '').trim().split('\\n')[0].trim();
+                if (jt && jt.length < 120 && !jt.includes('@')) lead.job_title = jt;
+            }
 
-        // Job title: first child right after the name cell
-        if (nameIdx + 1 < children.length) {
-            const jt = (children[nameIdx + 1].innerText || '').trim().split('\\n')[0].trim();
-            if (jt && jt.length < 100) lead.job_title = jt;
+            // Company: cell containing an account/company link
+            for (const cell of cells) {
+                const compLink = cell.querySelector('a[href*="/accounts/"], a[href*="/companies/"]');
+                if (compLink) {
+                    lead.company = (compLink.textContent || cell.innerText || '').trim().split('\\n')[0].trim();
+                    break;
+                }
+            }
+
+            // If job_title still empty, try all cells for text that looks like a job title
+            if (!lead.job_title) {
+                for (let i = 0; i < cells.length; i++) {
+                    if (i === nameCell) continue;
+                    const cell = cells[i];
+                    if (cell.querySelector('a[href*="/accounts/"], a[href*="/companies/"]')) continue;
+                    const text = (cell.innerText || '').trim().split('\\n')[0].trim();
+                    if (text && text.length > 3 && text.length < 120 &&
+                        !text.includes('@') && !/^https?:/.test(text) &&
+                        !text.toLowerCase().includes('no email') &&
+                        !text.toLowerCase().includes('unlock') &&
+                        text !== name) {
+                        lead.job_title = text;
+                        break;
+                    }
+                }
+            }
+
+            // Location: look for remaining cells with location-like text
+            const SKIP = ['no email', 'unlock email', 'no phone', 'request phone', 'click to run', 'add to sequence', 'access email'];
+            for (let i = nameCell + 2; i < cells.length; i++) {
+                const cell = cells[i];
+                if (cell.querySelector('a[href*="/accounts/"], a[href*="/companies/"]')) continue;
+                const text = (cell.innerText || '').trim().split('\\n')[0].trim();
+                if (!text || text.length > 60 || /^\\d+$/.test(text)) continue;
+                if (SKIP.some(p => text.toLowerCase().includes(p))) continue;
+                if (text.includes('@') || /^https?:/.test(text)) continue;
+                if (text === lead.job_title) continue;
+                lead.location = text;
+                break;
+            }
         }
 
-        // Location: skip known noise (email/phone/action cells), pick first plausible city string
-        const SKIP_PHRASES = ['no email', 'unlock email', 'no phone', 'request phone', 'click to run', 'add to sequence'];
-        for (let i = nameIdx + 2; i < children.length; i++) {
-            const child = children[i];
-            if (child === companyDiv) continue;
-            const text = (child.innerText || '').trim().split('\\n')[0].trim();
-            if (!text || text.length > 60 || /^\\d+$/.test(text)) continue;
-            if (SKIP_PHRASES.some(p => text.toLowerCase().includes(p))) continue;
-            if (text.includes('@') || /^https?:\/\//.test(text)) continue;
-            lead.location = text;
-            break;
+        // --- Fallback: extract from div-based row children ---
+        if (!lead.job_title || !lead.company) {
+            const children = Array.from(row.children);
+            const nameIdx = children.findIndex(c => c === link || c.contains(link));
+
+            if (!lead.company) {
+                const companyDiv = children.find(c =>
+                    c.querySelector('a[href*="/accounts/"]') || c.querySelector('a[href*="/companies/"]')
+                );
+                if (companyDiv) lead.company = (companyDiv.innerText || '').trim().split('\\n')[0].trim();
+            }
+
+            if (!lead.job_title && nameIdx >= 0 && nameIdx + 1 < children.length) {
+                const jt = (children[nameIdx + 1].innerText || '').trim().split('\\n')[0].trim();
+                if (jt && jt.length < 120 && jt !== lead.company && !jt.includes('@')) lead.job_title = jt;
+            }
+
+            if (!lead.location) {
+                const SKIP = ['no email', 'unlock email', 'no phone', 'request phone', 'click to run', 'add to sequence', 'access email'];
+                for (let i = (nameIdx >= 0 ? nameIdx + 2 : 0); i < children.length; i++) {
+                    const child = children[i];
+                    if (child.querySelector('a[href*="/accounts/"], a[href*="/companies/"]')) continue;
+                    const text = (child.innerText || '').trim().split('\\n')[0].trim();
+                    if (!text || text.length > 60 || /^\\d+$/.test(text)) continue;
+                    if (SKIP.some(p => text.toLowerCase().includes(p))) continue;
+                    if (text.includes('@') || /^https?:/.test(text)) continue;
+                    if (text === lead.job_title || text === lead.company) continue;
+                    lead.location = text;
+                    break;
+                }
+            }
         }
 
         // LinkedIn: look for a href containing linkedin.com/in/ within the row
         const liLink = row.querySelector('a[href*="linkedin.com/in/"]');
         if (liLink) {
             let href = liLink.getAttribute('href') || '';
-            href = href.split('?')[0];  // remove tracking params
+            href = href.split('?')[0];
             lead.linkedin_url = href;
         }
 
@@ -162,10 +229,58 @@ async def _scrape_page(page: Page) -> list[dict]:
     except Exception as e:
         logger.debug(f"Debug href scan failed: {e}")
 
+    # Debug: log the DOM structure around the first contact link
+    try:
+        debug_info = await page.evaluate("""() => {
+            const link = Array.from(document.querySelectorAll('a')).find(a => {
+                const h = a.getAttribute('href') || '';
+                return (h.includes('/contacts/') || h.includes('/people/')) && h.includes('?');
+            });
+            if (!link) return { found: false };
+            const tr = link.closest('tr');
+            const info = {
+                found: true,
+                name: link.textContent?.trim(),
+                href: link.getAttribute('href'),
+                inTable: !!tr,
+                parentTag: link.parentElement?.tagName,
+                grandparentTag: link.parentElement?.parentElement?.tagName,
+            };
+            if (tr) {
+                const cells = Array.from(tr.querySelectorAll('td'));
+                info.cellCount = cells.length;
+                info.cellTexts = cells.map(c => c.innerText?.trim().substring(0, 80));
+                info.cellHrefs = cells.map(c => {
+                    const a = c.querySelector('a');
+                    return a ? a.getAttribute('href')?.substring(0, 80) : null;
+                });
+            } else {
+                let el = link.parentElement;
+                for (let i = 0; i < 10 && el; i++) {
+                    const childCount = el.children?.length || 0;
+                    if (childCount >= 3) {
+                        info.rowTag = el.tagName;
+                        info.rowRole = el.getAttribute('role');
+                        info.rowChildCount = childCount;
+                        info.rowChildTexts = Array.from(el.children).map(c => c.innerText?.trim().substring(0, 80));
+                        break;
+                    }
+                    el = el.parentElement;
+                }
+            }
+            return info;
+        }""")
+        logger.info(f"DOM debug info: {debug_info}")
+    except Exception as e:
+        logger.debug(f"DOM debug failed: {e}")
+
     try:
         leads = await page.evaluate(_JS_EXTRACT)
         if leads:
             logger.info(f"JS extraction found {len(leads)} leads on this page")
+            # Log first lead details for debugging
+            if leads[0]:
+                logger.info(f"First lead sample: {leads[0]}")
             return leads
     except Exception as e:
         logger.error(f"JS extraction failed: {e}")
