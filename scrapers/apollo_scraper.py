@@ -43,6 +43,9 @@ _JS_EXTRACT = """() => {
         return (h.includes('/contacts/') || h.includes('/people/')) && h.includes('?');
     });
 
+    // Company link selector — Apollo may use /accounts/, /companies/, or /organizations/
+    const COMPANY_LINK_SEL = 'a[href*="/accounts/"], a[href*="/companies/"], a[href*="/organizations/"]';
+
     for (const link of links) {
         const name = (link.textContent || '').trim();
         if (!name || name.length < 2 || seen.has(name)) continue;
@@ -58,7 +61,7 @@ _JS_EXTRACT = """() => {
             // Look for a row-like container: has multiple links or has role="row"
             if (el.getAttribute('role') === 'row' ||
                 el.tagName === 'TR' ||
-                el.querySelectorAll('a[href*="/contacts/"], a[href*="/accounts/"], a[href*="/companies/"]').length >= 2) {
+                el.querySelectorAll('a[href*="/contacts/"], a[href*="/accounts/"], a[href*="/companies/"], a[href*="/organizations/"]').length >= 2) {
                 divRow = el;
                 break;
             }
@@ -89,9 +92,9 @@ _JS_EXTRACT = """() => {
                 if (jt && jt.length < 120 && !jt.includes('@')) lead.job_title = jt;
             }
 
-            // Company: cell containing an account/company link
+            // Company: cell containing an account/company/organization link
             for (const cell of cells) {
-                const compLink = cell.querySelector('a[href*="/accounts/"], a[href*="/companies/"]');
+                const compLink = cell.querySelector(COMPANY_LINK_SEL);
                 if (compLink) {
                     lead.company = (compLink.textContent || cell.innerText || '').trim().split('\\n')[0].trim();
                     break;
@@ -103,7 +106,7 @@ _JS_EXTRACT = """() => {
                 for (let i = 0; i < cells.length; i++) {
                     if (i === nameCell) continue;
                     const cell = cells[i];
-                    if (cell.querySelector('a[href*="/accounts/"], a[href*="/companies/"]')) continue;
+                    if (cell.querySelector(COMPANY_LINK_SEL)) continue;
                     const text = (cell.innerText || '').trim().split('\\n')[0].trim();
                     if (text && text.length > 3 && text.length < 120 &&
                         !text.includes('@') && !/^https?:/.test(text) &&
@@ -120,7 +123,7 @@ _JS_EXTRACT = """() => {
             const SKIP = ['no email', 'unlock email', 'no phone', 'request phone', 'click to run', 'add to sequence', 'access email'];
             for (let i = nameCell + 2; i < cells.length; i++) {
                 const cell = cells[i];
-                if (cell.querySelector('a[href*="/accounts/"], a[href*="/companies/"]')) continue;
+                if (cell.querySelector(COMPANY_LINK_SEL)) continue;
                 const text = (cell.innerText || '').trim().split('\\n')[0].trim();
                 if (!text || text.length > 60 || /^\\d+$/.test(text)) continue;
                 if (SKIP.some(p => text.toLowerCase().includes(p))) continue;
@@ -137,9 +140,7 @@ _JS_EXTRACT = """() => {
             const nameIdx = children.findIndex(c => c === link || c.contains(link));
 
             if (!lead.company) {
-                const companyDiv = children.find(c =>
-                    c.querySelector('a[href*="/accounts/"]') || c.querySelector('a[href*="/companies/"]')
-                );
+                const companyDiv = children.find(c => c.querySelector(COMPANY_LINK_SEL));
                 if (companyDiv) lead.company = (companyDiv.innerText || '').trim().split('\\n')[0].trim();
             }
 
@@ -152,7 +153,7 @@ _JS_EXTRACT = """() => {
                 const SKIP = ['no email', 'unlock email', 'no phone', 'request phone', 'click to run', 'add to sequence', 'access email'];
                 for (let i = (nameIdx >= 0 ? nameIdx + 2 : 0); i < children.length; i++) {
                     const child = children[i];
-                    if (child.querySelector('a[href*="/accounts/"], a[href*="/companies/"]')) continue;
+                    if (child.querySelector(COMPANY_LINK_SEL)) continue;
                     const text = (child.innerText || '').trim().split('\\n')[0].trim();
                     if (!text || text.length > 60 || /^\\d+$/.test(text)) continue;
                     if (SKIP.some(p => text.toLowerCase().includes(p))) continue;
@@ -161,6 +162,39 @@ _JS_EXTRACT = """() => {
                     lead.location = text;
                     break;
                 }
+            }
+        }
+
+        // --- Fallback: use table header column indices to identify company/location ---
+        if (!lead.company || !lead.location) {
+            const table = link.closest('table');
+            if (table && tr) {
+                const headers = Array.from(table.querySelectorAll('th')).map(
+                    th => (th.innerText || '').trim().toLowerCase()
+                );
+                const cells = Array.from(tr.querySelectorAll('td'));
+                if (!lead.company) {
+                    const compIdx = headers.findIndex(h => h.includes('company') || h.includes('account') || h.includes('organization'));
+                    if (compIdx >= 0 && compIdx < cells.length) {
+                        const t = (cells[compIdx].innerText || '').trim().split('\\n')[0].trim();
+                        if (t && t.length < 120) lead.company = t;
+                    }
+                }
+                if (!lead.location) {
+                    const locIdx = headers.findIndex(h => h.includes('location') || h.includes('city') || h.includes('country'));
+                    if (locIdx >= 0 && locIdx < cells.length) {
+                        const t = (cells[locIdx].innerText || '').trim().split('\\n')[0].trim();
+                        if (t && t.length < 80) lead.location = t;
+                    }
+                }
+            }
+        }
+
+        // --- Fallback: if company still empty, try to find it from job_title pattern "(Company)" ---
+        if (!lead.company && lead.job_title) {
+            const m = lead.job_title.match(/\\(([^)]{2,60})\\)/);
+            if (m) {
+                lead.company = m[1].replace(/\\s*(AM|SA|SAS|LLC|Inc|Ltd|GmbH)\\.?$/, '').trim() || m[1];
             }
         }
 
@@ -221,7 +255,7 @@ async def _scrape_page(page: Page) -> list[dict]:
         }""")
         logger.debug(f"Sample hrefs on page: {sample_hrefs}")
         # Log hrefs that look like profile links
-        profile_like = [h for h in sample_hrefs if any(k in (h or '') for k in ['/people', '/contacts', '/person', 'apollo'])]
+        profile_like = [h for h in sample_hrefs if any(k in (h or '') for k in ['/people', '/contacts', '/person', '/accounts', '/companies', '/organizations'])]
         if profile_like:
             logger.info(f"Profile-like hrefs found: {profile_like[:5]}")
         else:
@@ -251,9 +285,16 @@ async def _scrape_page(page: Page) -> list[dict]:
                 info.cellCount = cells.length;
                 info.cellTexts = cells.map(c => c.innerText?.trim().substring(0, 80));
                 info.cellHrefs = cells.map(c => {
-                    const a = c.querySelector('a');
-                    return a ? a.getAttribute('href')?.substring(0, 80) : null;
+                    const anchors = Array.from(c.querySelectorAll('a'));
+                    return anchors.map(a => a.getAttribute('href')?.substring(0, 80)).filter(Boolean);
                 });
+                // Log table headers to understand column mapping
+                const table = tr.closest('table');
+                if (table) {
+                    info.tableHeaders = Array.from(table.querySelectorAll('th')).map(
+                        th => th.innerText?.trim().substring(0, 40)
+                    );
+                }
             } else {
                 let el = link.parentElement;
                 for (let i = 0; i < 10 && el; i++) {
