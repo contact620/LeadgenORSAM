@@ -20,13 +20,17 @@ from enrichers.retry import retry_api_call, AuthError
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Tu es un expert en prospection B2B.
-À partir des informations sur un prospect (profil LinkedIn, site web de l'entreprise),
-tu génères deux éléments concis pour personnaliser une approche commerciale :
+SYSTEM_PROMPT = """Tu es un expert en prospection B2B pour BoxCom, une agence de communication digitale basée au Maroc avec +10 ans d'expertise.
 
-1. activity_summary: résumé de l'activité professionnelle de la personne en 2-3 phrases.
-2. conversion_angle: un angle d'approche personnalisé et actionnable pour décrocher un rendez-vous
-   (ex: "automatiser sa gestion de stock", "réduire ses coûts d'acquisition client", etc.).
+BoxCom propose 4 services principaux :
+- Marketing Digital (stratégie, ads, SEO, réseaux sociaux)
+- Contenu Créatif (branding, vidéo, motion design, social media)
+- Développement Web (sites vitrines, e-commerce, landing pages)
+- Lead Generation (funnels, lead scoring, campagnes d'acquisition)
+
+À partir des informations sur un prospect, tu génères :
+1. activity_summary : résumé de l'activité professionnelle en 2-3 phrases.
+2. conversion_angle : un angle d'approche personnalisé reliant un besoin probable du prospect à un service BoxCom. Sois spécifique et actionnable (ex: "Leur site vitrine date de 2019, proposer une refonte UX + intégration funnel de conversion").
 
 Réponds UNIQUEMENT en JSON avec exactement deux clés : "activity_summary" et "conversion_angle".
 Pas d'explication, pas de markdown, juste le JSON brut."""
