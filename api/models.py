@@ -30,6 +30,9 @@ class LeadRecord(BaseModel):
     is_hit: Optional[bool] = None
     activity_summary: Optional[str] = None
     conversion_angle: Optional[str] = None
+    digital_maturity: Optional[str] = None
+    estimated_budget: Optional[str] = None
+    business_signals: Optional[str] = None
 
 
 class JobStats(BaseModel):

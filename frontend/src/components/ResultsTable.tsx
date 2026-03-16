@@ -188,7 +188,7 @@ export function ResultsTable({ leads, jobId }: Props) {
                       </td>
                     </tr>
 
-                    {isExpanded && (lead.activity_summary || lead.conversion_angle) && (
+                    {isExpanded && (lead.activity_summary || lead.conversion_angle || lead.digital_maturity || lead.estimated_budget || lead.business_signals) && (
                       <tr key={`${globalIdx}-expanded`} style={{ background: 'rgba(77,159,255,0.04)', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                         <td colSpan={8} className="px-5 py-4">
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
@@ -202,6 +202,24 @@ export function ResultsTable({ leads, jobId }: Props) {
                               <div>
                                 <p className="font-medium mb-1.5" style={{ color: 'rgba(226,232,248,0.5)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Angle de conversion</p>
                                 <p style={{ color: 'rgba(226,232,248,0.6)', lineHeight: 1.6 }}>{lead.conversion_angle}</p>
+                              </div>
+                            )}
+                            {lead.digital_maturity && (
+                              <div>
+                                <p className="font-medium mb-1.5" style={{ color: 'rgba(226,232,248,0.5)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Maturité digitale</p>
+                                <p style={{ color: 'rgba(226,232,248,0.6)', lineHeight: 1.6 }}>{lead.digital_maturity}</p>
+                              </div>
+                            )}
+                            {lead.estimated_budget && (
+                              <div>
+                                <p className="font-medium mb-1.5" style={{ color: 'rgba(226,232,248,0.5)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Budget estimé</p>
+                                <p style={{ color: 'rgba(226,232,248,0.6)', lineHeight: 1.6 }}>{lead.estimated_budget}</p>
+                              </div>
+                            )}
+                            {lead.business_signals && (
+                              <div className="sm:col-span-2">
+                                <p className="font-medium mb-1.5" style={{ color: 'rgba(226,232,248,0.5)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Signaux business</p>
+                                <p style={{ color: 'rgba(226,232,248,0.6)', lineHeight: 1.6 }}>{lead.business_signals}</p>
                               </div>
                             )}
                           </div>

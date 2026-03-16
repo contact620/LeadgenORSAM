@@ -41,13 +41,14 @@ def get_queue(job_id: str) -> Optional[asyncio.Queue]:
 
 # ── Progress mapping ──────────────────────────────────────────────────────────
 # Step weights for total_progress calculation (must sum to 1.0)
-STEP_WEIGHTS = {1: 0.05, 2: 0.25, 3: 0.30, 4: 0.05, 5: 0.35}
+STEP_WEIGHTS = {1: 0.05, 2: 0.20, 3: 0.25, 4: 0.05, 5: 0.30, 6: 0.15}
 STEP_NAMES = {
     1: "Input Apollo URL",
     2: "Scraping Apollo",
     3: "Enrichissement (Google + Dropcontact)",
     4: "Calcul du taux de hit",
     5: "Enrichissement IA (GPT-4o-mini)",
+    6: "Enrichissement Perplexity (maturité, budget, signaux)",
 }
 
 # Patterns to detect which step a log message belongs to
@@ -56,6 +57,7 @@ STEP_PATTERNS = [
     (3, re.compile(r"Step 3|Google enrichment|Dropcontact|dropcontact|batch \d+", re.I)),
     (4, re.compile(r"Step 4|hit score|Hit score complete", re.I)),
     (5, re.compile(r"Step 5|GPT|LinkedIn profile|Scraping hit lead", re.I)),
+    (6, re.compile(r"Step 6|Perplexity|perplexity enrichment|digital_maturity", re.I)),
 ]
 
 
@@ -159,9 +161,11 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         from enrichers.google_search import _reset_state as _reset_google
         from enrichers.dropcontact import _reset_state as _reset_dc
         from enrichers.gpt_enricher import _reset_state as _reset_gpt
+        from enrichers.perplexity_enricher import _reset_state as _reset_perplexity
         _reset_google()
         _reset_dc()
         _reset_gpt()
+        _reset_perplexity()
 
         # Run async pipeline steps in a new event loop for this thread
         new_loop = _asyncio.new_event_loop()
@@ -217,10 +221,19 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
             from enrichers.gpt_enricher import enrich_leads_gpt
             hit_leads = enrich_leads_gpt(hit_leads)
             handler.set_explicit_progress(5, 1.0, "Enrichissement IA terminé")
+
+            # ── Step 6: Perplexity enrichment ──────────────────────────────
+            handler.set_explicit_progress(6, 0.0, "Enrichissement Perplexity (maturité digitale, budget, signaux)...")
+            from enrichers.perplexity_enricher import enrich_leads_perplexity
+            hit_leads = enrich_leads_perplexity(hit_leads)
+            handler.set_explicit_progress(6, 1.0, "Enrichissement Perplexity terminé")
         else:
             for lead in hit_leads:
                 lead.setdefault("activity_summary", None)
                 lead.setdefault("conversion_angle", None)
+                lead.setdefault("digital_maturity", None)
+                lead.setdefault("estimated_budget", None)
+                lead.setdefault("business_signals", None)
 
         new_loop.close()
 
@@ -234,6 +247,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
             "first_name", "last_name", "company", "job_title", "location",
             "email", "phone", "linkedin_url", "website",
             "hit_score", "is_hit", "activity_summary", "conversion_angle",
+            "digital_maturity", "estimated_budget", "business_signals",
         ]
         df = pd.DataFrame(leads)
         for col in CSV_COLUMNS:

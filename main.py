@@ -35,6 +35,7 @@ from enrichers.dropcontact import enrich_leads_dropcontact
 from processors.hit_calculator import score_all_leads
 from scrapers.website_scraper import scrape_hit_leads
 from enrichers.gpt_enricher import enrich_leads_gpt
+from enrichers.perplexity_enricher import enrich_leads_perplexity
 
 # ── CSV column order (matches PRD schema) ─────────────────────────────────────
 CSV_COLUMNS = [
@@ -51,6 +52,9 @@ CSV_COLUMNS = [
     "is_hit",
     "activity_summary",
     "conversion_angle",
+    "digital_maturity",
+    "estimated_budget",
+    "business_signals",
 ]
 
 
@@ -155,6 +159,10 @@ async def run_pipeline(args):
         # 5b: GPT-4o-mini
         logger.info("Step 5b — GPT-4o-mini enrichment...")
         hit_leads = enrich_leads_gpt(hit_leads)
+
+        # 5c: Perplexity Sonar (digital maturity, budget, signals)
+        logger.info("Step 5c — Perplexity enrichment (maturité digitale, budget, signaux)...")
+        hit_leads = enrich_leads_perplexity(hit_leads)
     else:
         if args.skip_gpt:
             logger.info("Step 5 — Skipped (--skip-gpt flag set)")
@@ -166,6 +174,9 @@ async def run_pipeline(args):
             lead.setdefault("website_text", "")
             lead.setdefault("activity_summary", None)
             lead.setdefault("conversion_angle", None)
+            lead.setdefault("digital_maturity", None)
+            lead.setdefault("estimated_budget", None)
+            lead.setdefault("business_signals", None)
 
     # ── Final CSV export ──────────────────────────────────────────────────────
     output_filename = args.output or f"leads_final_{ts}.csv"

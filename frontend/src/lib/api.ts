@@ -30,6 +30,9 @@ export interface Lead {
   is_hit?: boolean
   activity_summary?: string
   conversion_angle?: string
+  digital_maturity?: string
+  estimated_budget?: string
+  business_signals?: string
 }
 
 export interface JobResult {

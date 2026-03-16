@@ -9,6 +9,7 @@ load_dotenv()
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
 DROPCONTACT_API_KEY = os.getenv("DROPCONTACT_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
 
 # ── File Paths ─────────────────────────────────────────────────────────────────
 APOLLO_COOKIES_PATH = os.getenv("APOLLO_COOKIES_PATH", "apollo_cookies.json")
