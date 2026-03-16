@@ -37,7 +37,11 @@ async def get_history_leads(job_id: str):
     if not os.path.exists(csv_path):
         raise HTTPException(404, "CSV file no longer available on disk")
     df = pd.read_csv(csv_path)
-    return df.where(df.notna(), None).to_dict(orient="records")
+    data = df.to_dict(orient="records")
+    return [
+        {k: (None if (isinstance(v, float) and pd.isna(v)) else v) for k, v in row.items()}
+        for row in data
+    ]
 
 
 @router.delete("/history/{job_id}")
