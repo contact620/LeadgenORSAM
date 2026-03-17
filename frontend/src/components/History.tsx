@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
-import { Download, Eye, Trash2, AlertCircle, Clock, ExternalLink, ArrowLeft, Loader2 } from 'lucide-react'
+import { Download, Eye, Trash2, AlertCircle, Clock, ArrowLeft, Loader2 } from 'lucide-react'
 import { getHistory, getHistoryLeads, deleteHistoryEntry, getDownloadUrl, type HistoryEntry, type Lead, type JobResult } from '@/lib/api'
 import { StatsBar } from './StatsBar'
 import { ResultsTable } from './ResultsTable'
@@ -83,6 +83,13 @@ export function History({ onBack }: Props) {
         phone_pct: viewEntry.phone_pct,
         website_pct: viewEntry.website_pct,
         avg_score: viewEntry.avg_score,
+        email_count: 0,
+        linkedin_count: 0,
+        phone_count: 0,
+        website_count: 0,
+        icp_hot_count: 0,
+        icp_warm_count: 0,
+        icp_cold_count: 0,
       },
       leads: viewLeads ?? [],
     }

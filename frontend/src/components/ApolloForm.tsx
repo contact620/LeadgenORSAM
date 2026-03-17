@@ -2,10 +2,10 @@ import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
 import { Rocket, AlertCircle, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { getHealth, type HealthCheck } from '@/lib/api'
+import { getHealth, type HealthCheck, type RunRequest } from '@/lib/api'
 
 interface Props {
-  onSubmit: (url: string, maxLeads: number, skipGpt: boolean) => void
+  onSubmit: (req: RunRequest) => void
   disabled?: boolean
   configReady?: boolean
   defaultMaxLeads?: number
@@ -30,7 +30,11 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!url.trim()) return
-    onSubmit(url.trim(), maxLeads, skipGpt)
+    onSubmit({
+      url: url.trim(),
+      max_leads: maxLeads,
+      skip_gpt: skipGpt,
+    })
   }
 
   const missingKeys = health?.missing_keys ?? []
@@ -59,7 +63,7 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
         </h1>
         <p className="text-base font-light" style={{ color: 'rgba(226,232,248,0.5)', lineHeight: 1.6 }}>
           Apollo → <strong style={{ color: 'rgba(226,232,248,0.8)', fontWeight: 500 }}>Google CSE</strong> → Dropcontact → <strong style={{ color: 'rgba(226,232,248,0.8)', fontWeight: 500 }}>Claude AI</strong>
-          <br />Extrayez, enrichissez et qualifiez vos leads B2B en 5 étapes.
+          <br />Extrayez, enrichissez et qualifiez vos leads B2B en 6 étapes.
         </p>
       </div>
 
@@ -168,8 +172,9 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
                     {skipGpt ? 'Désactivé (plus rapide)' : 'Activé'}
                   </span>
                 </div>
-                <p className="mt-1 text-xs" style={{ color: 'rgba(226,232,248,0.25)' }}>Saute GPT-4o-mini (étape 5)</p>
+                <p className="mt-1 text-xs" style={{ color: 'rgba(226,232,248,0.25)' }}>Saute l'enrichissement IA (Claude + Perplexity)</p>
               </div>
+
             </div>
           )}
 
@@ -190,15 +195,16 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
       {/* ── Pipeline steps ───────────────────────────────────────────── */}
       <div className="mt-10">
         <p className="text-xs font-semibold mb-4" style={{ color: 'rgba(226,232,248,0.25)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
-          5 étapes automatisées
+          6 étapes automatisées
         </p>
-        <div className="grid grid-cols-5 gap-2">
+        <div className="grid grid-cols-6 gap-2">
           {[
             { num: '01', icon: '🔍', name: 'Scraping Apollo',   tool: 'Playwright' },
             { num: '02', icon: '🔗', name: 'LinkedIn URL',      tool: 'Google CSE' },
             { num: '03', icon: '📧', name: 'Email + Tel',       tool: 'Dropcontact' },
             { num: '04', icon: '📊', name: 'Score & Filtre',    tool: '0–100 pts' },
-            { num: '05', icon: '🤖', name: 'Enrichissement IA', tool: 'Claude AI' },
+            { num: '05', icon: '🎯', name: 'Scoring ICP',       tool: 'Claude AI' },
+            { num: '06', icon: '🤖', name: 'Enrichissement IA', tool: 'Claude + Perplexity' },
           ].map(step => (
             <div
               key={step.num}

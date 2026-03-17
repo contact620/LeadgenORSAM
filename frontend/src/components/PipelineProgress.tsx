@@ -1,5 +1,5 @@
 import { CheckCircle2, Circle, Loader2, AlertCircle } from 'lucide-react'
-import { cn } from '@/lib/utils'
+
 import type { ProgressEvent, PipelineStatus } from '@/hooks/usePipeline'
 
 const STEPS = [

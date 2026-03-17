@@ -23,6 +23,10 @@ MAX_LEADS = int(os.getenv("MAX_LEADS", "500"))
 # Run browser visibly — bypasses Apollo anti-bot detection (recommended: False = visible)
 APOLLO_HEADLESS = os.getenv("APOLLO_HEADLESS", "false").lower() == "true"
 
+# ── ICP Scoring ──────────────────────────────────────────────────────────────
+ICP_BATCH_SIZE = int(os.getenv("ICP_BATCH_SIZE", "5"))
+ICP_PROMPT_PATH = os.getenv("ICP_PROMPT_PATH", "prompts/icp_scoring.txt")
+
 # ── Hit Score Weights ─────────────────────────────────────────────────────────
 SCORE_EMAIL = 40
 SCORE_LINKEDIN = 30

@@ -29,8 +29,8 @@ export default function App() {
 
   useEffect(() => { refreshConfig() }, [refreshConfig])
 
-  const handleSubmit = (url: string, maxLeads: number, skipGpt: boolean) => {
-    startPipeline({ url, max_leads: maxLeads, skip_gpt: skipGpt })
+  const handleSubmit = (req: import('@/lib/api').RunRequest) => {
+    startPipeline(req)
   }
 
   const isConfigReady =

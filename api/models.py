@@ -2,8 +2,19 @@ from pydantic import BaseModel
 from typing import Optional
 
 
+class ApolloFilters(BaseModel):
+    person_titles: list[str] = []
+    locations: list[str] = []
+    industries: list[str] = []
+    employee_ranges: list[str] = []
+    seniority: list[str] = []
+    email_status: list[str] = ["verified"]
+    keywords: list[str] = []
+
+
 class RunRequest(BaseModel):
-    url: str
+    url: Optional[str] = None
+    filters: Optional[ApolloFilters] = None
     max_leads: int = 500
     skip_gpt: bool = False
 
@@ -33,6 +44,10 @@ class LeadRecord(BaseModel):
     digital_maturity: Optional[str] = None
     estimated_budget: Optional[str] = None
     business_signals: Optional[str] = None
+    icp_score: Optional[int] = None
+    icp_tier: Optional[str] = None
+    icp_rationale: Optional[str] = None
+    icp_scores_detail: Optional[str] = None
 
 
 class JobStats(BaseModel):
@@ -45,6 +60,9 @@ class JobStats(BaseModel):
     linkedin_count: int = 0
     phone_count: int = 0
     website_count: int = 0
+    icp_hot_count: int = 0
+    icp_warm_count: int = 0
+    icp_cold_count: int = 0
 
 
 class JobResult(BaseModel):

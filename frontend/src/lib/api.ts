@@ -1,5 +1,16 @@
+export interface ApolloFilters {
+  person_titles: string[]
+  locations: string[]
+  industries: string[]
+  employee_ranges: string[]
+  seniority: string[]
+  email_status: string[]
+  keywords: string[]
+}
+
 export interface RunRequest {
-  url: string
+  url?: string
+  filters?: ApolloFilters
   max_leads: number
   skip_gpt: boolean
 }
@@ -14,6 +25,9 @@ export interface JobStats {
   linkedin_count: number
   phone_count: number
   website_count: number
+  icp_hot_count: number
+  icp_warm_count: number
+  icp_cold_count: number
 }
 
 export interface Lead {
@@ -33,6 +47,10 @@ export interface Lead {
   digital_maturity?: string
   estimated_budget?: string
   business_signals?: string
+  icp_score?: number
+  icp_tier?: string
+  icp_rationale?: string
+  icp_scores_detail?: string
 }
 
 export interface JobResult {

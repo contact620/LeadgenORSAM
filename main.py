@@ -36,6 +36,7 @@ from processors.hit_calculator import score_all_leads
 from scrapers.website_scraper import scrape_hit_leads
 from enrichers.gpt_enricher import enrich_leads_gpt
 from enrichers.perplexity_enricher import enrich_leads_perplexity
+from processors.icp_scorer import score_leads_icp
 
 # ── CSV column order (matches PRD schema) ─────────────────────────────────────
 CSV_COLUMNS = [
@@ -50,6 +51,10 @@ CSV_COLUMNS = [
     "website",
     "hit_score",
     "is_hit",
+    "icp_score",
+    "icp_tier",
+    "icp_rationale",
+    "icp_scores_detail",
     "activity_summary",
     "conversion_angle",
     "digital_maturity",
@@ -103,6 +108,11 @@ def print_summary(all_leads: list[dict], hit_leads: list[dict], nohit_leads: lis
         print(f"  LinkedIn URLs found    : {linkedins} ({100*linkedins//total}%)")
         print(f"  Phones found           : {phones} ({100*phones//total}%)")
         print(f"  Websites found         : {websites} ({100*websites//total}%)")
+        icp_hot = sum(1 for l in all_leads if l.get("icp_tier") == "hot")
+        icp_warm = sum(1 for l in all_leads if l.get("icp_tier") == "warm")
+        icp_cold = sum(1 for l in all_leads if l.get("icp_tier") == "cold")
+        if icp_hot or icp_warm or icp_cold:
+            print(f"  ICP Hot / Warm / Cold   : {icp_hot} / {icp_warm} / {icp_cold}")
     print(f"\n  Output file: {path}")
     print("=" * 60 + "\n")
 
@@ -142,13 +152,32 @@ async def run_pipeline(args):
     logger.info("Step 4 — Calculating hit scores...")
     hit_leads, nohit_leads = score_all_leads(leads)
 
+    # ── Step 5: ICP scoring (hit leads only) ───────────────────────────────────
+    if not args.skip_gpt and hit_leads:
+        logger.info(f"Step 5 — ICP scoring on {len(hit_leads)} hit leads...")
+        hit_leads = score_leads_icp(hit_leads)
+        icp_hot = sum(1 for l in hit_leads if l.get("icp_tier") == "hot")
+        icp_warm = sum(1 for l in hit_leads if l.get("icp_tier") == "warm")
+        icp_cold = sum(1 for l in hit_leads if l.get("icp_tier") == "cold")
+        logger.info(f"Step 5 complete: {icp_hot} hot, {icp_warm} warm, {icp_cold} cold")
+    else:
+        if args.skip_gpt:
+            logger.info("Step 5 — Skipped (--skip-gpt flag set)")
+        else:
+            logger.info("Step 5 — Skipped (no hit leads)")
+        for lead in hit_leads:
+            lead.setdefault("icp_score", None)
+            lead.setdefault("icp_tier", None)
+            lead.setdefault("icp_rationale", None)
+            lead.setdefault("icp_scores_detail", None)
+
     # ── Save intermediate CSV (all leads, before AI enrichment) ───────────────
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     intermediate_filename = f"leads_intermediate_{ts}.csv"
     intermediate_path = export_csv(leads, intermediate_filename)
     logger.info(f"Intermediate CSV saved: {intermediate_path}")
 
-    # ── Step 5: AI enrichment (hit leads only) ────────────────────────────────
+    # ── Step 6: AI enrichment (hit leads only) ────────────────────────────────
     if not args.skip_gpt and hit_leads:
         logger.info(f"Step 5 — AI enrichment on {len(hit_leads)} hit leads...")
 
@@ -216,7 +245,7 @@ def parse_args():
     parser.add_argument(
         "--skip-gpt",
         action="store_true",
-        help="Skip GPT-4o-mini enrichment (Step 5)",
+        help="Skip GPT-4o-mini enrichment (Step 6)",
     )
     parser.add_argument(
         "--log-level",
