@@ -2,8 +2,19 @@ from pydantic import BaseModel
 from typing import Optional
 
 
+class ApolloFilters(BaseModel):
+    person_titles: list[str] = []
+    locations: list[str] = []
+    industries: list[str] = []
+    employee_ranges: list[str] = []
+    seniority: list[str] = []
+    email_status: list[str] = ["verified"]
+    keywords: list[str] = []
+
+
 class RunRequest(BaseModel):
-    url: str
+    url: Optional[str] = None
+    filters: Optional[ApolloFilters] = None
     max_leads: int = 500
     skip_gpt: bool = False
 

@@ -1,11 +1,28 @@
 import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
-import { Rocket, AlertCircle, Settings } from 'lucide-react'
+import { Rocket, AlertCircle, Settings, SlidersHorizontal, Link } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { getHealth, type HealthCheck } from '@/lib/api'
+import { getHealth, type HealthCheck, type RunRequest, type ApolloFilters } from '@/lib/api'
+import { FilterPanel } from './FilterPanel'
+
+const EMPTY_FILTERS: ApolloFilters = {
+  person_titles: [],
+  locations: [],
+  industries: [],
+  employee_ranges: [],
+  seniority: [],
+  email_status: ['verified'],
+  keywords: [],
+}
+
+function filtersHaveValues(f: ApolloFilters): boolean {
+  return f.person_titles.length > 0 || f.locations.length > 0 ||
+    f.industries.length > 0 || f.employee_ranges.length > 0 ||
+    f.seniority.length > 0 || f.keywords.length > 0
+}
 
 interface Props {
-  onSubmit: (url: string, maxLeads: number, skipGpt: boolean) => void
+  onSubmit: (req: RunRequest) => void
   disabled?: boolean
   configReady?: boolean
   defaultMaxLeads?: number
@@ -13,7 +30,9 @@ interface Props {
 }
 
 export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, onOpenSettings }: Props) {
+  const [mode, setMode] = useState<'filters' | 'url'>('filters')
   const [url, setUrl] = useState('')
+  const [filters, setFilters] = useState<ApolloFilters>({ ...EMPTY_FILTERS })
   const [maxLeads, setMaxLeads] = useState(defaultMaxLeads ?? 200)
   const [skipGpt, setSkipGpt] = useState(false)
   const [showConfig, setShowConfig] = useState(true)
@@ -27,10 +46,16 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
     })
   }, [])
 
+  const canSubmit = mode === 'url' ? !!url.trim() : filtersHaveValues(filters)
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!url.trim()) return
-    onSubmit(url.trim(), maxLeads, skipGpt)
+    if (!canSubmit) return
+    if (mode === 'url') {
+      onSubmit({ url: url.trim(), max_leads: maxLeads, skip_gpt: skipGpt })
+    } else {
+      onSubmit({ filters, max_leads: maxLeads, skip_gpt: skipGpt })
+    }
   }
 
   const missingKeys = health?.missing_keys ?? []
@@ -101,7 +126,51 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
         </div>
 
         <div style={{ padding: '24px 32px 32px' }}>
-          {/* URL input */}
+          {/* ── Mode toggle tabs ──────────────────────────────────────── */}
+          <div className="flex gap-1 mb-6 p-1 rounded-lg" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <button
+              type="button"
+              onClick={() => setMode('filters')}
+              className="flex-1 flex items-center justify-center gap-2 text-sm font-medium rounded-md transition-all duration-150"
+              style={{
+                padding: '9px 16px',
+                background: mode === 'filters' ? 'rgba(77,159,255,0.12)' : 'transparent',
+                border: mode === 'filters' ? '1px solid rgba(77,159,255,0.25)' : '1px solid transparent',
+                color: mode === 'filters' ? '#8bb8ff' : 'rgba(226,232,248,0.35)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              <SlidersHorizontal size={14} />
+              Filtres
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('url')}
+              className="flex-1 flex items-center justify-center gap-2 text-sm font-medium rounded-md transition-all duration-150"
+              style={{
+                padding: '9px 16px',
+                background: mode === 'url' ? 'rgba(77,159,255,0.12)' : 'transparent',
+                border: mode === 'url' ? '1px solid rgba(77,159,255,0.25)' : '1px solid transparent',
+                color: mode === 'url' ? '#8bb8ff' : 'rgba(226,232,248,0.35)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              <Link size={14} />
+              URL directe
+            </button>
+          </div>
+
+          {/* ── Filter mode ───────────────────────────────────────────── */}
+          {mode === 'filters' && (
+            <div className="mb-6">
+              <FilterPanel value={filters} onChange={setFilters} disabled={disabled} />
+            </div>
+          )}
+
+          {/* ── URL mode ──────────────────────────────────────────────── */}
+          {mode === 'url' && (
           <div className="mb-6">
             <div className="flex items-center justify-between mb-2.5">
               <label className="text-sm font-medium" style={{ color: 'rgba(226,232,248,0.5)' }}>URL Apollo.io</label>
@@ -122,6 +191,7 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
               Effectuez votre recherche sur Apollo.io, puis copiez-collez l'URL complète.
             </p>
           </div>
+          )}
 
           <div style={{ height: 1, background: 'rgba(255,255,255,0.07)', marginBottom: 20 }} />
 
@@ -176,9 +246,9 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
           {/* Submit */}
           <button
             type="submit"
-            disabled={disabled || !url.trim()}
+            disabled={disabled || !canSubmit}
             className="btn-grad w-full flex items-center justify-center gap-2.5 rounded-xl text-white font-semibold mt-7"
-            style={{ padding: '15px 24px', fontSize: 15, letterSpacing: '-0.01em', opacity: (disabled || !url.trim()) ? 0.4 : 1, cursor: (disabled || !url.trim()) ? 'not-allowed' : 'pointer', border: 'none', fontFamily: 'inherit' }}
+            style={{ padding: '15px 24px', fontSize: 15, letterSpacing: '-0.01em', opacity: (disabled || !canSubmit) ? 0.4 : 1, cursor: (disabled || !canSubmit) ? 'not-allowed' : 'pointer', border: 'none', fontFamily: 'inherit' }}
           >
             <span style={{ width: 18, height: 18, background: 'rgba(255,255,255,0.2)', borderRadius: 4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, flexShrink: 0 }}>▶</span>
             <Rocket className="w-4 h-4" />
