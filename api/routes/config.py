@@ -22,6 +22,7 @@ class ConfigUpdate(BaseModel):
     serper_api_key: Optional[str] = None
     dropcontact_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
+    perplexity_api_key: Optional[str] = None
     hit_threshold: Optional[int] = None
     max_leads: Optional[int] = None
 
@@ -33,6 +34,7 @@ def get_config():
     pipeline_config.SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
     pipeline_config.DROPCONTACT_API_KEY = os.getenv("DROPCONTACT_API_KEY", "")
     pipeline_config.ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+    pipeline_config.PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
     pipeline_config.HIT_THRESHOLD = int(os.getenv("HIT_THRESHOLD", "50"))
     pipeline_config.MAX_LEADS = int(os.getenv("MAX_LEADS", "500"))
 
@@ -40,6 +42,7 @@ def get_config():
         "serper_api_key": not _is_placeholder(pipeline_config.SERPER_API_KEY),
         "dropcontact_api_key": not _is_placeholder(pipeline_config.DROPCONTACT_API_KEY),
         "anthropic_api_key": not _is_placeholder(pipeline_config.ANTHROPIC_API_KEY),
+        "perplexity_api_key": not _is_placeholder(pipeline_config.PERPLEXITY_API_KEY),
         "apollo_cookies": os.path.exists(pipeline_config.APOLLO_COOKIES_PATH),
         "hit_threshold": pipeline_config.HIT_THRESHOLD,
         "max_leads": pipeline_config.MAX_LEADS,
@@ -59,6 +62,8 @@ def update_config(body: ConfigUpdate):
         updates["DROPCONTACT_API_KEY"] = body.dropcontact_api_key
     if body.anthropic_api_key is not None:
         updates["ANTHROPIC_API_KEY"] = body.anthropic_api_key
+    if body.perplexity_api_key is not None:
+        updates["PERPLEXITY_API_KEY"] = body.perplexity_api_key
     if body.hit_threshold is not None:
         updates["HIT_THRESHOLD"] = str(body.hit_threshold)
     if body.max_leads is not None:
@@ -72,6 +77,7 @@ def update_config(body: ConfigUpdate):
     pipeline_config.SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
     pipeline_config.DROPCONTACT_API_KEY = os.getenv("DROPCONTACT_API_KEY", "")
     pipeline_config.ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+    pipeline_config.PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
     if body.hit_threshold is not None:
         pipeline_config.HIT_THRESHOLD = body.hit_threshold
     if body.max_leads is not None:

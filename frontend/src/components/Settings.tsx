@@ -193,8 +193,8 @@ function CookiePanel({ service, label, isPresent, onUploaded }: CookiePanelProps
 
 export function Settings({ onBack, onConfigChange }: Props) {
   const [config, setConfig] = useState<ConfigStatus | null>(null)
-  const [keys, setKeys] = useState({ serper: '', dropcontact: '', anthropic: '' })
-  const [showKey, setShowKey] = useState({ serper: false, dropcontact: false, anthropic: false })
+  const [keys, setKeys] = useState({ serper: '', dropcontact: '', anthropic: '', perplexity: '' })
+  const [showKey, setShowKey] = useState({ serper: false, dropcontact: false, anthropic: false, perplexity: false })
   const [savingKeys, setSavingKeys] = useState(false)
   const [keysStatus, setKeysStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
   const [pipeline, setPipeline] = useState({ hitThreshold: 50 })
@@ -212,9 +212,9 @@ export function Settings({ onBack, onConfigChange }: Props) {
   const handleSaveKeys = async () => {
     setSavingKeys(true); setKeysStatus(null)
     try {
-      await saveConfig({ serper_api_key: keys.serper || undefined, dropcontact_api_key: keys.dropcontact || undefined, anthropic_api_key: keys.anthropic || undefined })
+      await saveConfig({ serper_api_key: keys.serper || undefined, dropcontact_api_key: keys.dropcontact || undefined, anthropic_api_key: keys.anthropic || undefined, perplexity_api_key: keys.perplexity || undefined })
       setKeysStatus({ type: 'success', msg: 'Clés sauvegardées' })
-      setKeys({ serper: '', dropcontact: '', anthropic: '' })
+      setKeys({ serper: '', dropcontact: '', anthropic: '', perplexity: '' })
       refreshConfig()
     } catch (e: unknown) {
       setKeysStatus({ type: 'error', msg: e instanceof Error ? e.message : 'Erreur' })
@@ -232,10 +232,11 @@ export function Settings({ onBack, onConfigChange }: Props) {
     } finally { setSavingPipeline(false) }
   }
 
-  const keyFields: { id: keyof typeof keys; label: string; required: boolean; configKey: keyof ConfigStatus }[] = [
+  const keyFields: { id: keyof typeof keys; label: string; required: boolean; configKey: keyof ConfigStatus; hint?: string }[] = [
     { id: 'serper',      label: 'SERPER_API_KEY',      required: true,  configKey: 'serper_api_key' },
-    { id: 'dropcontact', label: 'DROPCONTACT_API_KEY', required: false, configKey: 'dropcontact_api_key' },
+    { id: 'dropcontact', label: 'DROPCONTACT_API_KEY', required: false, configKey: 'dropcontact_api_key', hint: 'Optionnel — email/téléphone ignorés si absent' },
     { id: 'anthropic',   label: 'ANTHROPIC_API_KEY',   required: true,  configKey: 'anthropic_api_key' },
+    { id: 'perplexity',  label: 'PERPLEXITY_API_KEY',  required: false, configKey: 'perplexity_api_key', hint: 'Optionnel — enrichissement Perplexity Sonar ignoré si absent' },
   ]
 
   const actionBtnStyle = (disabled: boolean) => ({
@@ -295,7 +296,7 @@ export function Settings({ onBack, onConfigChange }: Props) {
       {/* API Keys */}
       <SectionCard title="Clés API" icon={<KeyRound className="w-4 h-4" />}>
         <div className="space-y-5">
-          {keyFields.map(({ id, label, required, configKey }) => (
+          {keyFields.map(({ id, label, required, configKey, hint }) => (
             <div key={id}>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-xs font-medium" style={{ color: 'rgba(226,232,248,0.5)' }}>
@@ -322,7 +323,7 @@ export function Settings({ onBack, onConfigChange }: Props) {
                   {showKey[id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
               </div>
-              {!required && <p className="mt-1 text-xs" style={{ color: 'rgba(226,232,248,0.25)' }}>Optionnel — email/téléphone ignorés si absent</p>}
+              {hint && <p className="mt-1 text-xs" style={{ color: 'rgba(226,232,248,0.25)' }}>{hint}</p>}
             </div>
           ))}
 
@@ -342,9 +343,9 @@ export function Settings({ onBack, onConfigChange }: Props) {
 
           <button
             onClick={handleSaveKeys}
-            disabled={savingKeys || (!keys.serper && !keys.dropcontact && !keys.anthropic)}
+            disabled={savingKeys || (!keys.serper && !keys.dropcontact && !keys.anthropic && !keys.perplexity)}
             className="btn-grad flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white"
-            style={actionBtnStyle(savingKeys || (!keys.serper && !keys.dropcontact && !keys.anthropic))}
+            style={actionBtnStyle(savingKeys || (!keys.serper && !keys.dropcontact && !keys.anthropic && !keys.perplexity))}
           >
             {savingKeys ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
             Sauvegarder les clés

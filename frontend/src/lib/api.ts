@@ -90,6 +90,7 @@ export interface ConfigStatus {
   serper_api_key: boolean
   dropcontact_api_key: boolean
   anthropic_api_key: boolean
+  perplexity_api_key: boolean
   apollo_cookies: boolean
   hit_threshold: number
   max_leads: number
@@ -99,6 +100,7 @@ export interface ConfigUpdate {
   serper_api_key?: string
   dropcontact_api_key?: string
   anthropic_api_key?: string
+  perplexity_api_key?: string
   hit_threshold?: number
   max_leads?: number
 }
