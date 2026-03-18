@@ -1,4 +1,4 @@
-import { Users, Zap, Mail, Linkedin, Phone } from 'lucide-react'
+import { Users, Zap, Mail, Linkedin, Phone, Target } from 'lucide-react'
 import type { JobResult } from '@/lib/api'
 
 interface Props {
@@ -51,6 +51,53 @@ export function StatsBar({ result }: Props) {
         <StatCard icon={<Linkedin className="w-4 h-4" style={{ color: '#4d9fff' }} />} accentColor="#4d9fff" glowColor="rgba(77,159,255,0.15)" label="LinkedIn" value={`${stats.linkedin_pct}%`} sub={`${stats.linkedin_count ?? 0} / ${total_leads} leads`} />
         <StatCard icon={<Phone className="w-4 h-4" style={{ color: '#22d3ee' }} />} accentColor="#22d3ee" glowColor="rgba(34,211,238,0.15)" label="Téléphones" value={`${stats.phone_pct}%`} sub={`${stats.phone_count ?? 0} / ${total_leads} · Site: ${stats.website_count ?? 0} / ${total_leads}`} />
       </div>
+
+      {/* ICP distribution (only if ICP scoring was used) */}
+      {(stats.icp_hot_count > 0 || stats.icp_warm_count > 0 || stats.icp_cold_count > 0) && (
+        <div
+          className="mt-3 rounded-xl px-5 py-4"
+          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <Target className="w-4 h-4" style={{ color: '#fb923c' }} />
+            <span className="font-medium text-sm" style={{ color: 'rgba(226,232,248,0.5)' }}>Scoring ICP</span>
+          </div>
+          <div className="flex gap-4">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" style={{ background: 'rgba(249,115,22,0.12)', color: '#fb923c', border: '1px solid rgba(249,115,22,0.25)' }}>
+                🔥 Hot
+              </span>
+              <span className="font-mono text-sm font-semibold" style={{ color: '#e2e8f8' }}>{stats.icp_hot_count}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" style={{ background: 'rgba(251,191,36,0.10)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.22)' }}>
+                🟡 Warm
+              </span>
+              <span className="font-mono text-sm font-semibold" style={{ color: '#e2e8f8' }}>{stats.icp_warm_count}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" style={{ background: 'rgba(148,163,184,0.08)', color: 'rgba(148,163,184,0.7)', border: '1px solid rgba(148,163,184,0.15)' }}>
+                ❄️ Cold
+              </span>
+              <span className="font-mono text-sm font-semibold" style={{ color: '#e2e8f8' }}>{stats.icp_cold_count}</span>
+            </div>
+          </div>
+          {/* Visual bar */}
+          {(() => {
+            const total = stats.icp_hot_count + stats.icp_warm_count + stats.icp_cold_count
+            if (!total) return null
+            const hotPct = (stats.icp_hot_count / total) * 100
+            const warmPct = (stats.icp_warm_count / total) * 100
+            return (
+              <div className="mt-3 h-1.5 rounded-full overflow-hidden flex" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                {hotPct > 0 && <div className="h-full" style={{ width: `${hotPct}%`, background: '#fb923c' }} />}
+                {warmPct > 0 && <div className="h-full" style={{ width: `${warmPct}%`, background: '#fbbf24' }} />}
+                <div className="h-full flex-1" style={{ background: 'rgba(148,163,184,0.25)' }} />
+              </div>
+            )
+          })()}
+        </div>
+      )}
 
       {/* Score bar */}
       <div

@@ -41,14 +41,15 @@ def get_queue(job_id: str) -> Optional[asyncio.Queue]:
 
 # ── Progress mapping ──────────────────────────────────────────────────────────
 # Step weights for total_progress calculation (must sum to 1.0)
-STEP_WEIGHTS = {1: 0.05, 2: 0.20, 3: 0.25, 4: 0.05, 5: 0.30, 6: 0.15}
+STEP_WEIGHTS = {1: 0.05, 2: 0.18, 3: 0.22, 4: 0.05, 5: 0.12, 6: 0.23, 7: 0.15}
 STEP_NAMES = {
     1: "Input Apollo URL",
     2: "Scraping Apollo",
     3: "Enrichissement (Google + Dropcontact)",
     4: "Calcul du taux de hit",
-    5: "Enrichissement IA (GPT-4o-mini)",
-    6: "Enrichissement Perplexity (maturité, budget, signaux)",
+    5: "Scoring ICP (profil client idéal)",
+    6: "Enrichissement IA (Claude)",
+    7: "Enrichissement Perplexity (maturité, budget, signaux)",
 }
 
 # Patterns to detect which step a log message belongs to
@@ -56,8 +57,9 @@ STEP_PATTERNS = [
     (2, re.compile(r"Step 2|Scraping Apollo|apollo|page \d+", re.I)),
     (3, re.compile(r"Step 3|Google enrichment|Dropcontact|dropcontact|batch \d+", re.I)),
     (4, re.compile(r"Step 4|hit score|Hit score complete", re.I)),
-    (5, re.compile(r"Step 5|GPT|LinkedIn profile|Scraping hit lead", re.I)),
-    (6, re.compile(r"Step 6|Perplexity|perplexity enrichment|digital_maturity", re.I)),
+    (5, re.compile(r"Step 5|ICP scoring|ICP|icp_score", re.I)),
+    (6, re.compile(r"Step 6|GPT|LinkedIn profile|Scraping hit lead|Claude AI", re.I)),
+    (7, re.compile(r"Step 7|Perplexity|perplexity enrichment|digital_maturity", re.I)),
 ]
 
 
@@ -162,10 +164,12 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         from enrichers.dropcontact import _reset_state as _reset_dc
         from enrichers.gpt_enricher import _reset_state as _reset_gpt
         from enrichers.perplexity_enricher import _reset_state as _reset_perplexity
+        from processors.icp_scorer import _reset_state as _reset_icp
         _reset_google()
         _reset_dc()
         _reset_gpt()
         _reset_perplexity()
+        _reset_icp()
 
         # Run async pipeline steps in a new event loop for this thread
         new_loop = _asyncio.new_event_loop()
@@ -211,22 +215,36 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         hit_leads, nohit_leads = score_all_leads(leads)
         handler.set_explicit_progress(4, 1.0, f"{len(hit_leads)} hit leads identifiés (seuil {pipeline_config.HIT_THRESHOLD})")
 
-        # ── Step 5: AI enrichment (hit leads only) ────────────────────────────
+        # ── Step 5: ICP scoring (hit leads only) ────────────────────────────
         if not skip_gpt and hit_leads:
-            handler.set_explicit_progress(5, 0.0, "Scraping sites web des hit leads...")
+            handler.set_explicit_progress(5, 0.0, "Scoring ICP en cours...")
+            from processors.icp_scorer import score_leads_icp
+            hit_leads = score_leads_icp(hit_leads)
+            icp_scored = sum(1 for l in hit_leads if l.get("icp_score") is not None)
+            handler.set_explicit_progress(5, 1.0, f"Scoring ICP terminé — {icp_scored}/{len(hit_leads)} leads scorés")
+        else:
+            for lead in hit_leads:
+                lead.setdefault("icp_score", None)
+                lead.setdefault("icp_tier", None)
+                lead.setdefault("icp_rationale", None)
+                lead.setdefault("icp_scores_detail", None)
+
+        # ── Step 6: AI enrichment (hit leads only) ────────────────────────────
+        if not skip_gpt and hit_leads:
+            handler.set_explicit_progress(6, 0.0, "Scraping sites web des hit leads...")
             from scrapers.website_scraper import scrape_hit_leads
             hit_leads = new_loop.run_until_complete(scrape_hit_leads(hit_leads))
 
-            handler.set_explicit_progress(5, 0.5, "Appel Claude AI — enrichissement IA...")
+            handler.set_explicit_progress(6, 0.5, "Appel Claude AI — enrichissement IA...")
             from enrichers.gpt_enricher import enrich_leads_gpt
             hit_leads = enrich_leads_gpt(hit_leads)
-            handler.set_explicit_progress(5, 1.0, "Enrichissement IA terminé")
+            handler.set_explicit_progress(6, 1.0, "Enrichissement IA terminé")
 
-            # ── Step 6: Perplexity enrichment ──────────────────────────────
-            handler.set_explicit_progress(6, 0.0, "Enrichissement Perplexity (maturité digitale, budget, signaux)...")
+            # ── Step 7: Perplexity enrichment ──────────────────────────────
+            handler.set_explicit_progress(7, 0.0, "Enrichissement Perplexity (maturité digitale, budget, signaux)...")
             from enrichers.perplexity_enricher import enrich_leads_perplexity
             hit_leads = enrich_leads_perplexity(hit_leads)
-            handler.set_explicit_progress(6, 1.0, "Enrichissement Perplexity terminé")
+            handler.set_explicit_progress(7, 1.0, "Enrichissement Perplexity terminé")
         else:
             for lead in hit_leads:
                 lead.setdefault("activity_summary", None)
@@ -246,7 +264,9 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         CSV_COLUMNS = [
             "first_name", "last_name", "company", "job_title", "location",
             "email", "phone", "linkedin_url", "website",
-            "hit_score", "is_hit", "activity_summary", "conversion_angle",
+            "hit_score", "is_hit",
+            "icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
+            "activity_summary", "conversion_angle",
             "digital_maturity", "estimated_budget", "business_signals",
         ]
         df = pd.DataFrame(leads)
@@ -273,6 +293,9 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
             linkedin_count=cnt("linkedin_url"),
             phone_count=cnt("phone"),
             website_count=cnt("website"),
+            icp_hot_count=sum(1 for l in leads if l.get("icp_tier") == "hot"),
+            icp_warm_count=sum(1 for l in leads if l.get("icp_tier") == "warm"),
+            icp_cold_count=sum(1 for l in leads if l.get("icp_tier") == "cold"),
         )
 
         # ── Update job state ──────────────────────────────────────────────────

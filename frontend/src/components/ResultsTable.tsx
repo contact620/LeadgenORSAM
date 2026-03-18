@@ -105,7 +105,7 @@ export function ResultsTable({ leads, jobId }: Props) {
           <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.02)' }}>
-                {['Nom', 'Poste', 'Entreprise', 'Email', 'LinkedIn', 'Score', 'Hit', 'Angle IA'].map(h => (
+                {['Nom', 'Poste', 'Entreprise', 'Email', 'LinkedIn', 'Score', 'Hit', 'ICP', 'Angle IA'].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-semibold whitespace-nowrap" style={{ color: 'rgba(226,232,248,0.3)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
                     {h}
                   </th>
@@ -115,7 +115,7 @@ export function ResultsTable({ leads, jobId }: Props) {
             <tbody>
               {pageLeads.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-sm" style={{ color: 'rgba(226,232,248,0.25)' }}>
+                  <td colSpan={9} className="px-4 py-10 text-center text-sm" style={{ color: 'rgba(226,232,248,0.25)' }}>
                     Aucun lead trouvé
                   </td>
                 </tr>
@@ -181,6 +181,20 @@ export function ResultsTable({ leads, jobId }: Props) {
                           {lead.is_hit ? '✓ Hit' : 'No-hit'}
                         </span>
                       </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        {lead.icp_score != null ? (
+                          <span
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium"
+                            style={
+                              lead.icp_tier === 'hot' ? { background: 'rgba(249,115,22,0.12)', color: '#fb923c', border: '1px solid rgba(249,115,22,0.25)' }
+                              : lead.icp_tier === 'warm' ? { background: 'rgba(251,191,36,0.10)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.22)' }
+                              : { background: 'rgba(148,163,184,0.08)', color: 'rgba(148,163,184,0.7)', border: '1px solid rgba(148,163,184,0.15)' }
+                            }
+                          >
+                            {lead.icp_tier === 'hot' ? '🔥' : lead.icp_tier === 'warm' ? '🟡' : '❄️'} {lead.icp_score}
+                          </span>
+                        ) : <span style={{ color: 'rgba(226,232,248,0.15)' }}>—</span>}
+                      </td>
                       <td className="px-4 py-3 max-w-[200px]">
                         {lead.conversion_angle
                           ? <span className="text-xs line-clamp-2" style={{ color: 'rgba(226,232,248,0.4)' }}>{lead.conversion_angle}</span>
@@ -188,10 +202,43 @@ export function ResultsTable({ leads, jobId }: Props) {
                       </td>
                     </tr>
 
-                    {isExpanded && (lead.activity_summary || lead.conversion_angle || lead.digital_maturity || lead.estimated_budget || lead.business_signals) && (
+                    {isExpanded && (lead.activity_summary || lead.conversion_angle || lead.digital_maturity || lead.estimated_budget || lead.business_signals || lead.icp_rationale) && (
                       <tr key={`${globalIdx}-expanded`} style={{ background: 'rgba(77,159,255,0.04)', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                        <td colSpan={8} className="px-5 py-4">
+                        <td colSpan={9} className="px-5 py-4">
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                            {/* ICP section */}
+                            {lead.icp_rationale && (
+                              <div className="sm:col-span-2">
+                                <p className="font-medium mb-1.5" style={{ color: 'rgba(226,232,248,0.5)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                                  Scoring ICP — {lead.icp_tier?.toUpperCase()} ({lead.icp_score}/100)
+                                </p>
+                                <p className="mb-2" style={{ color: 'rgba(226,232,248,0.6)', lineHeight: 1.6 }}>{lead.icp_rationale}</p>
+                                {lead.icp_scores_detail && (() => {
+                                  try {
+                                    const detail = JSON.parse(lead.icp_scores_detail)
+                                    const axes = [
+                                      { key: 'secteur', label: 'Secteur', weight: '20%' },
+                                      { key: 'taille', label: 'Taille', weight: '20%' },
+                                      { key: 'localisation', label: 'Localisation', weight: '20%' },
+                                      { key: 'signaux', label: 'Signaux', weight: '40%' },
+                                    ]
+                                    return (
+                                      <div className="flex gap-4 flex-wrap">
+                                        {axes.map(a => (
+                                          <div key={a.key} className="flex items-center gap-2">
+                                            <span className="text-xs" style={{ color: 'rgba(226,232,248,0.35)', minWidth: 80 }}>{a.label} ({a.weight})</span>
+                                            <div className="w-16 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                                              <div className="h-full rounded-full" style={{ width: `${detail[a.key] ?? 0}%`, background: (detail[a.key] ?? 0) > 70 ? '#34d399' : (detail[a.key] ?? 0) >= 40 ? '#fbbf24' : 'rgba(226,232,248,0.2)' }} />
+                                            </div>
+                                            <span className="font-mono text-xs" style={{ color: 'rgba(226,232,248,0.4)' }}>{detail[a.key] ?? 0}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )
+                                  } catch { return null }
+                                })()}
+                              </div>
+                            )}
                             {lead.activity_summary && (
                               <div>
                                 <p className="font-medium mb-1.5" style={{ color: 'rgba(226,232,248,0.5)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Résumé activité</p>

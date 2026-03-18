@@ -19,12 +19,17 @@ router = APIRouter()
 @router.post("/run")
 async def run_pipeline(req: RunRequest):
     """Start a pipeline job. Returns job_id immediately."""
-    if not req.url.strip():
-        raise HTTPException(status_code=400, detail="Apollo URL is required")
+    # Resolve URL: either direct or built from filters
+    url = (req.url or "").strip()
+    if not url and req.filters:
+        from api.url_builder import build_apollo_url
+        url = build_apollo_url(req.filters)
+    if not url:
+        raise HTTPException(status_code=400, detail="Apollo URL or filters required")
 
     try:
         job_id = start_job(
-            url=req.url.strip(),
+            url=url,
             max_leads=req.max_leads,
             skip_gpt=req.skip_gpt,
         )
