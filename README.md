@@ -1,10 +1,12 @@
 # ORSAM Lead Generation Pipeline
 
-Outil de generation de leads B2B. Scrape des prospects depuis Apollo.io, les enrichit via Google Search, Dropcontact et IA (Claude), puis exporte en CSV.
+Outil de generation de leads B2B. Scrape des prospects depuis Apollo.io, les enrichit via Google Search, Dropcontact, IA (Claude), scoring ICP et intelligence business (Perplexity Sonar), puis exporte en CSV.
 
 **Deux interfaces disponibles :**
 - **Interface web** (recommandee) : formulaire simple avec barre de progression en temps reel
 - **Ligne de commande (CLI)** : pour les utilisateurs avances
+
+> **Compatibilite :** L'installation automatique (`setup.bat`, `start.bat`, `check.bat`) fonctionne **uniquement sous Windows** pour le moment. Une adaptation Linux/macOS est prevue ulterieurement.
 
 ---
 
@@ -45,8 +47,11 @@ SERPER_API_KEY=votre_cle_serper_ici
 # Dropcontact API (optionnel - enrichissement email/telephone)
 DROPCONTACT_API_KEY=votre_cle_dropcontact_ici
 
-# Anthropic API (enrichissement IA)
+# Anthropic API (enrichissement IA + scoring ICP)
 ANTHROPIC_API_KEY=sk-ant-votre_cle_ici
+
+# Perplexity API (optionnel - enrichissement maturite digitale, budget, signaux business)
+PERPLEXITY_API_KEY=votre_cle_perplexity_ici
 ```
 
 ### Comment obtenir les cles API
@@ -55,7 +60,8 @@ ANTHROPIC_API_KEY=sk-ant-votre_cle_ici
 |---------|---------|------|
 | **Serper.dev** | Trouver les profils LinkedIn (2500 requetes/mois gratuites) | [serper.dev](https://serper.dev) |
 | **Dropcontact** | Trouver emails et telephones | [dropcontact.com](https://www.dropcontact.com/) |
-| **Anthropic** | Enrichissement IA des leads | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| **Anthropic** | Enrichissement IA + scoring ICP des leads | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| **Perplexity** | Maturite digitale, budget estime, signaux business | [perplexity.ai](https://www.perplexity.ai/settings/api) |
 
 ---
 
@@ -95,14 +101,14 @@ L'interface web offre une experience complete en 4 sections :
   - Nombre max de leads a scraper (1 a 5000, defaut 200)
   - Option pour desactiver l'enrichissement IA (pipeline plus rapide)
 - **Indicateur de statut** : bandeau vert "Systeme operationnel" si tout est configure, ou bandeau jaune listant les elements manquants (cles API, cookies) avec lien direct vers les Parametres
-- **Grille des 5 etapes** du pipeline affichee sous le formulaire : Scraping Apollo, LinkedIn URL, Email+Tel, Score & Filtre, Enrichissement IA
+- **Grille des 7 etapes** du pipeline affichee sous le formulaire : Scraping Apollo, LinkedIn URL, Email+Tel, Score & Filtre, Scoring ICP, Enrichissement IA, Enrichissement Perplexity
 
 #### Suivi en temps reel
 
 Une fois le pipeline lance :
 
 - **Barre de progression globale** avec pourcentage mis a jour en continu (via SSE)
-- **Checklist 5 etapes** avec statut en direct : en attente (cercle gris), en cours (spinner bleu + message live), termine (check vert)
+- **Checklist 7 etapes** avec statut en direct : en attente (cercle gris), en cours (spinner bleu + message live), termine (check vert)
 - **Journal de logs** : les 20 derniers messages du pipeline affiches en temps reel dans une zone defilante
 
 #### Resultats et export
@@ -121,11 +127,17 @@ A la fin du pipeline :
 | Telephones | Pourcentage + compte absolu (+ sites web) |
 
 - **Barre de score moyen** avec legende du scoring : email +40, linkedin +30, phone +20, web +10, seuil hit : 50
+- **Distribution ICP** : repartition des leads par tier — Hot, Warm, Cold avec barre visuelle
 - **Tableau de leads** complet :
   - Filtres par onglets : Tous / Hits / No-hit
   - Recherche textuelle (nom, entreprise, poste, email)
-  - Colonnes : Nom, Poste, Entreprise (lien vers site web), Email (lien mailto), LinkedIn (lien externe), Score (barre visuelle), Hit (badge colore), Angle IA
-  - Clic sur une ligne pour deplier le detail IA : resume d'activite + angle de conversion generes par Claude
+  - Colonnes : Nom, Poste, Entreprise (lien vers site web), Email (lien mailto), LinkedIn (lien externe), Score (barre visuelle), Hit (badge colore), ICP (score + badge tier), Angle IA
+  - Clic sur une ligne pour deplier le detail complet :
+    - **Scoring ICP** : tier, score, justification + detail par axe (Secteur, Taille, Localisation, Signaux)
+    - **Resume d'activite** + **Angle de conversion** generes par Claude
+    - **Maturite digitale** : score /10 + justification (Perplexity)
+    - **Budget estime** : taille entreprise, CA, financements (Perplexity)
+    - **Signaux business** : activites recentes de l'entreprise (Perplexity)
   - Pagination (10 leads par page)
 - **Telechargement CSV** en un clic
 
@@ -145,7 +157,8 @@ Accessible via le bouton **Parametres** dans la barre de navigation. Permet de t
 **Cles API** — saisir ou modifier les cles directement depuis l'interface :
 - `SERPER_API_KEY` (obligatoire) — recherche LinkedIn via Google
 - `DROPCONTACT_API_KEY` (optionnel) — enrichissement email/telephone ignore si absent
-- `ANTHROPIC_API_KEY` (obligatoire) — enrichissement IA
+- `ANTHROPIC_API_KEY` (obligatoire) — enrichissement IA + scoring ICP
+- `PERPLEXITY_API_KEY` (optionnel) — enrichissement Perplexity Sonar ignore si absent
 - Chaque cle affiche un badge de statut (vert "Configure" / rouge "Manquant")
 - Bouton oeil pour afficher/masquer la valeur
 - Bouton "Sauvegarder les cles" pour enregistrer
@@ -198,8 +211,15 @@ Les resultats sont sauvegardes dans le dossier **`output/`** au format CSV.
 | `website` | Site web de l'entreprise |
 | `hit_score` | Score de qualite 0-100 |
 | `is_hit` | `True` si score >= 50 |
+| `icp_score` | Score ICP 0-100 (adequation profil client ideal) |
+| `icp_tier` | Classification : `hot` (>70), `warm` (40-70), `cold` (<40) |
+| `icp_rationale` | Justification du score ICP par l'IA |
+| `icp_scores_detail` | Detail des scores par axe (JSON) |
 | `activity_summary` | Resume d'activite genere par IA |
 | `conversion_angle` | Angle d'approche suggere par IA |
+| `digital_maturity` | Maturite digitale : score /10 + justification (Perplexity) |
+| `estimated_budget` | Budget estime : taille, CA, financements (Perplexity) |
+| `business_signals` | Signaux business recents de l'entreprise (Perplexity) |
 
 ---
 
@@ -228,13 +248,31 @@ Supprimez les dossiers `venv` et `frontend\node_modules`, puis relancez `setup.b
 
 ---
 
+## Pipeline en 7 etapes
+
+Le pipeline execute les etapes suivantes de maniere sequentielle :
+
+| Etape | Nom | Description |
+|-------|-----|-------------|
+| 1 | **Scraping Apollo** | Extraction des leads depuis une recherche Apollo.io (Playwright + cookies) |
+| 2 | **Recherche LinkedIn** | Recherche des profils LinkedIn via Serper.dev + site web via DuckDuckGo |
+| 3 | **Email + Telephone** | Enrichissement via Dropcontact (batches de 50, polling asynchrone) |
+| 4 | **Score & Filtre** | Calcul du hit score (email +40, linkedin +30, phone +20, web +10). Leads >= seuil = "hit" |
+| 5 | **Scoring ICP** | Evaluation par IA (Claude) de l'adequation au profil client ideal sur 4 axes : secteur (20%), taille (20%), localisation (20%), signaux business (40%). Classification en tiers : hot (>70), warm (40-70), cold (<40) |
+| 6 | **Enrichissement IA** | Scraping du profil LinkedIn + site web, puis generation par Claude d'un resume d'activite et d'un angle de conversion |
+| 7 | **Enrichissement Perplexity** | Recherche Perplexity Sonar sur les leads hit : maturite digitale (score /10), budget estime, signaux business recents |
+
+Les etapes 5 et 7 ne s'executent que sur les leads "hit" pour optimiser les couts API. Si une cle API est absente, l'etape correspondante est ignoree.
+
+---
+
 ## Structure des fichiers
 
 ```
 LeadgenORSAM/
-├── setup.bat              <- Installation automatique
-├── start.bat              <- Lancer l'application
-├── check.bat              <- Verifier la configuration
+├── setup.bat              <- Installation automatique (Windows uniquement)
+├── start.bat              <- Lancer l'application (Windows uniquement)
+├── check.bat              <- Verifier la configuration (Windows uniquement)
 ├── .env                   <- Vos cles API (a configurer)
 ├── .env.example           <- Modele du fichier .env
 ├── apollo_cookies.json    <- Cookies Apollo (a ajouter)
@@ -243,8 +281,9 @@ LeadgenORSAM/
 ├── config.py              <- Configuration
 ├── api/                   <- Serveur FastAPI
 ├── scrapers/              <- Scraping Apollo + websites
-├── enrichers/             <- Google, Dropcontact, IA
-├── processors/            <- Calcul hit score
+├── enrichers/             <- Google, Dropcontact, IA, Perplexity Sonar
+├── processors/            <- Calcul hit score + scoring ICP
+├── prompts/               <- Prompts personnalisables (scoring ICP)
 ├── frontend/              <- Interface web React
 └── output/                <- Fichiers CSV generes
 ```
