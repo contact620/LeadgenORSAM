@@ -1,9 +1,9 @@
-# ORSAM Lead Generation Pipeline
+# Boxcom Lead Generation Pipeline
 
-Outil de generation de leads B2B. Scrape des prospects depuis Apollo.io, les enrichit via Google Search, Dropcontact, IA (Claude), scoring ICP et intelligence business (Perplexity Sonar), puis exporte en CSV.
+Outil de generation de leads B2B. Scrape des prospects depuis Apollo.io, les enrichit via Google Search, Dropcontact, IA (Claude), scoring ICP et intelligence business (Perplexity Sonar), puis exporte en CSV. Pipeline en 2 phases : scraping rapide dans des pools, puis enrichissement par batch.
 
 **Deux interfaces disponibles :**
-- **Interface web** (recommandee) : formulaire simple avec barre de progression en temps reel
+- **Interface web** (recommandee) : formulaire avec barre de progression en temps reel, pools de leads, templates de recherche et theme clair/sombre
 - **Ligne de commande (CLI)** : pour les utilisateurs avances
 
 > **Compatibilite :** L'installation automatique (`setup.bat`, `start.bat`, `check.bat`) fonctionne **uniquement sous Windows** pour le moment. Une adaptation Linux/macOS est prevue ulterieurement.
@@ -92,7 +92,7 @@ Les cookies permettent au scraper de se connecter a Apollo.io avec votre session
 1. Lancez `start.bat` (double-clic)
 2. Ouvrez **http://localhost:5173** dans votre navigateur
 
-L'interface web offre une experience complete en 4 sections :
+L'interface web offre une experience complete en 6 sections :
 
 #### Lancer un pipeline
 
@@ -100,22 +100,26 @@ L'interface web offre une experience complete en 4 sections :
 - **Parametres avances** (section depliable) :
   - Nombre max de leads a scraper (1 a 5000, defaut 200)
   - Option pour desactiver l'enrichissement IA (pipeline plus rapide)
+  - **Services cibles** : checkboxes pour selectionner les services pertinents a la campagne (oriente l'enrichissement IA)
+  - **Signaux personnalises** : champ texte libre pour preciser les declencheurs a rechercher
+- **Scrape-only (pool)** : possibilite de ne scraper que les leads sans enrichissement, pour les stocker dans un pool et les enrichir plus tard par batch
 - **Indicateur de statut** : bandeau vert "Systeme operationnel" si tout est configure, ou bandeau jaune listant les elements manquants (cles API, cookies) avec lien direct vers les Parametres
-- **Grille des 7 etapes** du pipeline affichee sous le formulaire : Scraping Apollo, LinkedIn URL, Email+Tel, Score & Filtre, Scoring ICP, Enrichissement IA, Enrichissement Perplexity
+- **Grille des etapes** du pipeline affichee sous le formulaire : Scraping Apollo, LinkedIn URL, Email+Tel, Score & Filtre, Scoring ICP, Enrichissement IA+Perplexity
 
 #### Suivi en temps reel
 
 Une fois le pipeline lance :
 
 - **Barre de progression globale** avec pourcentage mis a jour en continu (via SSE)
-- **Checklist 7 etapes** avec statut en direct : en attente (cercle gris), en cours (spinner bleu + message live), termine (check vert)
+- **Checklist des etapes** avec statut en direct : en attente (cercle gris), en cours (spinner bleu + message live), termine (check vert)
 - **Journal de logs** : les 20 derniers messages du pipeline affiches en temps reel dans une zone defilante
+- **Resume executif** genere automatiquement a la fin du pipeline
 
 #### Resultats et export
 
 A la fin du pipeline :
 
-- **Dashboard de stats** — 6 cartes resumant le run :
+- **Dashboard de stats** — cartes resumant le run :
 
 | Carte | Contenu |
 |-------|---------|
@@ -130,22 +134,44 @@ A la fin du pipeline :
 - **Distribution ICP** : repartition des leads par tier — Hot, Warm, Cold avec barre visuelle
 - **Tableau de leads** complet :
   - Filtres par onglets : Tous / Hits / No-hit
+  - **Filtre ICP** par tier (Hot, Warm, Cold)
+  - **Tri** par score, nom, entreprise
   - Recherche textuelle (nom, entreprise, poste, email)
   - Colonnes : Nom, Poste, Entreprise (lien vers site web), Email (lien mailto), LinkedIn (lien externe), Score (barre visuelle), Hit (badge colore), ICP (score + badge tier), Angle IA
-  - Clic sur une ligne pour deplier le detail complet :
+  - **Clic sur un lead** pour ouvrir une modale de detail :
     - **Scoring ICP** : tier, score, justification + detail par axe (Secteur, Taille, Localisation, Signaux)
     - **Resume d'activite** + **Angle de conversion** generes par Claude
     - **Maturite digitale** : score /10 + justification (Perplexity)
     - **Budget estime** : taille entreprise, CA, financements (Perplexity)
     - **Signaux business** : activites recentes de l'entreprise (Perplexity)
+    - Informations de contact (email, telephone, LinkedIn)
   - Pagination (10 leads par page)
 - **Telechargement CSV** en un clic
+
+#### Pools de leads
+
+Accessible via le bouton **Pools** dans la barre de navigation. Pipeline en 2 phases :
+
+- **Phase 1 — Scrape-only** : scraper des leads Apollo sans enrichissement et les stocker dans un pool
+- **Phase 2 — Enrichissement par batch** : selectionner un pool et lancer l'enrichissement sur un lot de 10, 25, 50 ou 100 leads
+- **Liste des pools** avec nombre de leads, date de creation
+- **Detail d'un pool** : voir les leads stockes, cliquer sur un lead pour afficher la modale de detail
+- **Suppression** d'un pool avec confirmation
+
+#### Templates de recherche
+
+Accessible via le bouton **Templates** dans la barre de navigation :
+
+- **Sauvegarder une recherche Apollo** (nom, URL, max leads, option skip IA) comme template reutilisable
+- **Relancer un template** en un clic — lance directement le pipeline avec les parametres sauvegardes
+- **CRUD complet** : creer, lister, supprimer des templates
 
 #### Historique des pipelines
 
 Accessible via le bouton **Historique** dans la barre de navigation :
 
 - **Liste de tous les runs passes** avec : date, duree, URL Apollo, nombre de leads (effectif / max), nombre de hits + pourcentage, score moyen, statut (Termine / Erreur)
+- **Dashboard de stats** avec cartes KPI directement dans la liste
 - **Consulter un run passe** : cliquer sur l'icone oeil pour retrouver le dashboard de stats complet + le tableau de leads (memes fonctionnalites que les resultats en direct)
 - **Telecharger le CSV** d'un ancien run directement depuis la liste
 - **Supprimer une entree** avec confirmation
@@ -168,8 +194,16 @@ Accessible via le bouton **Parametres** dans la barre de navigation. Permet de t
 - **Coller le JSON** : copier-coller le contenu directement dans un champ texte
 - Badge de statut indiquant si les cookies sont presents ou absents
 
+**Services de l'agence** :
+- Liste de services configurables (persistee dans le `.env`)
+- Ces services apparaissent comme checkboxes dans le formulaire de lancement pour orienter l'enrichissement IA
+
 **Parametres du pipeline** :
 - Seuil de hit score (0-100, defaut 50) — score minimum pour qu'un lead soit considere comme "hit"
+
+#### Theme clair / sombre
+
+Bouton de bascule dans la barre de navigation pour alterner entre le theme clair et le theme sombre. Le choix est persiste dans le navigateur.
 
 ### Ligne de commande (CLI)
 
@@ -240,7 +274,7 @@ Reinstallez Node.js depuis [nodejs.org](https://nodejs.org/), puis fermez et rou
 - Verifiez votre solde sur [console.anthropic.com](https://console.anthropic.com/)
 
 ### Le frontend ne se charge pas
-- Verifiez que le backend tourne (fenetre "ORSAM API")
+- Verifiez que le backend tourne (fenetre "Boxcom API")
 - L'API doit repondre sur http://localhost:8000/api/health
 
 ### Reinstallation complete
@@ -248,7 +282,13 @@ Supprimez les dossiers `venv` et `frontend\node_modules`, puis relancez `setup.b
 
 ---
 
-## Pipeline en 7 etapes
+## Pipeline en 2 phases
+
+### Phase 1 — Scrape-only (optionnel)
+
+Scrape les leads Apollo sans enrichissement et les stocke dans un **pool**. Permet d'accumuler des leads et de les enrichir plus tard par batch (10, 25, 50 ou 100 leads a la fois).
+
+### Phase 2 — Pipeline complet (7 etapes)
 
 Le pipeline execute les etapes suivantes de maniere sequentielle :
 
@@ -262,7 +302,11 @@ Le pipeline execute les etapes suivantes de maniere sequentielle :
 | 6 | **Enrichissement IA** | Scraping du profil LinkedIn + site web, puis generation par Claude d'un resume d'activite et d'un angle de conversion |
 | 7 | **Enrichissement Perplexity** | Recherche Perplexity Sonar sur les leads hit : maturite digitale (score /10), budget estime, signaux business recents |
 
-Les etapes 5 et 7 ne s'executent que sur les leads "hit" pour optimiser les couts API. Si une cle API est absente, l'etape correspondante est ignoree.
+Les etapes 5 a 7 ne s'executent que sur les leads "hit" pour optimiser les couts API. Si une cle API est absente, l'etape correspondante est ignoree.
+
+L'enrichissement IA (etapes 5-7) prend en compte les **enrich_instructions** : services cibles et signaux personnalises configures au lancement pour orienter les analyses.
+
+Un **resume executif** est genere automatiquement a la fin du pipeline.
 
 ---
 
@@ -279,11 +323,30 @@ LeadgenORSAM/
 ├── requirements.txt       <- Dependances Python
 ├── main.py                <- Point d'entree CLI
 ├── config.py              <- Configuration
-├── api/                   <- Serveur FastAPI
+├── api/
+│   ├── server.py          <- Serveur FastAPI
+│   ├── pipeline_runner.py <- Orchestrateur pipeline (2 phases)
+│   ├── leads_db.py        <- Gestion pools de leads (SQLite)
+│   ├── templates.py       <- Gestion templates de recherche
+│   └── routes/            <- Endpoints API (pipeline, templates, config, health)
 ├── scrapers/              <- Scraping Apollo + websites
 ├── enrichers/             <- Google, Dropcontact, IA, Perplexity Sonar
 ├── processors/            <- Calcul hit score + scoring ICP
 ├── prompts/               <- Prompts personnalisables (scoring ICP)
-├── frontend/              <- Interface web React
+├── frontend/
+│   └── src/
+│       ├── App.tsx            <- Navigation principale (5 pages)
+│       ├── contexts/          <- ThemeContext (clair/sombre)
+│       ├── hooks/             <- usePipeline (SSE, state machine)
+│       ├── lib/               <- api.ts (fetch wrappers)
+│       └── components/
+│           ├── ApolloForm.tsx       <- Formulaire + services + scrape-only
+│           ├── ResultsTable.tsx     <- Tableau leads + filtres ICP + tri
+│           ├── LeadDetailModal.tsx  <- Modale detail lead (ICP, IA, Perplexity)
+│           ├── LeadPools.tsx        <- Gestion pools + enrichissement batch
+│           ├── Templates.tsx        <- Templates de recherche CRUD
+│           ├── History.tsx          <- Historique + stats cards
+│           ├── Settings.tsx         <- Configuration (cles, cookies, services)
+│           └── ThemeToggle.tsx      <- Bascule theme clair/sombre
 └── output/                <- Fichiers CSV generes
 ```
