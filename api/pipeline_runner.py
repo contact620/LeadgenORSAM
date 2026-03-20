@@ -27,8 +27,39 @@ from api.models import JobResult, JobStats, ProgressEvent
 _jobs: dict[str, JobResult] = {}
 _queues: dict[str, asyncio.Queue] = {}
 _job_meta: dict[str, dict] = {}  # apollo_url, max_leads, skip_gpt, started_at
+_cancelled: dict[str, bool] = {}
 
 _executor = ThreadPoolExecutor(max_workers=4)
+
+
+PIPELINE_TIMEOUT_SECONDS = 45 * 60  # 45 minutes max
+
+
+class PipelineCancelled(Exception):
+    pass
+
+
+class PipelineTimeout(PipelineCancelled):
+    pass
+
+
+def cancel_job(job_id: str) -> bool:
+    if job_id in _jobs:
+        _cancelled[job_id] = True
+        return True
+    return False
+
+
+def _check_cancelled(job_id: str) -> None:
+    if _cancelled.get(job_id):
+        raise PipelineCancelled("Pipeline annulé par l'utilisateur")
+    # Check timeout
+    meta = _job_meta.get(job_id)
+    if meta and meta.get("started_at"):
+        started = datetime.fromisoformat(meta["started_at"])
+        elapsed = (datetime.now() - started).total_seconds()
+        if elapsed > PIPELINE_TIMEOUT_SECONDS:
+            raise PipelineTimeout(f"Pipeline timeout après {int(elapsed // 60)} minutes")
 
 
 def get_job(job_id: str) -> Optional[JobResult]:
@@ -140,7 +171,8 @@ class _QueueLogHandler(logging.Handler):
 # ── Pipeline execution ────────────────────────────────────────────────────────
 
 def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
-                       loop: asyncio.AbstractEventLoop, queue: asyncio.Queue):
+                       loop: asyncio.AbstractEventLoop, queue: asyncio.Queue,
+                       enrich_instructions: str = ""):
     """
     Runs the full pipeline synchronously in a thread.
     Emits progress to the queue and updates the job state when done.
@@ -183,6 +215,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         if not leads:
             raise RuntimeError("No leads scraped from Apollo. Check cookies and URL.")
         handler.set_explicit_progress(2, 1.0, f"Scraping terminé — {len(leads)} leads extraits")
+        _check_cancelled(job_id)
 
         # ── Step 3a: Google enrichment ────────────────────────────────────────
         handler.set_explicit_progress(3, 0.0, "Enrichissement Google (LinkedIn URL + site web)...")
@@ -215,11 +248,35 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         hit_leads, nohit_leads = score_all_leads(leads)
         handler.set_explicit_progress(4, 1.0, f"{len(hit_leads)} hit leads identifiés (seuil {pipeline_config.HIT_THRESHOLD})")
 
+        # ── Deduplication ──────────────────────────────────────────────────
+        try:
+            from api.leads_db import check_duplicates
+            known = check_duplicates(leads)
+            new_count = 0
+            for lead in leads:
+                email = (lead.get("email") or "").strip().lower()
+                if email and email in known:
+                    lead["is_duplicate"] = True
+                    lead["first_seen_at"] = known[email].get("first_seen_at")
+                else:
+                    lead["is_duplicate"] = False
+                    lead["first_seen_at"] = None
+                    if email:
+                        new_count += 1
+            dup_count = len(known)
+            handler.set_explicit_progress(4, 1.0, f"{new_count} nouveaux leads, {dup_count} déjà vus")
+        except Exception:
+            for lead in leads:
+                lead["is_duplicate"] = False
+                lead["first_seen_at"] = None
+
+        _check_cancelled(job_id)
+
         # ── Step 5: ICP scoring (hit leads only) ────────────────────────────
         if not skip_gpt and hit_leads:
             handler.set_explicit_progress(5, 0.0, "Scoring ICP en cours...")
             from processors.icp_scorer import score_leads_icp
-            hit_leads = score_leads_icp(hit_leads)
+            hit_leads = score_leads_icp(hit_leads, enrich_instructions=enrich_instructions)
             icp_scored = sum(1 for l in hit_leads if l.get("icp_score") is not None)
             handler.set_explicit_progress(5, 1.0, f"Scoring ICP terminé — {icp_scored}/{len(hit_leads)} leads scorés")
         else:
@@ -237,13 +294,14 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
 
             handler.set_explicit_progress(6, 0.5, "Appel Claude AI — enrichissement IA...")
             from enrichers.gpt_enricher import enrich_leads_gpt
-            hit_leads = enrich_leads_gpt(hit_leads)
+            hit_leads = enrich_leads_gpt(hit_leads, enrich_instructions=enrich_instructions)
             handler.set_explicit_progress(6, 1.0, "Enrichissement IA terminé")
+            _check_cancelled(job_id)
 
             # ── Step 7: Perplexity enrichment ──────────────────────────────
             handler.set_explicit_progress(7, 0.0, "Enrichissement Perplexity (maturité digitale, budget, signaux)...")
             from enrichers.perplexity_enricher import enrich_leads_perplexity
-            hit_leads = enrich_leads_perplexity(hit_leads)
+            hit_leads = enrich_leads_perplexity(hit_leads, enrich_instructions=enrich_instructions)
             handler.set_explicit_progress(7, 1.0, "Enrichissement Perplexity terminé")
         else:
             for lead in hit_leads:
@@ -268,12 +326,20 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
             "icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
             "activity_summary", "conversion_angle",
             "digital_maturity", "estimated_budget", "business_signals",
+            "is_duplicate", "first_seen_at",
         ]
         df = pd.DataFrame(leads)
         for col in CSV_COLUMNS:
             if col not in df.columns:
                 df[col] = None
         df[CSV_COLUMNS].to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+        # ── Register leads for deduplication ─────────────────────────────
+        try:
+            from api.leads_db import register_leads
+            register_leads(job_id, leads)
+        except Exception:
+            pass  # dedup is best-effort
 
         # ── Compute stats ─────────────────────────────────────────────────────
         total = len(leads)
@@ -298,6 +364,49 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
             icp_cold_count=sum(1 for l in leads if l.get("icp_tier") == "cold"),
         )
 
+        # ── Executive summary (Claude) ───────────────────────────────────────
+        executive_summary = None
+        if not skip_gpt and not config._is_placeholder(config.ANTHROPIC_API_KEY):
+            try:
+                import anthropic as _anth
+                _summary_client = _anth.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+
+                # Build context for summary
+                hot_count = sum(1 for l in leads if l.get("icp_tier") == "hot")
+                warm_count = sum(1 for l in leads if l.get("icp_tier") == "warm")
+                cold_count = sum(1 for l in leads if l.get("icp_tier") == "cold")
+                top_companies = [l.get("company", "?") for l in leads if l.get("icp_tier") == "hot"][:10]
+                sectors = {}
+                for l in leads:
+                    s = (l.get("job_title") or "").split("/")[0].split(",")[0].strip()
+                    if s:
+                        sectors[s] = sectors.get(s, 0) + 1
+
+                summary_prompt = f"""Génère un résumé exécutif en 4-5 phrases pour ce run de lead generation.
+
+Données :
+- {total} prospects analysés
+- {len(hit_leads)} leads qualifiés (hit score >= seuil)
+- {len(nohit_leads)} non qualifiés
+- ICP : {hot_count} haute pertinence, {warm_count} pertinence moyenne, {cold_count} faible pertinence
+- Taux d'emails trouvés : {stats.email_pct}%
+- Taux LinkedIn trouvés : {stats.linkedin_pct}%
+- Score moyen : {stats.avg_score}/100
+- Top entreprises haute pertinence : {', '.join(top_companies[:5]) if top_companies else 'aucune'}
+- Instructions utilisateur : {enrich_instructions or 'aucune instruction spécifique'}
+
+Rédige un résumé actionnable en français. Mentionne les chiffres clés, les tendances, et une recommandation concrète de prochaine action. Pas de markdown, juste du texte."""
+
+                msg = _summary_client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=300,
+                    messages=[{"role": "user", "content": summary_prompt}],
+                )
+                executive_summary = msg.content[0].text.strip()
+                handler.set_explicit_progress(7, 1.0, "Résumé exécutif généré")
+            except Exception as e:
+                logging.getLogger("pipeline_runner").warning(f"Executive summary failed: {e}")
+
         # ── Update job state ──────────────────────────────────────────────────
         _jobs[job_id] = JobResult(
             job_id=job_id,
@@ -308,6 +417,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
             stats=stats,
             leads=leads,
             csv_path=csv_path,
+            executive_summary=executive_summary,
         )
 
         # ── Persist to history DB ────────────────────────────────────────────
@@ -334,6 +444,24 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         # Signal done
         done_payload = json.dumps({"type": "done", "data": {"job_id": job_id}})
         asyncio.run_coroutine_threadsafe(queue.put(done_payload), loop)
+
+    except PipelineCancelled:
+        _jobs[job_id] = JobResult(job_id=job_id, status="error", error="Annulé")
+        from api.history import save_job as _save_hist
+        meta = _job_meta.get(job_id, {})
+        _save_hist(
+            job_id=job_id, status="error",
+            apollo_url=meta.get("apollo_url", ""),
+            max_leads=meta.get("max_leads", 0),
+            skip_gpt=meta.get("skip_gpt", False),
+            started_at=meta.get("started_at", ""),
+            finished_at=datetime.now().isoformat(),
+            error="Annulé par l'utilisateur",
+        )
+        cancel_payload = json.dumps({"type": "cancelled", "data": {"job_id": job_id}})
+        asyncio.run_coroutine_threadsafe(queue.put(cancel_payload), loop)
+        _cancelled.pop(job_id, None)
+        return  # skip the generic error handler
 
     except Exception as exc:
         error_msg = str(exc)
@@ -364,7 +492,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         asyncio.run_coroutine_threadsafe(queue.put(None), loop)
 
 
-def start_job(url: str, max_leads: int, skip_gpt: bool) -> str:
+def start_job(url: str, max_leads: int, skip_gpt: bool, enrich_instructions: str = None) -> str:
     """Create a job, start the pipeline in background, return job_id."""
     job_id = str(uuid.uuid4())
 
@@ -375,18 +503,316 @@ def start_job(url: str, max_leads: int, skip_gpt: bool) -> str:
         asyncio.set_event_loop(loop)
     queue: asyncio.Queue = asyncio.Queue()
 
+    started_at = datetime.now().isoformat()
+
     _jobs[job_id] = JobResult(job_id=job_id, status="running")
     _queues[job_id] = queue
     _job_meta[job_id] = {
         "apollo_url": url,
         "max_leads": max_leads,
         "skip_gpt": skip_gpt,
-        "started_at": datetime.now().isoformat(),
+        "started_at": started_at,
+        "enrich_instructions": enrich_instructions or "",
     }
+
+    # Persist running job to DB so it survives restarts
+    from api.history import save_job as _save_hist
+    _save_hist(
+        job_id=job_id, status="running",
+        apollo_url=url, max_leads=max_leads, skip_gpt=skip_gpt,
+        started_at=started_at, finished_at="",
+    )
 
     _executor.submit(
         _run_pipeline_sync,
         job_id, url, max_leads, skip_gpt, loop, queue,
+        enrich_instructions or "",
     )
 
+    return job_id
+
+
+# ── Scrape-only pipeline ─────────────────────────────────────────────────────
+
+def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
+                          loop: asyncio.AbstractEventLoop, queue: asyncio.Queue):
+    """Runs steps 2-4 only (scrape + basic enrich + scoring). Stores leads in pool."""
+    import asyncio as _asyncio
+
+    handler = _QueueLogHandler(loop, queue, job_id)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    root_logger = logging.getLogger()
+    saved_level = root_logger.level
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(handler)
+
+    try:
+        _jobs[job_id].status = "running"
+
+        from enrichers.google_search import _reset_state as _reset_google
+        from enrichers.dropcontact import _reset_state as _reset_dc
+        _reset_google()
+        _reset_dc()
+
+        new_loop = _asyncio.new_event_loop()
+        _asyncio.set_event_loop(new_loop)
+
+        # Step 2: Apollo scraping
+        handler.set_explicit_progress(2, 0.0, "Lancement scraping Apollo...")
+        from scrapers.apollo_scraper import scrape_apollo
+        leads = new_loop.run_until_complete(scrape_apollo(url, max_leads=max_leads))
+        if not leads:
+            raise RuntimeError("No leads scraped from Apollo. Check cookies and URL.")
+        handler.set_explicit_progress(2, 1.0, f"Scraping terminé — {len(leads)} leads extraits")
+        _check_cancelled(job_id)
+
+        # Step 3a: Google
+        handler.set_explicit_progress(3, 0.0, "Enrichissement Google...")
+        from enrichers.google_search import enrich_leads_google
+        leads = enrich_leads_google(leads)
+        handler.set_explicit_progress(3, 0.5, "Google terminé. Lancement Dropcontact...")
+
+        # Step 3b: Dropcontact
+        from enrichers.dropcontact import enrich_leads_dropcontact
+        leads = enrich_leads_dropcontact(leads)
+        handler.set_explicit_progress(3, 1.0, "Enrichissement contact terminé")
+        _check_cancelled(job_id)
+
+        # Step 4: Hit score
+        handler.set_explicit_progress(4, 0.0, "Calcul des hit scores...")
+        from processors.hit_calculator import score_all_leads
+        hit_leads, nohit_leads = score_all_leads(leads)
+        handler.set_explicit_progress(4, 1.0, f"{len(hit_leads)} hit leads, {len(nohit_leads)} no-hit")
+
+        # Dedup
+        try:
+            from api.leads_db import check_duplicates
+            known = check_duplicates(leads)
+            for lead in leads:
+                email = (lead.get("email") or "").strip().lower()
+                lead["is_duplicate"] = bool(email and email in known)
+                lead["first_seen_at"] = known.get(email, {}).get("first_seen_at") if lead["is_duplicate"] else None
+        except Exception:
+            for lead in leads:
+                lead["is_duplicate"] = False
+                lead["first_seen_at"] = None
+
+        new_loop.close()
+
+        # Store in pool
+        from api.leads_db import create_pool, register_leads
+        pool_id = create_pool(pool_name, url, job_id, leads)
+        register_leads(job_id, leads)
+
+        # Update job
+        total = len(leads)
+        _jobs[job_id] = JobResult(
+            job_id=job_id, status="done",
+            total_leads=total, hit_leads=len(hit_leads), nohit_leads=len(nohit_leads),
+            leads=leads,
+        )
+
+        # Persist to history
+        from api.history import save_job as _save_hist
+        meta = _job_meta.get(job_id, {})
+        _save_hist(
+            job_id=job_id, status="done",
+            apollo_url=url, max_leads=max_leads, skip_gpt=True,
+            started_at=meta.get("started_at", ""),
+            finished_at=datetime.now().isoformat(),
+            total_leads=total, hit_leads=len(hit_leads), nohit_leads=len(nohit_leads),
+        )
+
+        done_payload = json.dumps({"type": "done", "data": {"job_id": job_id, "pool_id": pool_id}})
+        asyncio.run_coroutine_threadsafe(queue.put(done_payload), loop)
+
+    except PipelineCancelled:
+        _jobs[job_id] = JobResult(job_id=job_id, status="error", error="Annulé")
+        cancel_payload = json.dumps({"type": "cancelled", "data": {"job_id": job_id}})
+        asyncio.run_coroutine_threadsafe(queue.put(cancel_payload), loop)
+        _cancelled.pop(job_id, None)
+        return
+
+    except Exception as exc:
+        error_msg = str(exc)
+        _jobs[job_id] = JobResult(job_id=job_id, status="error", error=error_msg)
+        error_payload = json.dumps({"type": "error", "data": {"message": error_msg}})
+        asyncio.run_coroutine_threadsafe(queue.put(error_payload), loop)
+
+    finally:
+        root_logger.removeHandler(handler)
+        root_logger.setLevel(saved_level)
+        asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+
+
+def start_scrape_job(url: str, max_leads: int, pool_name: str) -> str:
+    """Start a scrape-only job. Returns job_id."""
+    job_id = str(uuid.uuid4())
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    queue: asyncio.Queue = asyncio.Queue()
+    started_at = datetime.now().isoformat()
+
+    _jobs[job_id] = JobResult(job_id=job_id, status="running")
+    _queues[job_id] = queue
+    _job_meta[job_id] = {"apollo_url": url, "max_leads": max_leads, "skip_gpt": True, "started_at": started_at}
+
+    from api.history import save_job as _save_hist
+    _save_hist(job_id=job_id, status="running", apollo_url=url, max_leads=max_leads, skip_gpt=True, started_at=started_at, finished_at="")
+
+    _executor.submit(_run_scrape_only_sync, job_id, url, max_leads, pool_name, loop, queue)
+    return job_id
+
+
+# ── Enrich-only pipeline ─────────────────────────────────────────────────────
+
+def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
+                          loop: asyncio.AbstractEventLoop, queue: asyncio.Queue):
+    """Runs steps 5-7 (ICP + Claude + Perplexity) on leads from an existing pool."""
+    import asyncio as _asyncio
+
+    handler = _QueueLogHandler(loop, queue, job_id)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    root_logger = logging.getLogger()
+    saved_level = root_logger.level
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(handler)
+
+    try:
+        _jobs[job_id].status = "running"
+
+        from enrichers.gpt_enricher import _reset_state as _reset_gpt
+        from enrichers.perplexity_enricher import _reset_state as _reset_perplexity
+        from processors.icp_scorer import _reset_state as _reset_icp
+        _reset_gpt()
+        _reset_perplexity()
+        _reset_icp()
+
+        # Load unenriched hit leads from pool
+        from api.leads_db import get_pool_leads, mark_leads_enriched
+        leads = get_pool_leads(pool_id, only_hit=True, only_unenriched=True, limit=batch_size)
+
+        if not leads:
+            raise RuntimeError("Aucun lead hit non-enrichi dans ce pool.")
+
+        lead_ids = [l["id"] for l in leads]
+        handler.set_explicit_progress(5, 0.0, f"Enrichissement de {len(leads)} leads...")
+
+        new_loop = _asyncio.new_event_loop()
+        _asyncio.set_event_loop(new_loop)
+
+        # Step 5: ICP scoring
+        handler.set_explicit_progress(5, 0.0, "Scoring ICP en cours...")
+        from processors.icp_scorer import score_leads_icp
+        leads = score_leads_icp(leads)
+        handler.set_explicit_progress(5, 1.0, "Scoring ICP terminé")
+        _check_cancelled(job_id)
+
+        # Step 6: Website scraping + Claude AI
+        handler.set_explicit_progress(6, 0.0, "Scraping sites web...")
+        from scrapers.website_scraper import scrape_hit_leads
+        leads = new_loop.run_until_complete(scrape_hit_leads(leads))
+        handler.set_explicit_progress(6, 0.5, "Appel Claude AI...")
+        from enrichers.gpt_enricher import enrich_leads_gpt
+        leads = enrich_leads_gpt(leads)
+        handler.set_explicit_progress(6, 1.0, "Enrichissement IA terminé")
+        _check_cancelled(job_id)
+
+        # Step 7: Perplexity
+        handler.set_explicit_progress(7, 0.0, "Enrichissement Perplexity...")
+        from enrichers.perplexity_enricher import enrich_leads_perplexity
+        leads = enrich_leads_perplexity(leads)
+        handler.set_explicit_progress(7, 1.0, "Enrichissement Perplexity terminé")
+
+        new_loop.close()
+
+        # Store enrichment data back to pool
+        enrich_data = {}
+        enrich_fields = ["icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
+                         "activity_summary", "conversion_angle",
+                         "digital_maturity", "estimated_budget", "business_signals"]
+        for i, lead in enumerate(leads):
+            lid = lead_ids[i]
+            enrich_data[lid] = {k: lead.get(k) for k in enrich_fields if lead.get(k) is not None}
+
+        mark_leads_enriched(pool_id, lead_ids, job_id, enrich_data)
+
+        # Export enriched leads to CSV
+        os.makedirs(pipeline_config.OUTPUT_DIR, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_filename = f"leads_enriched_{ts}_{job_id[:8]}.csv"
+        csv_path = os.path.join(pipeline_config.OUTPUT_DIR, csv_filename)
+
+        CSV_COLUMNS = [
+            "first_name", "last_name", "company", "job_title", "location",
+            "email", "phone", "linkedin_url", "website",
+            "hit_score", "is_hit",
+            "icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
+            "activity_summary", "conversion_angle",
+            "digital_maturity", "estimated_budget", "business_signals",
+        ]
+        df = pd.DataFrame(leads)
+        for col in CSV_COLUMNS:
+            if col not in df.columns:
+                df[col] = None
+        df[CSV_COLUMNS].to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+        _jobs[job_id] = JobResult(
+            job_id=job_id, status="done",
+            total_leads=len(leads), hit_leads=len(leads), nohit_leads=0,
+            leads=leads, csv_path=csv_path,
+        )
+
+        from api.history import save_job as _save_hist
+        meta = _job_meta.get(job_id, {})
+        _save_hist(
+            job_id=job_id, status="done",
+            apollo_url=f"pool:{pool_id}", max_leads=batch_size, skip_gpt=False,
+            started_at=meta.get("started_at", ""),
+            finished_at=datetime.now().isoformat(),
+            total_leads=len(leads), hit_leads=len(leads),
+            csv_filename=csv_filename,
+        )
+
+        done_payload = json.dumps({"type": "done", "data": {"job_id": job_id}})
+        asyncio.run_coroutine_threadsafe(queue.put(done_payload), loop)
+
+    except PipelineCancelled:
+        _jobs[job_id] = JobResult(job_id=job_id, status="error", error="Annulé")
+        cancel_payload = json.dumps({"type": "cancelled", "data": {"job_id": job_id}})
+        asyncio.run_coroutine_threadsafe(queue.put(cancel_payload), loop)
+        _cancelled.pop(job_id, None)
+        return
+
+    except Exception as exc:
+        error_msg = str(exc)
+        _jobs[job_id] = JobResult(job_id=job_id, status="error", error=error_msg)
+        error_payload = json.dumps({"type": "error", "data": {"message": error_msg}})
+        asyncio.run_coroutine_threadsafe(queue.put(error_payload), loop)
+
+    finally:
+        root_logger.removeHandler(handler)
+        root_logger.setLevel(saved_level)
+        asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+
+
+def start_enrich_job(pool_id: str, batch_size: int) -> str:
+    """Start an enrich-only job on an existing pool. Returns job_id."""
+    job_id = str(uuid.uuid4())
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    queue: asyncio.Queue = asyncio.Queue()
+    started_at = datetime.now().isoformat()
+
+    _jobs[job_id] = JobResult(job_id=job_id, status="running")
+    _queues[job_id] = queue
+    _job_meta[job_id] = {"apollo_url": f"pool:{pool_id}", "max_leads": batch_size, "skip_gpt": False, "started_at": started_at}
+
+    _executor.submit(_run_enrich_only_sync, job_id, pool_id, batch_size, loop, queue)
     return job_id

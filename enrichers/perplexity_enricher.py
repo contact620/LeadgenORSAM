@@ -48,7 +48,7 @@ def _reset_state():
     _perplexity_disabled = False
 
 
-def _call_perplexity(lead: dict) -> tuple[Optional[str], Optional[str], Optional[str]]:
+def _call_perplexity(lead: dict, enrich_instructions: str = "") -> tuple[Optional[str], Optional[str], Optional[str]]:
     """Call Perplexity Sonar for a single lead. Returns (digital_maturity, estimated_budget, business_signals)."""
     global _perplexity_disabled
     if _perplexity_disabled:
@@ -66,6 +66,9 @@ def _call_perplexity(lead: dict) -> tuple[Optional[str], Optional[str], Optional
         location=location,
         job_title=job_title,
     )
+
+    if enrich_instructions:
+        prompt += f"\n\nINSTRUCTIONS SPÉCIFIQUES DE RECHERCHE :\n{enrich_instructions}\nConcentre ta recherche sur les signaux et déclencheurs mentionnés ci-dessus."
 
     headers = {
         "Authorization": f"Bearer {config.PERPLEXITY_API_KEY}",
@@ -119,7 +122,7 @@ def _call_perplexity(lead: dict) -> tuple[Optional[str], Optional[str], Optional
         return None, None, None
 
 
-def enrich_leads_perplexity(hit_leads: list[dict]) -> list[dict]:
+def enrich_leads_perplexity(hit_leads: list[dict], enrich_instructions: str = "") -> list[dict]:
     """
     For each hit lead, call Perplexity Sonar and store:
       lead["digital_maturity"]
@@ -149,7 +152,7 @@ def enrich_leads_perplexity(hit_leads: list[dict]) -> list[dict]:
             maturity, budget, signals = company_cache[company]
             logger.debug(f"  Using cached Perplexity result for {lead.get('company', '')}")
         else:
-            maturity, budget, signals = _call_perplexity(lead)
+            maturity, budget, signals = _call_perplexity(lead, enrich_instructions)
             if company:
                 company_cache[company] = (maturity, budget, signals)
 

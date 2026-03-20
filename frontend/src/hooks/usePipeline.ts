@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react'
 import { toast } from 'sonner'
-import { startJob, getResults, type JobResult, type RunRequest } from '@/lib/api'
+import { startJob, getResults, cancelJob, type JobResult, type RunRequest } from '@/lib/api'
 
 export interface ProgressEvent {
   step: number
@@ -19,6 +19,7 @@ export interface PipelineState {
   latestEvent: ProgressEvent | null
   result: JobResult | null
   error: string | null
+  startedAt: number | null
 }
 
 export function usePipeline() {
@@ -29,12 +30,13 @@ export function usePipeline() {
     latestEvent: null,
     result: null,
     error: null,
+    startedAt: null,
   })
 
   const esRef = useRef<EventSource | null>(null)
 
   const startPipeline = useCallback(async (req: RunRequest) => {
-    setState({ status: 'running', jobId: null, events: [], latestEvent: null, result: null, error: null })
+    setState({ status: 'running', jobId: null, events: [], latestEvent: null, result: null, error: null, startedAt: Date.now() })
 
     try {
       const { job_id } = await startJob(req)
@@ -79,6 +81,13 @@ export function usePipeline() {
           })
       })
 
+      es.addEventListener('cancelled', () => {
+        es.close()
+        esRef.current = null
+        setState(s => ({ ...s, status: 'idle', error: null }))
+        toast.info('Pipeline annulé')
+      })
+
       es.addEventListener('error', (e: MessageEvent) => {
         es.close()
         esRef.current = null
@@ -111,11 +120,21 @@ export function usePipeline() {
     }
   }, [])
 
+  const cancelPipeline = useCallback(async () => {
+    const jobId = state.jobId
+    if (!jobId) return
+    try {
+      await cancelJob(jobId)
+    } catch {
+      // SSE cancelled event will handle state update
+    }
+  }, [state.jobId])
+
   const reset = useCallback(() => {
     esRef.current?.close()
     esRef.current = null
-    setState({ status: 'idle', jobId: null, events: [], latestEvent: null, result: null, error: null })
+    setState({ status: 'idle', jobId: null, events: [], latestEvent: null, result: null, error: null, startedAt: null })
   }, [])
 
-  return { state, startPipeline, reset }
+  return { state, startPipeline, cancelPipeline, reset }
 }

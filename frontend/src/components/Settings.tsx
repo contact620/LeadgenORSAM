@@ -12,20 +12,18 @@ interface Props {
   onConfigChange?: (config: ConfigStatus) => void
 }
 
-// ── Status badge ────────────────────────────────────────────────────────────
-
 function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
   return (
     <span
       className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full"
       style={ok ? {
-        background: 'rgba(52,211,153,0.1)',
-        color: '#34d399',
-        border: '1px solid rgba(52,211,153,0.2)',
+        background: 'var(--th-success-soft)',
+        color: 'var(--th-success)',
+        border: '1px solid var(--th-success-border)',
       } : {
-        background: 'rgba(248,113,113,0.1)',
-        color: '#f87171',
-        border: '1px solid rgba(248,113,113,0.2)',
+        background: 'var(--th-error-soft)',
+        color: 'var(--th-error)',
+        border: '1px solid var(--th-error-border)',
       }}
     >
       {ok ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
@@ -34,24 +32,20 @@ function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
   )
 }
 
-// ── Section card ────────────────────────────────────────────────────────────
-
 function SectionCard({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="glass-card">
       <div
         className="flex items-center gap-2.5 px-6 py-4"
-        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+        style={{ borderBottom: '1px solid var(--th-border-default)' }}
       >
-        <span style={{ color: '#4d9fff' }}>{icon}</span>
-        <h2 className="font-semibold text-sm" style={{ color: '#e2e8f8' }}>{title}</h2>
+        <span style={{ color: 'var(--th-primary)' }}>{icon}</span>
+        <h2 className="font-semibold text-sm" style={{ color: 'var(--th-text-primary)' }}>{title}</h2>
       </div>
       <div style={{ padding: '20px 24px' }}>{children}</div>
     </div>
   )
 }
-
-// ── Cookie panel ────────────────────────────────────────────────────────────
 
 interface CookiePanelProps {
   service: 'apollo'
@@ -94,18 +88,17 @@ function CookiePanel({ service, label, isPresent, onUploaded }: CookiePanelProps
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium" style={{ color: 'rgba(226,232,248,0.6)' }}>{label}</span>
+        <span className="text-sm font-medium" style={{ color: 'var(--th-text-secondary)' }}>{label}</span>
         <StatusBadge ok={isPresent} label={isPresent ? 'Présent' : 'Absent'} />
       </div>
 
-      {/* Mode tabs */}
-      <div className="flex gap-1 p-1 rounded-lg w-fit text-xs" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
+      <div className="flex gap-1 p-1 rounded-lg w-fit text-xs" style={{ background: 'var(--th-glass-inset)', border: '1px solid var(--th-glass-sm-border)' }}>
         {(['drop', 'paste'] as const).map(m => (
           <button
             key={m}
             onClick={() => setMode(m)}
             className="px-3 py-1 rounded-md font-medium transition-all"
-            style={mode === m ? { background: 'rgba(255,255,255,0.08)', color: '#e2e8f8', border: 'none', cursor: 'pointer', fontFamily: 'inherit' } : { color: 'rgba(226,232,248,0.4)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+            style={mode === m ? { background: 'var(--th-border-strong)', color: 'var(--th-text-primary)', border: 'none', cursor: 'pointer', fontFamily: 'inherit' } : { color: 'var(--th-text-quaternary)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
           >
             {m === 'drop' ? 'Upload fichier' : 'Coller JSON'}
           </button>
@@ -120,18 +113,18 @@ function CookiePanel({ service, label, isPresent, onUploaded }: CookiePanelProps
           onClick={() => fileRef.current?.click()}
           className="relative flex flex-col items-center justify-center gap-2 rounded-xl p-6 cursor-pointer transition-all text-center"
           style={dragging ? {
-            border: '2px dashed rgba(77,159,255,0.5)',
-            background: 'rgba(77,159,255,0.06)',
+            border: '2px dashed var(--th-primary)',
+            background: 'var(--th-primary-soft)',
           } : {
-            border: '2px dashed rgba(255,255,255,0.08)',
-            background: 'rgba(255,255,255,0.02)',
+            border: '2px dashed var(--th-border-strong)',
+            background: 'var(--th-surface-hover)',
           }}
         >
-          <Upload className="w-5 h-5" style={{ color: 'rgba(226,232,248,0.25)' }} />
-          <p className="text-sm" style={{ color: 'rgba(226,232,248,0.4)' }}>
-            Glissez le fichier JSON ou <span style={{ color: '#4d9fff', fontWeight: 500 }}>cliquez pour parcourir</span>
+          <Upload className="w-5 h-5" style={{ color: 'var(--th-text-faint)' }} />
+          <p className="text-sm" style={{ color: 'var(--th-text-quaternary)' }}>
+            Glissez le fichier JSON ou <span style={{ color: 'var(--th-primary)', fontWeight: 500 }}>cliquez pour parcourir</span>
           </p>
-          <p className="text-xs" style={{ color: 'rgba(226,232,248,0.2)' }}>Export Cookie Editor (.json)</p>
+          <p className="text-xs" style={{ color: 'var(--th-text-ghost)' }}>Export Cookie Editor (.json)</p>
           <input
             ref={fileRef} type="file" accept=".json,application/json" className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }}
@@ -162,7 +155,7 @@ function CookiePanel({ service, label, isPresent, onUploaded }: CookiePanelProps
       )}
 
       {loading && mode === 'drop' && (
-        <div className="flex items-center gap-2 text-sm" style={{ color: '#4d9fff' }}>
+        <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--th-primary)' }}>
           <RefreshCw className="w-3.5 h-3.5 animate-spin" />
           Import en cours…
         </div>
@@ -172,13 +165,9 @@ function CookiePanel({ service, label, isPresent, onUploaded }: CookiePanelProps
         <div
           className="flex items-center gap-2 text-sm rounded-lg px-3 py-2"
           style={status.type === 'success' ? {
-            background: 'rgba(52,211,153,0.08)',
-            color: '#34d399',
-            border: '1px solid rgba(52,211,153,0.2)',
+            background: 'var(--th-success-soft)', color: 'var(--th-success)', border: '1px solid var(--th-success-border)',
           } : {
-            background: 'rgba(248,113,113,0.08)',
-            color: '#f87171',
-            border: '1px solid rgba(248,113,113,0.2)',
+            background: 'var(--th-error-soft)', color: 'var(--th-error)', border: '1px solid var(--th-error-border)',
           }}
         >
           {status.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <XCircle className="w-4 h-4 shrink-0" />}
@@ -189,20 +178,19 @@ function CookiePanel({ service, label, isPresent, onUploaded }: CookiePanelProps
   )
 }
 
-// ── Main Settings ───────────────────────────────────────────────────────────
-
 export function Settings({ onBack, onConfigChange }: Props) {
   const [config, setConfig] = useState<ConfigStatus | null>(null)
   const [keys, setKeys] = useState({ serper: '', dropcontact: '', anthropic: '', perplexity: '' })
   const [showKey, setShowKey] = useState({ serper: false, dropcontact: false, anthropic: false, perplexity: false })
   const [savingKeys, setSavingKeys] = useState(false)
   const [keysStatus, setKeysStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
-  const [pipeline, setPipeline] = useState({ hitThreshold: 50 })
+  const [pipeline, setPipeline] = useState({ hitThreshold: 50, services: [] as string[] })
+  const [newService, setNewService] = useState('')
   const [savingPipeline, setSavingPipeline] = useState(false)
   const [pipelineStatus, setPipelineStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
 
   const refreshConfig = useCallback(() => {
-    getConfig().then(c => { setConfig(c); setPipeline({ hitThreshold: c.hit_threshold }); onConfigChange?.(c) }).catch(() => {
+    getConfig().then(c => { setConfig(c); setPipeline({ hitThreshold: c.hit_threshold, services: c.services || [] }); onConfigChange?.(c) }).catch(() => {
       toast.error('Impossible de rafraîchir la configuration')
     })
   }, [onConfigChange])
@@ -224,7 +212,7 @@ export function Settings({ onBack, onConfigChange }: Props) {
   const handleSavePipeline = async () => {
     setSavingPipeline(true); setPipelineStatus(null)
     try {
-      await saveConfig({ hit_threshold: pipeline.hitThreshold })
+      await saveConfig({ hit_threshold: pipeline.hitThreshold, services: pipeline.services })
       setPipelineStatus({ type: 'success', msg: 'Paramètres sauvegardés' })
       refreshConfig()
     } catch (e: unknown) {
@@ -253,14 +241,14 @@ export function Settings({ onBack, onConfigChange }: Props) {
         <button
           onClick={onBack}
           className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition-all"
-          style={{ color: 'rgba(226,232,248,0.4)', border: '1px solid rgba(255,255,255,0.07)', background: 'rgba(255,255,255,0.04)', cursor: 'pointer', fontFamily: 'inherit' }}
+          style={{ color: 'var(--th-text-quaternary)', border: '1px solid var(--th-border-medium)', background: 'var(--th-glass-inset)', cursor: 'pointer', fontFamily: 'inherit' }}
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           Retour
         </button>
         <div>
-          <h1 className="text-xl font-bold" style={{ color: '#e2e8f8', letterSpacing: '-0.02em' }}>Paramètres</h1>
-          <p className="text-xs" style={{ color: 'rgba(226,232,248,0.3)' }}>Configuration — clés API, cookies, pipeline</p>
+          <h1 className="text-xl font-bold" style={{ color: 'var(--th-text-primary)', letterSpacing: '-0.02em' }}>Paramètres</h1>
+          <p className="text-xs" style={{ color: 'var(--th-text-muted)' }}>Configuration — clés API, cookies, pipeline</p>
         </div>
       </div>
 
@@ -269,25 +257,25 @@ export function Settings({ onBack, onConfigChange }: Props) {
         <div
           className="rounded-xl p-4 flex items-start gap-3"
           style={(!config.serper_api_key || !config.anthropic_api_key || !config.apollo_cookies) ? {
-            background: 'rgba(251,191,36,0.06)',
-            border: '1px solid rgba(251,191,36,0.18)',
+            background: 'var(--th-warning-soft)',
+            border: '1px solid var(--th-warning-border)',
           } : {
-            background: 'rgba(52,211,153,0.06)',
-            border: '1px solid rgba(52,211,153,0.18)',
+            background: 'var(--th-success-soft)',
+            border: '1px solid var(--th-success-border)',
           }}
         >
           {(!config.serper_api_key || !config.anthropic_api_key || !config.apollo_cookies) ? (
             <>
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: '#fbbf24' }} />
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: 'var(--th-warning)' }} />
               <div className="text-sm">
-                <p className="font-medium mb-0.5" style={{ color: 'rgba(251,191,36,0.9)' }}>Configuration incomplète</p>
-                <p className="text-xs" style={{ color: 'rgba(251,191,36,0.6)' }}>Complétez les champs requis ci-dessous pour activer le pipeline.</p>
+                <p className="font-medium mb-0.5" style={{ color: 'var(--th-warning-text)' }}>Configuration incomplète</p>
+                <p className="text-xs" style={{ color: 'var(--th-warning-text)' }}>Complétez les champs requis ci-dessous pour activer le pipeline.</p>
               </div>
             </>
           ) : (
             <>
-              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" style={{ color: '#34d399' }} />
-              <p className="text-sm font-medium" style={{ color: 'rgba(52,211,153,0.9)' }}>Configuration complète — pipeline prêt</p>
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" style={{ color: 'var(--th-success)' }} />
+              <p className="text-sm font-medium" style={{ color: 'var(--th-success)' }}>Configuration complète — pipeline prêt</p>
             </>
           )}
         </div>
@@ -299,9 +287,9 @@ export function Settings({ onBack, onConfigChange }: Props) {
           {keyFields.map(({ id, label, required, configKey, hint }) => (
             <div key={id}>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-medium" style={{ color: 'rgba(226,232,248,0.5)' }}>
+                <label className="text-xs font-medium" style={{ color: 'var(--th-text-tertiary)' }}>
                   {label}
-                  {required && <span className="ml-1" style={{ color: '#f87171' }}>*</span>}
+                  {required && <span className="ml-1" style={{ color: 'var(--th-error)' }}>*</span>}
                 </label>
                 {config && <StatusBadge ok={Boolean(config[configKey])} label={Boolean(config[configKey]) ? 'Configuré' : 'Manquant'} />}
               </div>
@@ -318,12 +306,12 @@ export function Settings({ onBack, onConfigChange }: Props) {
                   type="button"
                   onClick={() => setShowKey(prev => ({ ...prev, [id]: !prev[id] }))}
                   className="absolute right-3 top-1/2 -translate-y-1/2"
-                  style={{ color: 'rgba(226,232,248,0.3)', background: 'none', border: 'none', cursor: 'pointer' }}
+                  style={{ color: 'var(--th-text-muted)', background: 'none', border: 'none', cursor: 'pointer' }}
                 >
                   {showKey[id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
               </div>
-              {hint && <p className="mt-1 text-xs" style={{ color: 'rgba(226,232,248,0.25)' }}>{hint}</p>}
+              {hint && <p className="mt-1 text-xs" style={{ color: 'var(--th-text-faint)' }}>{hint}</p>}
             </div>
           ))}
 
@@ -331,9 +319,9 @@ export function Settings({ onBack, onConfigChange }: Props) {
             <div
               className="flex items-center gap-2 text-sm rounded-lg px-3 py-2"
               style={keysStatus.type === 'success' ? {
-                background: 'rgba(52,211,153,0.08)', color: '#34d399', border: '1px solid rgba(52,211,153,0.2)',
+                background: 'var(--th-success-soft)', color: 'var(--th-success)', border: '1px solid var(--th-success-border)',
               } : {
-                background: 'rgba(248,113,113,0.08)', color: '#f87171', border: '1px solid rgba(248,113,113,0.2)',
+                background: 'var(--th-error-soft)', color: 'var(--th-error)', border: '1px solid var(--th-error-border)',
               }}
             >
               {keysStatus.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <XCircle className="w-4 h-4 shrink-0" />}
@@ -356,12 +344,72 @@ export function Settings({ onBack, onConfigChange }: Props) {
       {/* Cookies */}
       <SectionCard title="Cookies de session" icon={<Cookie className="w-4 h-4" />}>
         <div className="space-y-6">
-          <p className="text-xs" style={{ color: 'rgba(226,232,248,0.3)' }}>
-            Exportez vos cookies depuis l'extension <strong style={{ color: 'rgba(226,232,248,0.5)' }}>Cookie Editor</strong> sur Apollo.io, puis importez-les ici.
+          <p className="text-xs" style={{ color: 'var(--th-text-muted)' }}>
+            Exportez vos cookies depuis l'extension <strong style={{ color: 'var(--th-text-tertiary)' }}>Cookie Editor</strong> sur Apollo.io, puis importez-les ici.
           </p>
-          <div className="grid gap-6 sm:grid-cols-2">
-            <CookiePanel service="apollo" label="Apollo.io" isPresent={config?.apollo_cookies ?? false} onUploaded={refreshConfig} />
+          <CookiePanel service="apollo" label="Apollo.io" isPresent={config?.apollo_cookies ?? false} onUploaded={refreshConfig} />
+        </div>
+      </SectionCard>
+
+      {/* Services */}
+      <SectionCard title="Services proposés" icon={<SlidersHorizontal className="w-4 h-4" />}>
+        <div className="space-y-4">
+          <p className="text-xs" style={{ color: 'var(--th-text-muted)' }}>
+            Ajoutez les services que vous vendez. Lors du lancement d'un pipeline, vous pourrez cocher ceux pour lesquels vous cherchez des leads.
+          </p>
+
+          <div className="flex flex-wrap gap-2">
+            {pipeline.services.map((svc, i) => (
+              <span key={i} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm"
+                style={{ background: 'var(--th-primary-soft)', color: 'var(--th-primary)', border: '1px solid var(--th-primary-border)' }}>
+                {svc}
+                <button
+                  onClick={() => setPipeline(prev => ({ ...prev, services: prev.services.filter((_, j) => j !== i) }))}
+                  style={{ color: 'var(--th-primary)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}
+                >×</button>
+              </span>
+            ))}
           </div>
+
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newService}
+              onChange={e => setNewService(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && newService.trim()) {
+                  e.preventDefault()
+                  setPipeline(prev => ({ ...prev, services: [...prev.services, newService.trim()] }))
+                  setNewService('')
+                }
+              }}
+              placeholder="Ex: Développement Web, SEO, Branding..."
+              className="surface-input flex-1"
+              style={{ padding: '8px 12px', fontSize: 13 }}
+            />
+            <button
+              onClick={() => {
+                if (newService.trim()) {
+                  setPipeline(prev => ({ ...prev, services: [...prev.services, newService.trim()] }))
+                  setNewService('')
+                }
+              }}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium"
+              style={{ color: 'var(--th-primary)', background: 'var(--th-primary-soft)', border: '1px solid var(--th-primary-border)', cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              Ajouter
+            </button>
+          </div>
+
+          <button
+            onClick={handleSavePipeline}
+            disabled={savingPipeline}
+            className="btn-grad flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white mt-2"
+            style={actionBtnStyle(savingPipeline)}
+          >
+            {savingPipeline ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            Sauvegarder les services
+          </button>
         </div>
       </SectionCard>
 
@@ -369,9 +417,9 @@ export function Settings({ onBack, onConfigChange }: Props) {
       <SectionCard title="Paramètres du pipeline" icon={<SlidersHorizontal className="w-4 h-4" />}>
         <div className="space-y-4">
           <div className="max-w-xs">
-            <label className="block text-xs font-medium mb-1.5" style={{ color: 'rgba(226,232,248,0.5)' }}>
+            <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--th-text-tertiary)' }}>
               HIT_THRESHOLD
-              <span className="ml-1 font-normal" style={{ color: 'rgba(226,232,248,0.25)' }}>(score minimum pour être un lead "hit")</span>
+              <span className="ml-1 font-normal" style={{ color: 'var(--th-text-faint)' }}>(score minimum pour être un lead "hit")</span>
             </label>
             <input
               type="number" min={0} max={100}
@@ -380,9 +428,9 @@ export function Settings({ onBack, onConfigChange }: Props) {
               className="surface-input w-full"
               style={{ padding: '9px 12px', fontSize: 14 }}
             />
-            <p className="mt-1 text-xs" style={{ color: 'rgba(226,232,248,0.25)' }}>0–100 · email=40pts, linkedin=30pts, phone=20pts, website=10pts</p>
+            <p className="mt-1 text-xs" style={{ color: 'var(--th-text-faint)' }}>0–100 · email=40pts, linkedin=30pts, phone=20pts, website=10pts</p>
           </div>
-          <p className="text-xs" style={{ color: 'rgba(226,232,248,0.25)' }}>
+          <p className="text-xs" style={{ color: 'var(--th-text-faint)' }}>
             Le nombre de leads par run se configure dans les paramètres avancés du formulaire de lancement.
           </p>
 
@@ -390,9 +438,9 @@ export function Settings({ onBack, onConfigChange }: Props) {
             <div
               className="flex items-center gap-2 text-sm rounded-lg px-3 py-2"
               style={pipelineStatus.type === 'success' ? {
-                background: 'rgba(52,211,153,0.08)', color: '#34d399', border: '1px solid rgba(52,211,153,0.2)',
+                background: 'var(--th-success-soft)', color: 'var(--th-success)', border: '1px solid var(--th-success-border)',
               } : {
-                background: 'rgba(248,113,113,0.08)', color: '#f87171', border: '1px solid rgba(248,113,113,0.2)',
+                background: 'var(--th-error-soft)', color: 'var(--th-error)', border: '1px solid var(--th-error-border)',
               }}
             >
               {pipelineStatus.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <XCircle className="w-4 h-4 shrink-0" />}

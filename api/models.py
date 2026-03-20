@@ -17,6 +17,7 @@ class RunRequest(BaseModel):
     filters: Optional[ApolloFilters] = None
     max_leads: int = 500
     skip_gpt: bool = False
+    enrich_instructions: Optional[str] = None
 
 
 class ProgressEvent(BaseModel):
@@ -75,6 +76,7 @@ class JobResult(BaseModel):
     leads: list[dict] = []
     error: Optional[str] = None
     csv_path: Optional[str] = None
+    executive_summary: Optional[str] = None
 
 
 class HistoryEntry(BaseModel):

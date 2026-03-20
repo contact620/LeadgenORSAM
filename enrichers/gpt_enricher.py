@@ -60,7 +60,7 @@ def _reset_state():
     _claude_disabled = False
 
 
-def _call_claude(lead: dict) -> tuple[Optional[str], Optional[str]]:
+def _call_claude(lead: dict, enrich_instructions: str = "") -> tuple[Optional[str], Optional[str]]:
     """Call claude-haiku-4-5 for a single lead with retry. Returns (activity_summary, conversion_angle)."""
     global _claude_disabled
     if _claude_disabled:
@@ -70,6 +70,11 @@ def _call_claude(lead: dict) -> tuple[Optional[str], Optional[str]]:
 
     linkedin_text = lead.get("linkedin_text", "") or "Non disponible"
     website_text = lead.get("website_text", "") or "Non disponible"
+
+    # Build system prompt with optional user instructions
+    system = SYSTEM_PROMPT
+    if enrich_instructions:
+        system += f"\n\nINSTRUCTIONS SPÉCIFIQUES DE L'UTILISATEUR :\n{enrich_instructions}\n\nUtilise ces instructions pour orienter le conversion_angle. Cherche les signaux et déclencheurs mentionnés par l'utilisateur."
 
     user_prompt = USER_PROMPT_TEMPLATE.format(
         first_name=lead.get("first_name", ""),
@@ -87,7 +92,7 @@ def _call_claude(lead: dict) -> tuple[Optional[str], Optional[str]]:
         message = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=300,
-            system=SYSTEM_PROMPT,
+            system=system,
             messages=[{"role": "user", "content": user_prompt}],
         )
         content = message.content[0].text.strip()
@@ -111,7 +116,7 @@ def _call_claude(lead: dict) -> tuple[Optional[str], Optional[str]]:
         return None, None
 
 
-def enrich_leads_gpt(hit_leads: list[dict]) -> list[dict]:
+def enrich_leads_gpt(hit_leads: list[dict], enrich_instructions: str = "") -> list[dict]:
     """
     For each hit lead, call Claude and store:
       lead["activity_summary"]
@@ -131,7 +136,7 @@ def enrich_leads_gpt(hit_leads: list[dict]) -> list[dict]:
         name = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
         logger.info(f"GPT enrichment [{i}/{total}]: {name}")
 
-        summary, angle = _call_claude(lead)
+        summary, angle = _call_claude(lead, enrich_instructions)
         lead["activity_summary"] = summary
         lead["conversion_angle"] = angle
 

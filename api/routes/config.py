@@ -25,6 +25,7 @@ class ConfigUpdate(BaseModel):
     perplexity_api_key: Optional[str] = None
     hit_threshold: Optional[int] = None
     max_leads: Optional[int] = None
+    services: Optional[list[str]] = None
 
 
 @router.get("/config")
@@ -38,6 +39,12 @@ def get_config():
     pipeline_config.HIT_THRESHOLD = int(os.getenv("HIT_THRESHOLD", "50"))
     pipeline_config.MAX_LEADS = int(os.getenv("MAX_LEADS", "500"))
 
+    # Load services list
+    services = []
+    services_str = os.getenv("BOXCOM_SERVICES", "")
+    if services_str:
+        services = [s.strip() for s in services_str.split("|") if s.strip()]
+
     return {
         "serper_api_key": not _is_placeholder(pipeline_config.SERPER_API_KEY),
         "dropcontact_api_key": not _is_placeholder(pipeline_config.DROPCONTACT_API_KEY),
@@ -46,6 +53,7 @@ def get_config():
         "apollo_cookies": os.path.exists(pipeline_config.APOLLO_COOKIES_PATH),
         "hit_threshold": pipeline_config.HIT_THRESHOLD,
         "max_leads": pipeline_config.MAX_LEADS,
+        "services": services,
     }
 
 
@@ -68,6 +76,8 @@ def update_config(body: ConfigUpdate):
         updates["HIT_THRESHOLD"] = str(body.hit_threshold)
     if body.max_leads is not None:
         updates["MAX_LEADS"] = str(body.max_leads)
+    if body.services is not None:
+        updates["BOXCOM_SERVICES"] = "|".join(body.services)
 
     for env_key, value in updates.items():
         set_key(_ENV_PATH, env_key, value)
@@ -105,5 +115,74 @@ async def _save_cookies(file: UploadFile, path: str) -> dict:
 @router.post("/cookies/apollo")
 async def upload_apollo_cookies(file: UploadFile = File(...)):
     return await _save_cookies(file, pipeline_config.APOLLO_COOKIES_PATH)
+
+
+@router.post("/config/validate-key")
+async def validate_api_key(body: dict):
+    """Test an API key before saving. Returns {valid: bool, error?: str}."""
+    key_type = body.get("type", "")
+    key_value = body.get("value", "")
+
+    if not key_value:
+        return {"valid": False, "error": "Clé vide"}
+
+    try:
+        if key_type == "serper":
+            import requests
+            resp = requests.get(
+                "https://google.serper.dev/search",
+                headers={"X-API-KEY": key_value, "Content-Type": "application/json"},
+                json={"q": "test", "num": 1},
+                timeout=10,
+            )
+            if resp.status_code in (401, 403):
+                return {"valid": False, "error": "Clé invalide (401/403)"}
+            return {"valid": True}
+
+        elif key_type == "anthropic":
+            import anthropic
+            client = anthropic.Anthropic(api_key=key_value)
+            client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=5,
+                messages=[{"role": "user", "content": "hi"}],
+            )
+            return {"valid": True}
+
+        elif key_type == "perplexity":
+            import requests
+            resp = requests.post(
+                "https://api.perplexity.ai/chat/completions",
+                headers={"Authorization": f"Bearer {key_value}", "Content-Type": "application/json"},
+                json={"model": "sonar", "messages": [{"role": "user", "content": "test"}], "max_tokens": 5},
+                timeout=10,
+            )
+            if resp.status_code in (401, 403):
+                return {"valid": False, "error": "Clé invalide"}
+            return {"valid": True}
+
+        else:
+            return {"valid": True}  # unknown key type, skip validation
+
+    except Exception as e:
+        return {"valid": False, "error": str(e)[:200]}
+
+
+@router.post("/config/cleanup-csv")
+async def cleanup_old_csv(body: dict = {"max_age_days": 30}):
+    """Delete CSV files older than max_age_days."""
+    import time
+    max_age = body.get("max_age_days", 30) * 86400
+    output_dir = pipeline_config.OUTPUT_DIR
+    deleted = 0
+    if os.path.isdir(output_dir):
+        now = time.time()
+        for fname in os.listdir(output_dir):
+            if fname.endswith(".csv"):
+                fpath = os.path.join(output_dir, fname)
+                if now - os.path.getmtime(fpath) > max_age:
+                    os.remove(fpath)
+                    deleted += 1
+    return {"deleted": deleted}
 
 

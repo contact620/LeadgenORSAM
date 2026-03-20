@@ -89,11 +89,15 @@ def _load_system_prompt() -> str:
     return DEFAULT_SYSTEM_PROMPT
 
 
-def _build_batch_user_prompt(leads: list[dict]) -> str:
+def _build_batch_user_prompt(leads: list[dict], enrich_instructions: str = "") -> str:
     """Build the user prompt for a batch of leads."""
     parts = [
         "Évalue chaque prospect ci-dessous comme client potentiel pour BoxCom.\n",
     ]
+    if enrich_instructions:
+        parts.append(f"INSTRUCTIONS SPÉCIFIQUES DE L'UTILISATEUR :")
+        parts.append(f"{enrich_instructions}")
+        parts.append(f"Utilise ces instructions pour orienter ton évaluation, en particulier l'axe 'signaux' (40%).\n")
     for i, lead in enumerate(leads, 1):
         parts.append(f"Prospect {i} :")
         parts.append(f"  Prénom: {lead.get('first_name', 'N/A')}")
@@ -158,7 +162,7 @@ def _parse_response(text: str, expected_count: int) -> list[Optional[dict]]:
     return [None] * expected_count
 
 
-def _call_claude_batch(leads: list[dict]) -> list[Optional[dict]]:
+def _call_claude_batch(leads: list[dict], enrich_instructions: str = "") -> list[Optional[dict]]:
     """Call Claude Haiku for a batch of leads. Returns list of score dicts."""
     global _icp_disabled
     if _icp_disabled:
@@ -166,7 +170,7 @@ def _call_claude_batch(leads: list[dict]) -> list[Optional[dict]]:
 
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     system_prompt = _load_system_prompt()
-    user_prompt = _build_batch_user_prompt(leads)
+    user_prompt = _build_batch_user_prompt(leads, enrich_instructions)
 
     batch_size = len(leads)
     lead_names = ", ".join(
@@ -195,7 +199,7 @@ def _call_claude_batch(leads: list[dict]) -> list[Optional[dict]]:
         return [None] * batch_size
 
 
-def score_leads_icp(hit_leads: list[dict]) -> list[dict]:
+def score_leads_icp(hit_leads: list[dict], enrich_instructions: str = "") -> list[dict]:
     """
     Score hit leads against BoxCom's ICP. Sets on each lead:
       lead["icp_score"]         — int 0-100
@@ -225,7 +229,7 @@ def score_leads_icp(hit_leads: list[dict]) -> list[dict]:
 
         logger.info(f"ICP scoring [batch {batch_num}/{total_batches}]: {len(batch)} leads")
 
-        results = _call_claude_batch(batch)
+        results = _call_claude_batch(batch, enrich_instructions)
 
         for lead, result in zip(batch, results):
             if result and isinstance(result, dict):

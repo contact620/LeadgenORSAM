@@ -13,6 +13,7 @@ export interface RunRequest {
   filters?: ApolloFilters
   max_leads: number
   skip_gpt: boolean
+  enrich_instructions?: string
 }
 
 export interface JobStats {
@@ -51,6 +52,63 @@ export interface Lead {
   icp_tier?: string
   icp_rationale?: string
   icp_scores_detail?: string
+  is_duplicate?: boolean
+  first_seen_at?: string
+}
+
+export interface RerunParams {
+  url: string
+  max_leads: number
+  skip_gpt: boolean
+}
+
+export interface Template {
+  id: string
+  name: string
+  apollo_url: string
+  max_leads: number
+  skip_gpt: boolean
+  created_at: string
+  last_used_at: string | null
+  run_count: number
+}
+
+export interface LeadPool {
+  pool_id: string
+  name: string
+  apollo_url: string
+  created_at: string
+  scrape_job_id: string
+  total_leads: number
+  hit_leads: number
+  enriched_leads: number
+}
+
+export interface PoolLead {
+  id: number
+  pool_id: string
+  first_name?: string
+  last_name?: string
+  company?: string
+  job_title?: string
+  location?: string
+  email?: string
+  phone?: string
+  linkedin_url?: string
+  website?: string
+  hit_score?: number
+  is_hit: boolean
+  is_duplicate: boolean
+  enriched: boolean
+  enriched_at?: string
+  // Enrichment data (merged from enrich_data JSON)
+  icp_score?: number
+  icp_tier?: string
+  activity_summary?: string
+  conversion_angle?: string
+  digital_maturity?: string
+  estimated_budget?: string
+  business_signals?: string
 }
 
 export interface JobResult {
@@ -63,6 +121,7 @@ export interface JobResult {
   leads: Lead[]
   error?: string
   csv_path?: string
+  executive_summary?: string
 }
 
 export interface HealthCheck {
@@ -96,6 +155,11 @@ export function getDownloadUrl(jobId: string): string {
   return `/api/download/${jobId}`
 }
 
+export async function cancelJob(jobId: string): Promise<void> {
+  const res = await fetch(`/api/cancel/${jobId}`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to cancel job')
+}
+
 export async function getHealth(): Promise<HealthCheck> {
   const res = await fetch('/api/health')
   if (!res.ok) throw new Error('Health check failed')
@@ -112,6 +176,7 @@ export interface ConfigStatus {
   apollo_cookies: boolean
   hit_threshold: number
   max_leads: number
+  services: string[]
 }
 
 export interface ConfigUpdate {
@@ -121,6 +186,7 @@ export interface ConfigUpdate {
   perplexity_api_key?: string
   hit_threshold?: number
   max_leads?: number
+  services?: string[]
 }
 
 export async function getConfig(): Promise<ConfigStatus> {
@@ -179,6 +245,86 @@ export async function getHistoryLeads(jobId: string): Promise<Lead[]> {
 export async function deleteHistoryEntry(jobId: string): Promise<void> {
   const res = await fetch(`/api/history/${jobId}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Failed to delete entry')
+}
+
+// ── Cookie endpoints ─────────────────────────────────────────────────────────
+
+// ── Template endpoints ──────────────────────────────────────────────────────
+
+export async function getTemplates(): Promise<Template[]> {
+  const res = await fetch('/api/templates')
+  if (!res.ok) throw new Error('Failed to fetch templates')
+  return res.json()
+}
+
+export async function createTemplate(data: { name: string; apollo_url: string; max_leads: number; skip_gpt: boolean }): Promise<Template> {
+  const res = await fetch('/api/templates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error('Failed to create template')
+  return res.json()
+}
+
+export async function deleteTemplate(id: string): Promise<void> {
+  const res = await fetch(`/api/templates/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete template')
+}
+
+export async function runTemplate(id: string): Promise<{ job_id: string }> {
+  const res = await fetch(`/api/templates/${id}/run`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to run template')
+  return res.json()
+}
+
+// ── Lead Pool endpoints ──────────────────────────────────────────────────────
+
+export async function startScrapeJob(data: { url: string; max_leads: number; pool_name: string }): Promise<{ job_id: string }> {
+  const res = await fetch('/api/scrape', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error('Failed to start scrape job')
+  return res.json()
+}
+
+export async function startEnrichJob(data: { pool_id: string; batch_size: number }): Promise<{ job_id: string }> {
+  const res = await fetch('/api/enrich', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error('Failed to start enrich job')
+  return res.json()
+}
+
+export async function getPools(): Promise<LeadPool[]> {
+  const res = await fetch('/api/pools')
+  if (!res.ok) throw new Error('Failed to fetch pools')
+  return res.json()
+}
+
+export async function getPoolDetail(poolId: string): Promise<LeadPool> {
+  const res = await fetch(`/api/pools/${poolId}`)
+  if (!res.ok) throw new Error('Failed to fetch pool')
+  return res.json()
+}
+
+export async function getPoolLeads(poolId: string, onlyHit = false, onlyUnenriched = false, limit = 0): Promise<PoolLead[]> {
+  const params = new URLSearchParams()
+  if (onlyHit) params.set('only_hit', 'true')
+  if (onlyUnenriched) params.set('only_unenriched', 'true')
+  if (limit) params.set('limit', String(limit))
+  const res = await fetch(`/api/pools/${poolId}/leads?${params}`)
+  if (!res.ok) throw new Error('Failed to fetch pool leads')
+  return res.json()
+}
+
+export async function deletePool(poolId: string): Promise<void> {
+  const res = await fetch(`/api/pools/${poolId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete pool')
 }
 
 // ── Cookie endpoints ─────────────────────────────────────────────────────────
