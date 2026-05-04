@@ -195,6 +195,7 @@ export function ResultsTable({ leads, jobId }: Props) {
                   { key: null, label: 'Poste' },
                   { key: 'company' as SortKey, label: 'Entreprise' },
                   { key: null, label: 'Email' },
+                  { key: null, label: 'Téléphone' },
                   { key: null, label: 'LinkedIn' },
                   { key: 'score' as SortKey, label: 'Score' },
                   { key: null, label: 'Hit' },
@@ -222,7 +223,7 @@ export function ResultsTable({ leads, jobId }: Props) {
             <tbody>
               {pageLeads.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center">
+                  <td colSpan={10} className="px-4 py-12 text-center">
                     <SearchX className="w-10 h-10 mx-auto mb-3" style={{ color: 'var(--th-text-ghost)' }} />
                     <p className="text-sm" style={{ color: 'var(--th-text-faint)' }}>Aucun lead trouvé</p>
                   </td>
@@ -261,6 +262,16 @@ export function ResultsTable({ leads, jobId }: Props) {
                               {lead.email}
                             </a>
                             <button onClick={e => { e.stopPropagation(); copyToClipboard(lead.email!, 'Email') }} className="p-0.5 rounded transition-colors" style={{ color: 'var(--th-text-ghost)', background: 'none', border: 'none', cursor: 'pointer' }} title="Copier"><Copy className="w-3 h-3" /></button>
+                          </span>
+                        ) : <span style={{ color: 'var(--th-text-ghost)' }}>—</span>}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        {lead.phone ? (
+                          <span className="inline-flex items-center gap-1">
+                            <a href={`tel:${lead.phone}`} onClick={e => e.stopPropagation()} className="font-mono text-xs" style={{ color: 'var(--th-primary)' }}>
+                              {lead.phone}
+                            </a>
+                            <button onClick={e => { e.stopPropagation(); copyToClipboard(lead.phone!, 'Téléphone') }} className="p-0.5 rounded transition-colors" style={{ color: 'var(--th-text-ghost)', background: 'none', border: 'none', cursor: 'pointer' }} title="Copier"><Copy className="w-3 h-3" /></button>
                           </span>
                         ) : <span style={{ color: 'var(--th-text-ghost)' }}>—</span>}
                       </td>
@@ -316,7 +327,7 @@ export function ResultsTable({ leads, jobId }: Props) {
 
                     {isExpanded && (lead.activity_summary || lead.conversion_angle || lead.digital_maturity || lead.estimated_budget || lead.business_signals || lead.icp_rationale) && (
                       <tr key={`${globalIdx}-expanded`} style={{ background: 'var(--th-primary-soft)', borderBottom: '1px solid var(--th-border-subtle)' }}>
-                        <td colSpan={9} className="px-5 py-4">
+                        <td colSpan={10} className="px-5 py-4">
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                             {lead.icp_rationale && (
                               <div className="sm:col-span-2">

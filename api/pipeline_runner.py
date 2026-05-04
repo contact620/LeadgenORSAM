@@ -366,10 +366,10 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
 
         # ── Executive summary (Claude) ───────────────────────────────────────
         executive_summary = None
-        if not skip_gpt and not config._is_placeholder(config.ANTHROPIC_API_KEY):
+        if not skip_gpt and not pipeline_config._is_placeholder(pipeline_config.ANTHROPIC_API_KEY):
             try:
                 import anthropic as _anth
-                _summary_client = _anth.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+                _summary_client = _anth.Anthropic(api_key=pipeline_config.ANTHROPIC_API_KEY)
 
                 # Build context for summary
                 hot_count = sum(1 for l in leads if l.get("icp_tier") == "hot")
