@@ -111,6 +111,15 @@ export function ResultsTable({ leads, jobId }: Props) {
             <Download className="w-4 h-4" />
             Excel
           </a>
+          <a
+            href={`${getDownloadUrl(jobId)}?format=json`}
+            download
+            className="inline-flex items-center gap-2 rounded-lg text-sm font-medium"
+            style={{ padding: '8px 16px', color: 'var(--th-purple)', background: 'rgba(155,107,255,0.08)', border: '1px solid rgba(155,107,255,0.2)', textDecoration: 'none' }}
+          >
+            <Download className="w-4 h-4" />
+            JSON
+          </a>
         </div>
       </div>
 
