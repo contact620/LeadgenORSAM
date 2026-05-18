@@ -97,6 +97,50 @@ Les cookies permettent au scraper de se connecter a Apollo.io avec votre session
 
 ---
 
+## Mise a jour du projet
+
+Lorsque vous recevez une nouvelle version du projet, **vos donnees locales doivent etre preservees**. Elles vivent toutes dans 3 endroits :
+
+| Fichier / dossier | Contenu |
+|-------------------|---------|
+| `output/history.db` | Base SQLite : historique des runs, pools de leads, templates de recherche |
+| `output/*.csv` | Vos exports CSV passes |
+| `.env` | Vos cles API |
+| `apollo_cookies.json` | Vos cookies de session Apollo |
+
+### Methode A — Via Git (recommandee)
+
+Si vous avez clone le projet avec Git, la mise a jour est instantanee :
+
+1. Ouvrez un terminal a la racine du projet
+2. Lancez :
+   ```bash
+   git pull
+   ```
+3. Si l'application tourne, rechargez la page dans le navigateur (`F5`). Sinon, relancez `start.bat`
+
+Git ne touche jamais aux fichiers ignores (`output/`, `.env`, `apollo_cookies.json`, `venv/`, `node_modules/`) — vos donnees et votre configuration sont automatiquement preservees.
+
+> Si une nouvelle dependance Python ou Node a ete ajoutee, relancez `setup.bat` apres le `git pull`.
+
+### Methode B — Nouvelle version complete (zip)
+
+Si on vous envoie un nouveau zip complet :
+
+1. **Avant** d'extraire, deplacez ces fichiers/dossiers sur le Bureau (ou ailleurs) :
+   - `output/` (vos donnees passees)
+   - `.env` (vos cles API)
+   - `apollo_cookies.json` (votre session Apollo)
+2. Supprimez l'ancien dossier du projet (ou renommez-le)
+3. Extrayez le nouveau zip
+4. **Recopiez** `output/`, `.env` et `apollo_cookies.json` a la racine du nouveau dossier
+5. Lancez `setup.bat` (reinstalle `venv` et `node_modules`)
+6. Lancez `start.bat`
+
+> **Attention :** si vous extrayez le nouveau zip **par-dessus** l'ancien dossier sans precaution, vous risquez d'ecraser votre `.env`, vos cookies et votre historique. Toujours sauvegarder ces 3 elements d'abord.
+
+---
+
 ## Utilisation
 
 ### Interface web (recommandee)
