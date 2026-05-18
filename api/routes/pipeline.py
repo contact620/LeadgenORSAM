@@ -129,6 +129,17 @@ async def download_csv(job_id: str, format: str = "csv"):
         except ImportError:
             raise HTTPException(status_code=400, detail="openpyxl non installé. Installez-le avec: pip install openpyxl")
 
+    if format == "json":
+        import pandas as pd
+        df = pd.read_csv(csv_path)
+        json_path = csv_path.replace(".csv", ".json")
+        df.to_json(json_path, orient="records", indent=2, force_ascii=False)
+        return FileResponse(
+            path=json_path,
+            media_type="application/json",
+            filename=os.path.basename(json_path),
+        )
+
     return FileResponse(
         path=csv_path,
         media_type="text/csv",

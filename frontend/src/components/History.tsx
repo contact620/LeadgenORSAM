@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
-import { Download, Eye, Trash2, AlertCircle, Clock, ArrowLeft, Loader2, Rocket, RotateCcw, Search } from 'lucide-react'
+import { Download, Eye, Trash2, AlertCircle, Clock, ArrowLeft, Loader2, Rocket, RotateCcw, Search, FileJson } from 'lucide-react'
 import { getHistory, getHistoryLeads, deleteHistoryEntry, getDownloadUrl, type HistoryEntry, type Lead, type JobResult, type RerunParams } from '@/lib/api'
 import { StatsBar } from './StatsBar'
 import { ResultsTable } from './ResultsTable'
@@ -348,6 +348,15 @@ export function History({ onBack, onRerun }: Props) {
                                 title="Télécharger CSV"
                               >
                                 <Download className="w-3.5 h-3.5" />
+                              </a>
+                              <a
+                                href={`${getDownloadUrl(entry.job_id)}?format=json`}
+                                download
+                                className="p-1.5 rounded-md transition-colors inline-flex"
+                                style={{ color: 'var(--th-purple)', background: 'rgba(155,107,255,0.08)', textDecoration: 'none' }}
+                                title="Télécharger JSON"
+                              >
+                                <FileJson className="w-3.5 h-3.5" />
                               </a>
                             </>
                           )}
