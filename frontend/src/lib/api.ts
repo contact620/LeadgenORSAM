@@ -179,6 +179,7 @@ export interface ConfigStatus {
   dropcontact_api_key: boolean
   anthropic_api_key: boolean
   perplexity_api_key: boolean
+  hunter_api_key: boolean
   apollo_cookies: boolean
   hit_threshold: number
   max_leads: number
@@ -190,6 +191,7 @@ export interface ConfigUpdate {
   dropcontact_api_key?: string
   anthropic_api_key?: string
   perplexity_api_key?: string
+  hunter_api_key?: string
   hit_threshold?: number
   max_leads?: number
   services?: string[]

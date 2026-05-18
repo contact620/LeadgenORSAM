@@ -180,8 +180,8 @@ function CookiePanel({ service, label, isPresent, onUploaded }: CookiePanelProps
 
 export function Settings({ onBack, onConfigChange }: Props) {
   const [config, setConfig] = useState<ConfigStatus | null>(null)
-  const [keys, setKeys] = useState({ serper: '', dropcontact: '', anthropic: '', perplexity: '' })
-  const [showKey, setShowKey] = useState({ serper: false, dropcontact: false, anthropic: false, perplexity: false })
+  const [keys, setKeys] = useState({ serper: '', dropcontact: '', anthropic: '', perplexity: '', hunter: '' })
+  const [showKey, setShowKey] = useState({ serper: false, dropcontact: false, anthropic: false, perplexity: false, hunter: false })
   const [savingKeys, setSavingKeys] = useState(false)
   const [keysStatus, setKeysStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
   const [pipeline, setPipeline] = useState({ hitThreshold: 50, services: [] as string[] })
@@ -200,9 +200,9 @@ export function Settings({ onBack, onConfigChange }: Props) {
   const handleSaveKeys = async () => {
     setSavingKeys(true); setKeysStatus(null)
     try {
-      await saveConfig({ serper_api_key: keys.serper || undefined, dropcontact_api_key: keys.dropcontact || undefined, anthropic_api_key: keys.anthropic || undefined, perplexity_api_key: keys.perplexity || undefined })
+      await saveConfig({ serper_api_key: keys.serper || undefined, dropcontact_api_key: keys.dropcontact || undefined, anthropic_api_key: keys.anthropic || undefined, perplexity_api_key: keys.perplexity || undefined, hunter_api_key: keys.hunter || undefined })
       setKeysStatus({ type: 'success', msg: 'Clés sauvegardées' })
-      setKeys({ serper: '', dropcontact: '', anthropic: '', perplexity: '' })
+      setKeys({ serper: '', dropcontact: '', anthropic: '', perplexity: '', hunter: '' })
       refreshConfig()
     } catch (e: unknown) {
       setKeysStatus({ type: 'error', msg: e instanceof Error ? e.message : 'Erreur' })
@@ -225,6 +225,7 @@ export function Settings({ onBack, onConfigChange }: Props) {
     { id: 'dropcontact', label: 'DROPCONTACT_API_KEY', required: false, configKey: 'dropcontact_api_key', hint: 'Optionnel — email/téléphone ignorés si absent' },
     { id: 'anthropic',   label: 'ANTHROPIC_API_KEY',   required: true,  configKey: 'anthropic_api_key' },
     { id: 'perplexity',  label: 'PERPLEXITY_API_KEY',  required: false, configKey: 'perplexity_api_key', hint: 'Optionnel — enrichissement Perplexity Sonar ignoré si absent' },
+    { id: 'hunter',      label: 'HUNTER_API_KEY',      required: false, configKey: 'hunter_api_key',    hint: 'Optionnel — vérification email Hunter.io ignorée si absent (~$0.01/vérif)' },
   ]
 
   const actionBtnStyle = (disabled: boolean) => ({
@@ -331,9 +332,9 @@ export function Settings({ onBack, onConfigChange }: Props) {
 
           <button
             onClick={handleSaveKeys}
-            disabled={savingKeys || (!keys.serper && !keys.dropcontact && !keys.anthropic && !keys.perplexity)}
+            disabled={savingKeys || (!keys.serper && !keys.dropcontact && !keys.anthropic && !keys.perplexity && !keys.hunter)}
             className="btn-grad flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white"
-            style={actionBtnStyle(savingKeys || (!keys.serper && !keys.dropcontact && !keys.anthropic && !keys.perplexity))}
+            style={actionBtnStyle(savingKeys || (!keys.serper && !keys.dropcontact && !keys.anthropic && !keys.perplexity && !keys.hunter))}
           >
             {savingKeys ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
             Sauvegarder les clés
