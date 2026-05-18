@@ -81,23 +81,65 @@ _JS_EXTRACT = """() => {
             linkedin_url: ''
         };
 
+        // Junk values that Apollo renders as cell text but are NOT real data
+        // (action buttons, locked fields, etc.). Used to filter every column.
+        const SKIP = [
+            'no email', 'unlock email', 'access email',
+            'no phone', 'request phone', 'access mobile', 'access phone',
+            'click to run', 'add to sequence', 'access', 'unlock',
+            'view profile', 'request mobile',
+        ];
+        const isJunk = (t) => !t || SKIP.some(p => t.toLowerCase().includes(p));
+
         // --- Extract from table cells (<td>) if in a table ---
         if (tr) {
             const cells = Array.from(tr.querySelectorAll('td'));
             const nameCell = cells.findIndex(c => c === link.closest('td') || c.contains(link));
 
+            // STRATEGY 1 (preferred): use table headers to map columns by name.
+            // This is the most reliable approach — Apollo's column order varies.
+            const table = link.closest('table');
+            const headers = table
+                ? Array.from(table.querySelectorAll('th')).map(th => (th.innerText || '').trim().toLowerCase())
+                : [];
+
+            const findByHeader = (...keywords) => {
+                const idx = headers.findIndex(h => keywords.some(k => h.includes(k)));
+                if (idx < 0 || idx >= cells.length) return '';
+                const t = (cells[idx].innerText || '').trim().split('\\n')[0].trim();
+                if (isJunk(t)) return '';
+                return t;
+            };
+
+            if (headers.length > 0) {
+                lead.location  = findByHeader('location', 'city', 'country');
+                lead.job_title = findByHeader('title', 'role', 'position');
+                // Company: prefer the cell with an account link; fallback to header match.
+                const compCell = cells.find(c => c.querySelector(COMPANY_LINK_SEL));
+                if (compCell) {
+                    const compLink = compCell.querySelector(COMPANY_LINK_SEL);
+                    lead.company = (compLink.textContent || compCell.innerText || '').trim().split('\\n')[0].trim();
+                } else {
+                    lead.company = findByHeader('company', 'account', 'organization');
+                }
+            }
+
+            // STRATEGY 2 (fallback when headers absent or didn't match): positional heuristics.
+
             // Job title: typically the cell right after the name cell
-            if (nameCell >= 0 && nameCell + 1 < cells.length) {
+            if (!lead.job_title && nameCell >= 0 && nameCell + 1 < cells.length) {
                 const jt = (cells[nameCell + 1].innerText || '').trim().split('\\n')[0].trim();
-                if (jt && jt.length < 120 && !jt.includes('@')) lead.job_title = jt;
+                if (jt && jt.length < 120 && !jt.includes('@') && !isJunk(jt)) lead.job_title = jt;
             }
 
             // Company: cell containing an account/company/organization link
-            for (const cell of cells) {
-                const compLink = cell.querySelector(COMPANY_LINK_SEL);
-                if (compLink) {
-                    lead.company = (compLink.textContent || cell.innerText || '').trim().split('\\n')[0].trim();
-                    break;
+            if (!lead.company) {
+                for (const cell of cells) {
+                    const compLink = cell.querySelector(COMPANY_LINK_SEL);
+                    if (compLink) {
+                        lead.company = (compLink.textContent || cell.innerText || '').trim().split('\\n')[0].trim();
+                        break;
+                    }
                 }
             }
 
@@ -110,9 +152,7 @@ _JS_EXTRACT = """() => {
                     const text = (cell.innerText || '').trim().split('\\n')[0].trim();
                     if (text && text.length > 3 && text.length < 120 &&
                         !text.includes('@') && !/^https?:/.test(text) &&
-                        !text.toLowerCase().includes('no email') &&
-                        !text.toLowerCase().includes('unlock') &&
-                        text !== name) {
+                        !isJunk(text) && text !== name) {
                         lead.job_title = text;
                         break;
                     }
@@ -120,17 +160,18 @@ _JS_EXTRACT = """() => {
             }
 
             // Location: look for remaining cells with location-like text
-            const SKIP = ['no email', 'unlock email', 'no phone', 'request phone', 'click to run', 'add to sequence', 'access email'];
-            for (let i = nameCell + 2; i < cells.length; i++) {
-                const cell = cells[i];
-                if (cell.querySelector(COMPANY_LINK_SEL)) continue;
-                const text = (cell.innerText || '').trim().split('\\n')[0].trim();
-                if (!text || text.length > 60 || /^\\d+$/.test(text)) continue;
-                if (SKIP.some(p => text.toLowerCase().includes(p))) continue;
-                if (text.includes('@') || /^https?:/.test(text)) continue;
-                if (text === lead.job_title) continue;
-                lead.location = text;
-                break;
+            if (!lead.location) {
+                for (let i = nameCell + 2; i < cells.length; i++) {
+                    const cell = cells[i];
+                    if (cell.querySelector(COMPANY_LINK_SEL)) continue;
+                    const text = (cell.innerText || '').trim().split('\\n')[0].trim();
+                    if (!text || text.length > 60 || /^\\d+$/.test(text)) continue;
+                    if (isJunk(text)) continue;
+                    if (text.includes('@') || /^https?:/.test(text)) continue;
+                    if (text === lead.job_title) continue;
+                    lead.location = text;
+                    break;
+                }
             }
         }
 
@@ -150,42 +191,16 @@ _JS_EXTRACT = """() => {
             }
 
             if (!lead.location) {
-                const SKIP = ['no email', 'unlock email', 'no phone', 'request phone', 'click to run', 'add to sequence', 'access email'];
                 for (let i = (nameIdx >= 0 ? nameIdx + 2 : 0); i < children.length; i++) {
                     const child = children[i];
                     if (child.querySelector(COMPANY_LINK_SEL)) continue;
                     const text = (child.innerText || '').trim().split('\\n')[0].trim();
                     if (!text || text.length > 60 || /^\\d+$/.test(text)) continue;
-                    if (SKIP.some(p => text.toLowerCase().includes(p))) continue;
+                    if (isJunk(text)) continue;
                     if (text.includes('@') || /^https?:/.test(text)) continue;
                     if (text === lead.job_title || text === lead.company) continue;
                     lead.location = text;
                     break;
-                }
-            }
-        }
-
-        // --- Fallback: use table header column indices to identify company/location ---
-        if (!lead.company || !lead.location) {
-            const table = link.closest('table');
-            if (table && tr) {
-                const headers = Array.from(table.querySelectorAll('th')).map(
-                    th => (th.innerText || '').trim().toLowerCase()
-                );
-                const cells = Array.from(tr.querySelectorAll('td'));
-                if (!lead.company) {
-                    const compIdx = headers.findIndex(h => h.includes('company') || h.includes('account') || h.includes('organization'));
-                    if (compIdx >= 0 && compIdx < cells.length) {
-                        const t = (cells[compIdx].innerText || '').trim().split('\\n')[0].trim();
-                        if (t && t.length < 120) lead.company = t;
-                    }
-                }
-                if (!lead.location) {
-                    const locIdx = headers.findIndex(h => h.includes('location') || h.includes('city') || h.includes('country'));
-                    if (locIdx >= 0 && locIdx < cells.length) {
-                        const t = (cells[locIdx].innerText || '').trim().split('\\n')[0].trim();
-                        if (t && t.length < 80) lead.location = t;
-                    }
                 }
             }
         }

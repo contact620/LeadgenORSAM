@@ -38,6 +38,9 @@ export interface Lead {
   job_title?: string
   location?: string
   email?: string
+  email_status?: string
+  email_confidence?: number
+  email_verification_provider?: string
   phone?: string
   linkedin_url?: string
   website?: string
@@ -45,6 +48,9 @@ export interface Lead {
   is_hit?: boolean
   activity_summary?: string
   conversion_angle?: string
+  inconsistency_detected?: boolean
+  inconsistency_reason?: string
+  llm_confidence?: string
   digital_maturity?: string
   estimated_budget?: string
   business_signals?: string

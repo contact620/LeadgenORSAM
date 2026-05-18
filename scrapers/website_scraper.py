@@ -14,7 +14,30 @@ import config
 
 logger = logging.getLogger(__name__)
 
-MAX_WEBSITE_TEXT = 2000
+MAX_WEBSITE_TEXT = 4000
+
+# Phrases that bloat the scraped text without providing business signal.
+# Filtering them lets the LLM focus on the actual company description.
+_NOISE_PATTERNS = [
+    r"(?i)accept(er|ing)? (all )?cookies?",
+    r"(?i)nous (et nos partenaires )?utilisons des cookies",
+    r"(?i)this (web)?site uses cookies",
+    r"(?i)privacy policy",
+    r"(?i)politique de confidentialit[eé]",
+    r"(?i)mentions? l[eé]gales?",
+    r"(?i)conditions g[eé]n[eé]rales",
+    r"(?i)tous droits r[eé]serv[eé]s?",
+    r"(?i)all rights reserved",
+    r"(?i)© ?\d{4}",
+    r"(?i)gdpr|rgpd",
+]
+_NOISE_RE = re.compile("|".join(_NOISE_PATTERNS))
+
+
+def _strip_noise(text: str) -> str:
+    """Remove cookie banners, legal footers, and other low-signal repeats."""
+    cleaned = _NOISE_RE.sub(" ", text)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
 async def _scrape_website(url: str) -> str:
@@ -37,9 +60,12 @@ async def _scrape_website(url: str) -> str:
         # Remove scripts, styles, tags
         text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<noscript[^>]*>.*?</noscript>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
         text = re.sub(r"<[^>]+>", " ", text)
         text = re.sub(r"&[a-zA-Z]+;", " ", text)
         text = re.sub(r"\s{2,}", " ", text).strip()
+        text = _strip_noise(text)
         return text[:MAX_WEBSITE_TEXT]
     except Exception as e:
         logger.error(f"Website scrape error for {url}: {e}")

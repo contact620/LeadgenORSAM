@@ -2,11 +2,14 @@
 Step 4 — Hit score calculator.
 
 Scoring:
-  email found      → +40 pts
-  LinkedIn found   → +30 pts
-  phone found      → +20 pts
-  website found    → +10 pts
-  Total max        → 100 pts
+  email (verified valid)         → +40 pts (full)
+  email (accept_all/webmail/unknown) → +20 pts (half — could be valid)
+  email (invalid/disposable)     → 0 pts   (drop)
+  email (no verification done)   → +40 pts (legacy fallback)
+  LinkedIn found                 → +30 pts
+  phone found                    → +20 pts
+  website found                  → +10 pts
+  Total max                      → 100 pts
 
 A lead is flagged as 'hit' if score >= HIT_THRESHOLD (default 50).
 """
@@ -16,16 +19,36 @@ import config
 
 logger = logging.getLogger(__name__)
 
+# Hunter.io status → email score multiplier (applied to SCORE_EMAIL)
+_EMAIL_STATUS_WEIGHTS = {
+    "valid": 1.0,
+    "accept_all": 0.5,
+    "webmail": 0.5,
+    "unknown": 0.5,
+    "invalid": 0.0,
+    "disposable": 0.0,
+}
+
+
+def _email_points(lead: dict) -> int:
+    """Compute email contribution to hit_score, weighted by verification status."""
+    if not lead.get("email"):
+        return 0
+    status = lead.get("email_status")
+    if status is None:
+        # No verification was run (Hunter disabled or no API key) — fall back to legacy full weight.
+        return config.SCORE_EMAIL
+    weight = _EMAIL_STATUS_WEIGHTS.get(status, 0.5)
+    return int(round(config.SCORE_EMAIL * weight))
+
 
 def calculate_hit_score(lead: dict) -> dict:
     """
     Compute hit_score and is_hit for a single lead.
     Modifies lead in place and returns it.
     """
-    score = 0
+    score = _email_points(lead)
 
-    if lead.get("email"):
-        score += config.SCORE_EMAIL
     if lead.get("linkedin_url"):
         score += config.SCORE_LINKEDIN
     if lead.get("phone"):

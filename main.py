@@ -32,6 +32,7 @@ import config
 from scrapers.apollo_scraper import scrape_apollo
 from enrichers.google_search import enrich_leads_google
 from enrichers.dropcontact import enrich_leads_dropcontact
+from enrichers.hunter_verifier import enrich_leads_hunter
 from processors.hit_calculator import score_all_leads
 from scrapers.website_scraper import scrape_hit_leads
 from enrichers.gpt_enricher import enrich_leads_gpt
@@ -46,6 +47,8 @@ CSV_COLUMNS = [
     "job_title",
     "location",
     "email",
+    "email_status",
+    "email_confidence",
     "phone",
     "linkedin_url",
     "website",
@@ -57,6 +60,9 @@ CSV_COLUMNS = [
     "icp_scores_detail",
     "activity_summary",
     "conversion_angle",
+    "inconsistency_detected",
+    "inconsistency_reason",
+    "llm_confidence",
     "digital_maturity",
     "estimated_budget",
     "business_signals",
@@ -147,6 +153,10 @@ async def run_pipeline(args):
     # ── Step 3b: Dropcontact enrichment ───────────────────────────────────────
     logger.info("Step 3b — Dropcontact enrichment (email + phone)...")
     leads = enrich_leads_dropcontact(leads)
+
+    # ── Step 3c: Hunter.io email verification ─────────────────────────────────
+    logger.info("Step 3c — Hunter.io email verification...")
+    leads = enrich_leads_hunter(leads)
 
     # ── Step 4: Hit score ─────────────────────────────────────────────────────
     logger.info("Step 4 — Calculating hit scores...")
