@@ -76,7 +76,7 @@ STEP_WEIGHTS = {1: 0.05, 2: 0.18, 3: 0.22, 4: 0.05, 5: 0.12, 6: 0.23, 7: 0.15}
 STEP_NAMES = {
     1: "Input Apollo URL",
     2: "Scraping Apollo",
-    3: "Enrichissement (Google + Dropcontact)",
+    3: "Enrichissement (Google + Dropcontact + Hunter)",
     4: "Calcul du taux de hit",
     5: "Scoring ICP (profil client idéal)",
     6: "Enrichissement IA (Claude)",
@@ -86,7 +86,7 @@ STEP_NAMES = {
 # Patterns to detect which step a log message belongs to
 STEP_PATTERNS = [
     (2, re.compile(r"Step 2|Scraping Apollo|apollo|page \d+", re.I)),
-    (3, re.compile(r"Step 3|Google enrichment|Dropcontact|dropcontact|batch \d+", re.I)),
+    (3, re.compile(r"Step 3|Google enrichment|Dropcontact|dropcontact|batch \d+|Hunter\.io|email verification", re.I)),
     (4, re.compile(r"Step 4|hit score|Hit score complete", re.I)),
     (5, re.compile(r"Step 5|ICP scoring|ICP|icp_score", re.I)),
     (6, re.compile(r"Step 6|GPT|LinkedIn profile|Scraping hit lead|Claude AI", re.I)),
@@ -194,11 +194,13 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         # Reset enricher state from any previous run
         from enrichers.google_search import _reset_state as _reset_google
         from enrichers.dropcontact import _reset_state as _reset_dc
+        from enrichers.hunter_verifier import _reset_state as _reset_hunter
         from enrichers.gpt_enricher import _reset_state as _reset_gpt
         from enrichers.perplexity_enricher import _reset_state as _reset_perplexity
         from processors.icp_scorer import _reset_state as _reset_icp
         _reset_google()
         _reset_dc()
+        _reset_hunter()
         _reset_gpt()
         _reset_perplexity()
         _reset_icp()
@@ -237,9 +239,19 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         email_count = sum(1 for l in leads if l.get("email"))
         phone_count = sum(1 for l in leads if l.get("phone"))
         handler.set_explicit_progress(
+            3, 0.75,
+            f"Dropcontact terminé — {email_count}/{len(leads)} emails, "
+            f"{phone_count}/{len(leads)} téléphones. Vérification Hunter.io..."
+        )
+
+        # ── Step 3c: Hunter.io email verification ─────────────────────────────
+        from enrichers.hunter_verifier import enrich_leads_hunter
+        leads = enrich_leads_hunter(leads)
+
+        valid_emails = sum(1 for l in leads if l.get("email_status") == "valid")
+        handler.set_explicit_progress(
             3, 1.0,
-            f"Enrichissement terminé — {email_count}/{len(leads)} emails, "
-            f"{phone_count}/{len(leads)} téléphones"
+            f"Vérification email terminée — {valid_emails}/{email_count} valides (Hunter.io)"
         )
 
         # ── Step 4: Hit score ─────────────────────────────────────────────────
@@ -321,10 +333,12 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
 
         CSV_COLUMNS = [
             "first_name", "last_name", "company", "job_title", "location",
-            "email", "phone", "linkedin_url", "website",
+            "email", "email_status", "email_confidence",
+            "phone", "linkedin_url", "website",
             "hit_score", "is_hit",
             "icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
             "activity_summary", "conversion_angle",
+            "inconsistency_detected", "inconsistency_reason", "llm_confidence",
             "digital_maturity", "estimated_budget", "business_signals",
             "is_duplicate", "first_seen_at",
         ]
@@ -551,8 +565,10 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
 
         from enrichers.google_search import _reset_state as _reset_google
         from enrichers.dropcontact import _reset_state as _reset_dc
+        from enrichers.hunter_verifier import _reset_state as _reset_hunter
         _reset_google()
         _reset_dc()
+        _reset_hunter()
 
         new_loop = _asyncio.new_event_loop()
         _asyncio.set_event_loop(new_loop)
@@ -570,12 +586,17 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
         handler.set_explicit_progress(3, 0.0, "Enrichissement Google...")
         from enrichers.google_search import enrich_leads_google
         leads = enrich_leads_google(leads)
-        handler.set_explicit_progress(3, 0.5, "Google terminé. Lancement Dropcontact...")
+        handler.set_explicit_progress(3, 0.4, "Google terminé. Lancement Dropcontact...")
 
         # Step 3b: Dropcontact
         from enrichers.dropcontact import enrich_leads_dropcontact
         leads = enrich_leads_dropcontact(leads)
-        handler.set_explicit_progress(3, 1.0, "Enrichissement contact terminé")
+        handler.set_explicit_progress(3, 0.75, "Dropcontact terminé. Vérification Hunter.io...")
+
+        # Step 3c: Hunter.io email verification
+        from enrichers.hunter_verifier import enrich_leads_hunter
+        leads = enrich_leads_hunter(leads)
+        handler.set_explicit_progress(3, 1.0, "Vérification email terminée")
         _check_cancelled(job_id)
 
         # Step 4: Hit score
@@ -733,6 +754,7 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
         enrich_data = {}
         enrich_fields = ["icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
                          "activity_summary", "conversion_angle",
+                         "inconsistency_detected", "inconsistency_reason", "llm_confidence",
                          "digital_maturity", "estimated_budget", "business_signals"]
         for i, lead in enumerate(leads):
             lid = lead_ids[i]
@@ -748,10 +770,12 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
 
         CSV_COLUMNS = [
             "first_name", "last_name", "company", "job_title", "location",
-            "email", "phone", "linkedin_url", "website",
+            "email", "email_status", "email_confidence",
+            "phone", "linkedin_url", "website",
             "hit_score", "is_hit",
             "icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
             "activity_summary", "conversion_angle",
+            "inconsistency_detected", "inconsistency_reason", "llm_confidence",
             "digital_maturity", "estimated_budget", "business_signals",
         ]
         df = pd.DataFrame(leads)

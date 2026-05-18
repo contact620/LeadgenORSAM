@@ -35,6 +35,9 @@ class LeadRecord(BaseModel):
     job_title: Optional[str] = None
     location: Optional[str] = None
     email: Optional[str] = None
+    email_status: Optional[str] = None
+    email_confidence: Optional[int] = None
+    email_verification_provider: Optional[str] = None
     phone: Optional[str] = None
     linkedin_url: Optional[str] = None
     website: Optional[str] = None
@@ -42,6 +45,9 @@ class LeadRecord(BaseModel):
     is_hit: Optional[bool] = None
     activity_summary: Optional[str] = None
     conversion_angle: Optional[str] = None
+    inconsistency_detected: Optional[bool] = None
+    inconsistency_reason: Optional[str] = None
+    llm_confidence: Optional[str] = None
     digital_maturity: Optional[str] = None
     estimated_budget: Optional[str] = None
     business_signals: Optional[str] = None

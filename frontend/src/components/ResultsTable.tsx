@@ -1,9 +1,19 @@
 import { useState, useMemo } from 'react'
-import { Download, Search, ExternalLink, ChevronLeft, ChevronRight, SearchX, ArrowUpDown, ArrowUp, ArrowDown, Copy } from 'lucide-react'
+import { Download, Search, ExternalLink, ChevronLeft, ChevronRight, SearchX, ArrowUpDown, ArrowUp, ArrowDown, Copy, AlertTriangle, CheckCircle2, XCircle, HelpCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { getDownloadUrl, type Lead } from '@/lib/api'
 import { LeadDetailModal } from './LeadDetailModal'
+
+// Visual style for each Hunter.io email_status value
+const EMAIL_STATUS_STYLE: Record<string, { icon: typeof CheckCircle2; bg: string; color: string; border: string; label: string }> = {
+  valid:      { icon: CheckCircle2, bg: 'rgba(34,197,94,0.10)',  color: '#22c55e', border: 'rgba(34,197,94,0.30)',  label: 'Email vérifié (valide)' },
+  invalid:    { icon: XCircle,      bg: 'rgba(239,68,68,0.10)',  color: '#ef4444', border: 'rgba(239,68,68,0.30)',  label: 'Email invalide' },
+  disposable: { icon: XCircle,      bg: 'rgba(239,68,68,0.10)',  color: '#ef4444', border: 'rgba(239,68,68,0.30)',  label: 'Email jetable' },
+  accept_all: { icon: HelpCircle,   bg: 'rgba(251,191,36,0.10)', color: '#fbbf24', border: 'rgba(251,191,36,0.30)', label: 'Domaine catch-all (incertain)' },
+  webmail:    { icon: HelpCircle,   bg: 'rgba(251,191,36,0.10)', color: '#fbbf24', border: 'rgba(251,191,36,0.30)', label: 'Webmail (gmail/outlook…)' },
+  unknown:    { icon: HelpCircle,   bg: 'rgba(148,163,184,0.10)', color: 'rgba(148,163,184,0.85)', border: 'rgba(148,163,184,0.25)', label: 'Statut inconnu' },
+}
 
 const PAGE_SIZE = 10
 
@@ -251,7 +261,18 @@ export function ResultsTable({ leads, jobId }: Props) {
                       style={{ borderBottom: '1px solid var(--th-border-subtle)', background: isExpanded ? 'var(--th-primary-soft)' : 'transparent' }}
                     >
                       <td className="px-4 py-3 whitespace-nowrap">
-                        <span className="font-medium" style={{ color: 'var(--th-text-primary)' }}>{fullName || '—'}</span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="font-medium" style={{ color: 'var(--th-text-primary)' }}>{fullName || '—'}</span>
+                          {lead.inconsistency_detected && (
+                            <span
+                              title={lead.inconsistency_reason || 'Incohérence détectée entre Apollo et la source scrapée'}
+                              className="inline-flex items-center"
+                              style={{ color: '#fb923c' }}
+                            >
+                              <AlertTriangle className="w-3.5 h-3.5" />
+                            </span>
+                          )}
+                        </span>
                         {lead.location && <span className="block text-xs mt-0.5" style={{ color: 'var(--th-text-muted)' }}>{lead.location}</span>}
                       </td>
                       <td className="px-4 py-3 max-w-[160px] truncate whitespace-nowrap" style={{ color: 'var(--th-text-tertiary)' }}>
@@ -266,7 +287,21 @@ export function ResultsTable({ leads, jobId }: Props) {
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
                         {lead.email ? (
-                          <span className="inline-flex items-center gap-1">
+                          <span className="inline-flex items-center gap-1.5">
+                            {lead.email_status && EMAIL_STATUS_STYLE[lead.email_status] && (() => {
+                              const s = EMAIL_STATUS_STYLE[lead.email_status]
+                              const Icon = s.icon
+                              const tooltip = `${s.label}${lead.email_confidence != null ? ` — score Hunter ${lead.email_confidence}/100` : ''}`
+                              return (
+                                <span
+                                  title={tooltip}
+                                  className="inline-flex items-center"
+                                  style={{ color: s.color }}
+                                >
+                                  <Icon className="w-3.5 h-3.5" />
+                                </span>
+                              )
+                            })()}
                             <a href={`mailto:${lead.email}`} onClick={e => e.stopPropagation()} className="font-mono text-xs" style={{ color: 'var(--th-primary)' }}>
                               {lead.email}
                             </a>

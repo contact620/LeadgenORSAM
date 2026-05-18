@@ -52,6 +52,13 @@ ANTHROPIC_API_KEY=sk-ant-votre_cle_ici
 
 # Perplexity API (optionnel - enrichissement maturite digitale, budget, signaux business)
 PERPLEXITY_API_KEY=votre_cle_perplexity_ici
+
+# Hunter.io (optionnel - verification des emails retournes par Dropcontact)
+HUNTER_API_KEY=votre_cle_hunter_ici
+
+# Modele LLM utilise pour l'enrichissement IA (defaut: claude-sonnet-4-6)
+# Autres choix : claude-haiku-4-5-20251001 (moins cher), claude-opus-4-7 (qualite max)
+LLM_MODEL=claude-sonnet-4-6
 ```
 
 ### Comment obtenir les cles API
@@ -60,8 +67,13 @@ PERPLEXITY_API_KEY=votre_cle_perplexity_ici
 |---------|---------|------|
 | **Serper.dev** | Trouver les profils LinkedIn (2500 requetes/mois gratuites) | [serper.dev](https://serper.dev) |
 | **Dropcontact** | Trouver emails et telephones | [dropcontact.com](https://www.dropcontact.com/) |
+| **Hunter.io** | Verification des emails retournes par Dropcontact (~$0.01 / verif) | [hunter.io/api-keys](https://hunter.io/api-keys) |
 | **Anthropic** | Enrichissement IA + scoring ICP des leads | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
 | **Perplexity** | Maturite digitale, budget estime, signaux business | [perplexity.ai](https://www.perplexity.ai/settings/api) |
+
+> **Cout Hunter.io :** environ **$0.01 par email verifie**. Pour un run de 500 leads avec ~250 emails Dropcontact, compter ~**$2.50** de verification.
+
+> **Modele LLM :** L'enrichissement IA utilise **Claude Sonnet 4.6** par defaut (meilleur raisonnement que Haiku pour l'analyse B2B). Vous pouvez basculer sur Haiku (moins cher) ou Opus (qualite max) en changeant la variable `LLM_MODEL` dans `.env`.
 
 ---
 
@@ -82,6 +94,50 @@ Les cookies permettent au scraper de se connecter a Apollo.io avec votre session
    - Sauvegardez le contenu dans un fichier nomme **`apollo_cookies.json`** a la racine du projet
 
 > **Note :** Les cookies expirent periodiquement (quelques semaines). Si le scraping echoue, re-exportez vos cookies.
+
+---
+
+## Mise a jour du projet
+
+Lorsque vous recevez une nouvelle version du projet, **vos donnees locales doivent etre preservees**. Elles vivent toutes dans 3 endroits :
+
+| Fichier / dossier | Contenu |
+|-------------------|---------|
+| `output/history.db` | Base SQLite : historique des runs, pools de leads, templates de recherche |
+| `output/*.csv` | Vos exports CSV passes |
+| `.env` | Vos cles API |
+| `apollo_cookies.json` | Vos cookies de session Apollo |
+
+### Methode A — Via Git (recommandee)
+
+Si vous avez clone le projet avec Git, la mise a jour est instantanee :
+
+1. Ouvrez un terminal a la racine du projet
+2. Lancez :
+   ```bash
+   git pull
+   ```
+3. Si l'application tourne, rechargez la page dans le navigateur (`F5`). Sinon, relancez `start.bat`
+
+Git ne touche jamais aux fichiers ignores (`output/`, `.env`, `apollo_cookies.json`, `venv/`, `node_modules/`) — vos donnees et votre configuration sont automatiquement preservees.
+
+> Si une nouvelle dependance Python ou Node a ete ajoutee, relancez `setup.bat` apres le `git pull`.
+
+### Methode B — Nouvelle version complete (zip)
+
+Si on vous envoie un nouveau zip complet :
+
+1. **Avant** d'extraire, deplacez ces fichiers/dossiers sur le Bureau (ou ailleurs) :
+   - `output/` (vos donnees passees)
+   - `.env` (vos cles API)
+   - `apollo_cookies.json` (votre session Apollo)
+2. Supprimez l'ancien dossier du projet (ou renommez-le)
+3. Extrayez le nouveau zip
+4. **Recopiez** `output/`, `.env` et `apollo_cookies.json` a la racine du nouveau dossier
+5. Lancez `setup.bat` (reinstalle `venv` et `node_modules`)
+6. Lancez `start.bat`
+
+> **Attention :** si vous extrayez le nouveau zip **par-dessus** l'ancien dossier sans precaution, vous risquez d'ecraser votre `.env`, vos cookies et votre historique. Toujours sauvegarder ces 3 elements d'abord.
 
 ---
 
@@ -240,10 +296,12 @@ Les resultats sont sauvegardes dans le dossier **`output/`** au format CSV.
 | `job_title` | Poste |
 | `location` | Localisation |
 | `email` | Email (via Dropcontact) |
+| `email_status` | Statut de verification Hunter.io : `valid`, `invalid`, `accept_all`, `webmail`, `disposable`, `unknown` |
+| `email_confidence` | Score de confiance Hunter.io (0-100) |
 | `phone` | Telephone (via Dropcontact) |
 | `linkedin_url` | URL du profil LinkedIn |
 | `website` | Site web de l'entreprise |
-| `hit_score` | Score de qualite 0-100 |
+| `hit_score` | Score de qualite 0-100 (email valide = +40, autres statuts = +20 ou 0) |
 | `is_hit` | `True` si score >= 50 |
 | `icp_score` | Score ICP 0-100 (adequation profil client ideal) |
 | `icp_tier` | Classification : `hot` (>70), `warm` (40-70), `cold` (<40) |
@@ -251,6 +309,9 @@ Les resultats sont sauvegardes dans le dossier **`output/`** au format CSV.
 | `icp_scores_detail` | Detail des scores par axe (JSON) |
 | `activity_summary` | Resume d'activite genere par IA |
 | `conversion_angle` | Angle d'approche suggere par IA |
+| `inconsistency_detected` | `True` si l'IA detecte une incoherence Apollo <-> source scrapee (cas d'homonymie d'entreprise) |
+| `inconsistency_reason` | Explication courte de l'incoherence detectee |
+| `llm_confidence` | Confiance du modele IA : `high`, `medium`, `low` |
 | `digital_maturity` | Maturite digitale : score /10 + justification (Perplexity) |
 | `estimated_budget` | Budget estime : taille, CA, financements (Perplexity) |
 | `business_signals` | Signaux business recents de l'entreprise (Perplexity) |
@@ -296,10 +357,11 @@ Le pipeline execute les etapes suivantes de maniere sequentielle :
 |-------|-----|-------------|
 | 1 | **Scraping Apollo** | Extraction des leads depuis une recherche Apollo.io (Playwright + cookies) |
 | 2 | **Recherche LinkedIn** | Recherche des profils LinkedIn via Serper.dev + site web via DuckDuckGo |
-| 3 | **Email + Telephone** | Enrichissement via Dropcontact (batches de 50, polling asynchrone) |
-| 4 | **Score & Filtre** | Calcul du hit score (email +40, linkedin +30, phone +20, web +10). Leads >= seuil = "hit" |
+| 3a | **Email + Telephone** | Enrichissement via Dropcontact (batches de 50, polling asynchrone) |
+| 3b | **Verification email** | Verification Hunter.io de chaque email Dropcontact : statut + score de confiance. Pondere le hit score selon validite |
+| 4 | **Score & Filtre** | Calcul du hit score (email valide +40, statut incertain +20, invalide 0 ; linkedin +30, phone +20, web +10). Leads >= seuil = "hit" |
 | 5 | **Scoring ICP** | Evaluation par IA (Claude) de l'adequation au profil client ideal sur 4 axes : secteur (20%), taille (20%), localisation (20%), signaux business (40%). Classification en tiers : hot (>70), warm (40-70), cold (<40) |
-| 6 | **Enrichissement IA** | Scraping du profil LinkedIn + site web, puis generation par Claude d'un resume d'activite et d'un angle de conversion |
+| 6 | **Enrichissement IA** | Scraping du site web puis appel **Claude Sonnet 4.6** (modele configurable) : resume d'activite, angle de conversion, et **detection d'incoherence** entre Apollo et la source scrapee (cas d'homonymie d'entreprise) |
 | 7 | **Enrichissement Perplexity** | Recherche Perplexity Sonar sur les leads hit : maturite digitale (score /10), budget estime, signaux business recents |
 
 Les etapes 5 a 7 ne s'executent que sur les leads "hit" pour optimiser les couts API. Si une cle API est absente, l'etape correspondante est ignoree.

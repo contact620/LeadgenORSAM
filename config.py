@@ -10,6 +10,11 @@ SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
 DROPCONTACT_API_KEY = os.getenv("DROPCONTACT_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
+HUNTER_API_KEY = os.getenv("HUNTER_API_KEY", "")
+
+# ── LLM model used by gpt_enricher (Step 6) ───────────────────────────────────
+# Sonnet 4.6 default — better reasoning than Haiku for B2B context analysis
+LLM_MODEL = os.getenv("LLM_MODEL", "claude-sonnet-4-6")
 
 # ── File Paths ─────────────────────────────────────────────────────────────────
 APOLLO_COOKIES_PATH = os.getenv("APOLLO_COOKIES_PATH", "apollo_cookies.json")
