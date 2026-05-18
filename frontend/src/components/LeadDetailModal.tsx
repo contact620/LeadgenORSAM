@@ -1,4 +1,4 @@
-import { X, Briefcase, MapPin, Mail, Phone, Linkedin, Globe, Target, TrendingUp, DollarSign, Activity, Zap, Copy, ExternalLink } from 'lucide-react'
+import { X, Briefcase, MapPin, Mail, Phone, Linkedin, Globe, Target, TrendingUp, DollarSign, Activity, Zap, Copy, ExternalLink, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 
 function copyToClipboard(text: string, label: string) {
@@ -26,6 +26,8 @@ interface LeadData {
   digital_maturity?: string
   estimated_budget?: string
   business_signals?: string
+  inconsistency_detected?: boolean
+  inconsistency_reason?: string
   enriched?: boolean
 }
 
@@ -61,7 +63,18 @@ export function LeadDetailModal({ lead, onClose }: Props) {
         {/* Header */}
         <div className="flex items-start justify-between p-6" style={{ borderBottom: '1px solid var(--th-border-default)' }}>
           <div>
-            <h2 className="text-xl font-bold" style={{ color: 'var(--th-text-primary)' }}>{fullName || 'Lead'}</h2>
+            <h2 className="text-xl font-bold inline-flex items-center gap-2" style={{ color: 'var(--th-text-primary)' }}>
+              {fullName || 'Lead'}
+              {lead.inconsistency_detected && (
+                <span
+                  title={lead.inconsistency_reason || 'Incohérence détectée entre Apollo et la source scrapée'}
+                  className="inline-flex items-center"
+                  style={{ color: '#fb923c' }}
+                >
+                  <AlertTriangle className="w-4 h-4" />
+                </span>
+              )}
+            </h2>
             {lead.job_title && (
               <div className="flex items-center gap-1.5 mt-1">
                 <Briefcase className="w-3.5 h-3.5" style={{ color: 'var(--th-text-muted)' }} />
