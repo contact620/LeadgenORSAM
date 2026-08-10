@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import config as pipeline_config
+from lead_schema import ENRICH_FIELDS
 
 _DB_PATH = os.path.join(pipeline_config.OUTPUT_DIR, "history.db")
 
@@ -188,7 +189,10 @@ def get_pool_leads(pool_id: str, only_hit: bool = False, only_unenriched: bool =
         d["is_hit"] = bool(d["is_hit"])
         d["is_duplicate"] = bool(d["is_duplicate"])
         d["enriched"] = bool(d["enriched"])
-        # Parse enrich_data JSON if present
+        # Parse enrich_data JSON if present; absent keys stay None so pools
+        # created before the ICP rework keep loading.
+        for field_name in ENRICH_FIELDS:
+            d.setdefault(field_name, None)
         if d.get("enrich_data"):
             try:
                 d.update(json.loads(d["enrich_data"]))

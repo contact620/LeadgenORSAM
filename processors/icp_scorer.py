@@ -30,11 +30,6 @@ class IcpResult:
     evidence_verified: bool
 
 
-def _reset_state():
-    """Kept for import compatibility with api/pipeline_runner.py. No-op."""
-    return None
-
-
 # ── Fact readers ─────────────────────────────────────────────────────────────
 
 def _value(fact) -> object:

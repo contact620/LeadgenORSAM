@@ -386,6 +386,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
             icp_hot_count=sum(1 for l in leads if l.get("icp_tier") == "hot"),
             icp_warm_count=sum(1 for l in leads if l.get("icp_tier") == "warm"),
             icp_cold_count=sum(1 for l in leads if l.get("icp_tier") == "cold"),
+            icp_disqualified_count=sum(1 for l in leads if l.get("icp_tier") == "disqualified"),
         )
 
         # ── Executive summary (Claude) ───────────────────────────────────────

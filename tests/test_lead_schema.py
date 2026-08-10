@@ -19,3 +19,17 @@ def test_single_source_of_truth_is_used_everywhere():
     import main
     assert main.CSV_COLUMNS is CSV_COLUMNS
     assert runner.CSV_COLUMNS is CSV_COLUMNS
+
+
+def test_pool_leads_expose_every_enrich_field(tmp_path, monkeypatch):
+    import api.leads_db as db
+
+    monkeypatch.setattr(db, "_DB_PATH", str(tmp_path / "t.db"))
+    db.init_leads_table()
+    pool_id = db.create_pool("test", "url", "job", [
+        {"first_name": "A", "last_name": "B", "company": "Acme",
+         "email": "a@b.c", "hit_score": 80, "is_hit": True},
+    ])
+    lead = db.get_pool_leads(pool_id)[0]
+    for field in ENRICH_FIELDS:
+        assert field in lead, f"{field} missing from pool lead"

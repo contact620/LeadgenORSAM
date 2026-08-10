@@ -45,9 +45,6 @@ class LeadRecord(BaseModel):
     is_hit: Optional[bool] = None
     activity_summary: Optional[str] = None
     conversion_angle: Optional[str] = None
-    inconsistency_detected: Optional[bool] = None
-    inconsistency_reason: Optional[str] = None
-    llm_confidence: Optional[str] = None
     digital_maturity: Optional[str] = None
     estimated_budget: Optional[str] = None
     business_signals: Optional[str] = None
@@ -55,6 +52,12 @@ class LeadRecord(BaseModel):
     icp_tier: Optional[str] = None
     icp_rationale: Optional[str] = None
     icp_scores_detail: Optional[str] = None
+    website_coherent: Optional[bool] = None
+    website_rejected: Optional[str] = None
+    disqualification_reason: Optional[str] = None
+    evidence_level: Optional[str] = None
+    evidence_verified: Optional[bool] = None
+    facts_json: Optional[str] = None
 
 
 class JobStats(BaseModel):
@@ -70,6 +73,7 @@ class JobStats(BaseModel):
     icp_hot_count: int = 0
     icp_warm_count: int = 0
     icp_cold_count: int = 0
+    icp_disqualified_count: int = 0
 
 
 class JobResult(BaseModel):

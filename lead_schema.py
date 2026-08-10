@@ -18,10 +18,6 @@ CSV_COLUMNS: list[str] = [
     "disqualification_reason", "evidence_level", "evidence_verified",
     # AI enrichment
     "activity_summary", "conversion_angle", "facts_json",
-    # Legacy fields, still produced by enrichers/gpt_enricher.py.
-    # Removed in task 13, together with the module that produces them —
-    # dropping them earlier would lose data already written to lead_pool.enrich_data.
-    "inconsistency_detected", "inconsistency_reason", "llm_confidence",
     # Company intelligence
     "digital_maturity", "estimated_budget", "business_signals",
     # Deduplication
@@ -33,9 +29,5 @@ ENRICH_FIELDS: list[str] = [
     "icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
     "disqualification_reason", "evidence_level", "evidence_verified",
     "activity_summary", "conversion_angle", "facts_json",
-    # Legacy fields, still produced by enrichers/gpt_enricher.py.
-    # Removed in task 13, together with the module that produces them —
-    # dropping them earlier would lose data already written to lead_pool.enrich_data.
-    "inconsistency_detected", "inconsistency_reason", "llm_confidence",
     "digital_maturity", "estimated_budget", "business_signals",
 ]
