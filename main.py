@@ -38,35 +38,7 @@ from scrapers.website_scraper import scrape_hit_leads
 from enrichers.gpt_enricher import enrich_leads_gpt
 from enrichers.perplexity_enricher import enrich_leads_perplexity
 from processors.icp_scorer import score_leads_icp
-
-# ── CSV column order (matches PRD schema) ─────────────────────────────────────
-CSV_COLUMNS = [
-    "first_name",
-    "last_name",
-    "company",
-    "job_title",
-    "location",
-    "email",
-    "email_status",
-    "email_confidence",
-    "phone",
-    "linkedin_url",
-    "website",
-    "hit_score",
-    "is_hit",
-    "icp_score",
-    "icp_tier",
-    "icp_rationale",
-    "icp_scores_detail",
-    "activity_summary",
-    "conversion_angle",
-    "inconsistency_detected",
-    "inconsistency_reason",
-    "llm_confidence",
-    "digital_maturity",
-    "estimated_budget",
-    "business_signals",
-]
+from lead_schema import CSV_COLUMNS
 
 
 def setup_logging(level: str):

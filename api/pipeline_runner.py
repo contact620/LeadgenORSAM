@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import config as pipeline_config
 from api.models import JobResult, JobStats, ProgressEvent
+from lead_schema import CSV_COLUMNS, ENRICH_FIELDS
 
 # ── In-memory job store ────────────────────────────────────────────────────────
 _jobs: dict[str, JobResult] = {}
@@ -334,17 +335,6 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         csv_filename = f"leads_final_{ts}_{job_id[:8]}.csv"
         csv_path = os.path.join(pipeline_config.OUTPUT_DIR, csv_filename)
 
-        CSV_COLUMNS = [
-            "first_name", "last_name", "company", "job_title", "location",
-            "email", "email_status", "email_confidence",
-            "phone", "linkedin_url", "website",
-            "hit_score", "is_hit",
-            "icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
-            "activity_summary", "conversion_angle",
-            "inconsistency_detected", "inconsistency_reason", "llm_confidence",
-            "digital_maturity", "estimated_budget", "business_signals",
-            "is_duplicate", "first_seen_at",
-        ]
         df = pd.DataFrame(leads)
         for col in CSV_COLUMNS:
             if col not in df.columns:
@@ -788,10 +778,7 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
 
         # Store enrichment data back to pool
         enrich_data = {}
-        enrich_fields = ["icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
-                         "activity_summary", "conversion_angle",
-                         "inconsistency_detected", "inconsistency_reason", "llm_confidence",
-                         "digital_maturity", "estimated_budget", "business_signals"]
+        enrich_fields = ENRICH_FIELDS
         for i, lead in enumerate(leads):
             lid = lead_ids[i]
             enrich_data[lid] = {k: lead.get(k) for k in enrich_fields if lead.get(k) is not None}
@@ -804,16 +791,6 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
         csv_filename = f"leads_enriched_{ts}_{job_id[:8]}.csv"
         csv_path = os.path.join(pipeline_config.OUTPUT_DIR, csv_filename)
 
-        CSV_COLUMNS = [
-            "first_name", "last_name", "company", "job_title", "location",
-            "email", "email_status", "email_confidence",
-            "phone", "linkedin_url", "website",
-            "hit_score", "is_hit",
-            "icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
-            "activity_summary", "conversion_angle",
-            "inconsistency_detected", "inconsistency_reason", "llm_confidence",
-            "digital_maturity", "estimated_budget", "business_signals",
-        ]
         df = pd.DataFrame(leads)
         for col in CSV_COLUMNS:
             if col not in df.columns:
