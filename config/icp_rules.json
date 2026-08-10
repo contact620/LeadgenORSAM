@@ -1,0 +1,60 @@
+{
+  "weights": { "secteur": 0.20, "taille": 0.20, "localisation": 0.20, "signaux": 0.40 },
+
+  "high_value_sectors": [
+    "e-commerce", "saas", "services b2b", "immobilier",
+    "education", "sante", "tourisme"
+  ],
+  "excluded_sectors": [
+    "industrie lourde", "agriculture", "extraction miniere", "siderurgie"
+  ],
+  "sector_points": { "high_value": 100, "other": 50, "unknown": 0 },
+
+  "zone_countries": {
+    "maroc": ["Maroc"],
+    "afrique_francophone": [
+      "Algérie", "Tunisie", "Sénégal", "Côte d'Ivoire", "Cameroun", "Gabon",
+      "Bénin", "Burkina Faso", "Mali", "Niger", "Togo", "Guinée", "Congo",
+      "RDC", "Madagascar", "Mauritanie", "Tchad"
+    ],
+    "france": ["France"],
+    "francophonie_elargie": ["Belgique", "Suisse", "Luxembourg", "Canada"]
+  },
+  "zone_points": {
+    "maroc": 100,
+    "afrique_francophone": 90,
+    "france": 80,
+    "francophonie_elargie": 50
+  },
+
+  "size_bands": [
+    { "min": 10,  "max": 500,  "points": 100 },
+    { "min": 5,   "max": 9,    "points": 60 },
+    { "min": 501, "max": 1000, "points": 40 }
+  ],
+  "size_disqualify_below": 5,
+  "size_disqualify_above": 1000,
+
+  "signal_points": {
+    "three_or_more_recent": 100,
+    "three_or_more": 80,
+    "two": 70,
+    "one": 40,
+    "none": 0
+  },
+  "signal_recency_months": 6,
+
+  "maturity_low_max": 4,
+  "maturity_high_min": 8,
+  "maturity_bonus": 20,
+  "maturity_penalty": 20,
+
+  "tier_hot_min": 70,
+  "tier_warm_min": 40,
+  "unverified_score_cap": 39,
+
+  "competitor_keywords": [
+    "agence de communication", "communication digitale", "marketing digital",
+    "agence web", "agence creative", "regie publicitaire", "agence seo"
+  ]
+}
