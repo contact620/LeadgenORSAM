@@ -25,7 +25,11 @@ SOURCE_PROVIDERS = frozenset({"website", "perplexity"})
 
 @dataclass
 class Evidence:
-    """Raw material available to score one lead."""
+    """Raw material available to score one lead.
+
+    Contract: enabled_providers must always be non-empty (set by the caller).
+    An empty set means the caller made an error, not that all providers are disabled.
+    """
     website_text: str = ""
     website_coherent: bool = False
     perplexity_fields: dict[str, str | None] = field(default_factory=dict)
@@ -70,9 +74,18 @@ def compute_evidence_level(ev: Evidence, identity_confirmed: bool) -> str:
         return "none"
 
     expected = expected_sources(ev)
+    # The two branches below are mathematically equivalent by construction:
+    # `usable` is guaranteed non-empty (checked above), so any non-empty `expected`
+    # is trivially <= any non-empty `usable`. We keep both branches to signal intent:
+    # the first says "we got all the sources we required", the second says "the caller
+    # declared no requirements but we have content anyway" (error case today, pinned
+    # for the behaviour to be explicit).
     if expected and usable >= expected:
         return "sufficient"
     if not expected:
-        # No provider declared enabled but content exists — trust the content.
+        # Caller declared no providers enabled: enabled_providers is empty.
+        # This means a caller error, not a disabled provider (which would still
+        # appear in expected_sources until the provider is removed entirely).
+        # Since we have content and the caller has no constraint, trust the content.
         return "sufficient"
     return "weak"

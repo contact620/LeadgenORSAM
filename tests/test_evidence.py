@@ -64,3 +64,12 @@ def test_placeholder_perplexity_answer_is_not_a_usable_source():
 def test_expected_sources_follow_enabled_providers():
     assert expected_sources(_ev(enabled_providers=frozenset({"website"}))) == {"website"}
     assert expected_sources(_ev()) == {"website", "perplexity"}
+
+
+def test_no_declared_provider_but_real_content_gives_sufficient():
+    # enabled_providers empty means the caller declared nothing — unreachable
+    # today, since collect_evidence always includes "website". Pinned here so
+    # the behaviour is a decision, not an accident of set arithmetic.
+    ev = _ev(website_text=LONG, website_coherent=True,
+             enabled_providers=frozenset())
+    assert compute_evidence_level(ev, identity_confirmed=True) == "sufficient"
