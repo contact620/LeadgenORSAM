@@ -5,6 +5,7 @@ import { useTheme } from '@/contexts/ThemeContext'
 import { ApolloForm } from '@/components/ApolloForm'
 import { PipelineProgress } from '@/components/PipelineProgress'
 import { StatsBar } from '@/components/StatsBar'
+import { ProviderHealth } from '@/components/ProviderHealth'
 import { ResultsTable } from '@/components/ResultsTable'
 import { Settings } from '@/components/Settings'
 import { History } from '@/components/History'
@@ -246,6 +247,7 @@ export default function App() {
             )}
             {status === 'done' && result && (
               <>
+                <ProviderHealth providerStatus={result.provider_status} jobStatus={result.status} />
                 <StatsBar result={result} />
                 {result.leads.length > 0 && jobId && (
                   <ResultsTable leads={result.leads} jobId={jobId} />
