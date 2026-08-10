@@ -167,3 +167,58 @@ def test_signal_without_date_counts_but_is_never_recent(rules):
     result = score_lead(facts, "sufficient", rules, RUN_DATE)
     detail = __import__("json").loads(result.icp_scores_detail)
     assert detail["signaux"] == rules.signal_points["one"]
+
+
+# ── Digital maturity: bonus-only, never a penalty ────────────────────────────
+
+def test_learning_digital_maturity_never_lowers_the_score(rules):
+    """Acquiring a fact must never cost points — the client's original complaint."""
+    unknown = score_lead(_facts(signaux=[{"type": "x", "date": "2026-07",
+                                          "source": "perplexity", "citation": "c"}]),
+                         "sufficient", rules, RUN_DATE)
+    mature = score_lead(_facts(maturite_digitale={"value": 9, "source": "perplexity"},
+                               signaux=[{"type": "x", "date": "2026-07",
+                                         "source": "perplexity", "citation": "c"}]),
+                        "sufficient", rules, RUN_DATE)
+    assert mature.icp_score >= unknown.icp_score
+
+
+def test_low_maturity_bonus_is_reported_in_detail_and_rationale(rules):
+    facts = _facts(maturite_digitale={"value": 2, "source": "perplexity"},
+                   signaux=[{"type": "x", "date": "2026-07",
+                             "source": "perplexity", "citation": "c"}])
+    result = score_lead(facts, "sufficient", rules, RUN_DATE)
+    detail = __import__("json").loads(result.icp_scores_detail)
+    assert detail["maturite_ajustement"] == rules.maturity_bonus
+    assert "maturité" in result.icp_rationale
+
+
+# ── Label normalization (case/accent-insensitive matching) ──────────────────
+
+def test_lowercase_country_does_not_disqualify(rules):
+    # Regression: country_zone compared exact case/accents, so a sourced
+    # "maroc" (lowercase) silently missed the "Maroc" entry and disqualified
+    # an otherwise-ideal lead as "hors zone géographique".
+    facts = _facts(pays={"value": "maroc", "source": "website"})
+    result = score_lead(facts, "sufficient", rules, RUN_DATE)
+    detail = __import__("json").loads(result.icp_scores_detail)
+    assert result.icp_tier != "disqualified"
+    assert detail["localisation"] == rules.zone_points["maroc"]
+
+
+def test_accented_sector_scores_as_high_value(rules):
+    # Regression: "santé" (accented, as a real extraction would return it)
+    # did not match "sante" in the rule table and silently fell back to 50.
+    facts = _facts(secteur={"value": "santé", "source": "website"})
+    result = score_lead(facts, "sufficient", rules, RUN_DATE)
+    detail = __import__("json").loads(result.icp_scores_detail)
+    assert detail["secteur"] == rules.sector_points["high_value"]
+
+
+# ── Evidence gates the competitor score too ──────────────────────────────────
+
+def test_unverified_competitor_score_is_also_capped(rules):
+    facts = _facts(est_concurrent=True, effectif={"value": 45, "source": "perplexity"})
+    result = score_lead(facts, "weak", rules, RUN_DATE)
+    assert result.icp_tier == "disqualified"
+    assert result.icp_score <= rules.unverified_score_cap

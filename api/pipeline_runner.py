@@ -288,19 +288,20 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
 
         _check_cancelled(job_id)
 
-        # ── Step 5: ICP scoring (hit leads only) ────────────────────────────
-        if not skip_gpt and hit_leads:
-            handler.set_explicit_progress(5, 0.0, "Scoring ICP en cours...")
-            from processors.icp_scorer import score_leads_icp
-            hit_leads = score_leads_icp(hit_leads, enrich_instructions=enrich_instructions)
-            icp_scored = sum(1 for l in hit_leads if l.get("icp_score") is not None)
-            handler.set_explicit_progress(5, 1.0, f"Scoring ICP terminé — {icp_scored}/{len(hit_leads)} leads scorés")
-        else:
-            for lead in hit_leads:
-                lead.setdefault("icp_score", None)
-                lead.setdefault("icp_tier", None)
-                lead.setdefault("icp_rationale", None)
-                lead.setdefault("icp_scores_detail", None)
+        # ── Step 5: ICP scoring ───────────────────────────────────────────────
+        # Deliberately inert until task 12 reorders the pipeline: scoring now
+        # runs AFTER evidence collection, and no evidence exists at this point.
+        # Emitting verdicts here would label every lead from an empty fact set.
+        handler.set_explicit_progress(5, 0.0, "Scoring ICP déplacé après la collecte de preuves (tâche 12)...")
+        for lead in hit_leads:
+            lead.setdefault("icp_score", None)
+            lead.setdefault("icp_tier", None)
+            lead.setdefault("icp_rationale", None)
+            lead.setdefault("icp_scores_detail", None)
+            lead.setdefault("disqualification_reason", None)
+            lead.setdefault("evidence_level", None)
+            lead.setdefault("evidence_verified", None)
+        handler.set_explicit_progress(5, 1.0, "Scoring ICP déplacé après la collecte de preuves (tâche 12)")
 
         # ── Step 6: AI enrichment (hit leads only) ────────────────────────────
         if not skip_gpt and hit_leads:
@@ -751,11 +752,20 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
         new_loop = _asyncio.new_event_loop()
         _asyncio.set_event_loop(new_loop)
 
-        # Step 5: ICP scoring
-        handler.set_explicit_progress(5, 0.0, "Scoring ICP en cours...")
-        from processors.icp_scorer import score_leads_icp
-        leads = score_leads_icp(leads)
-        handler.set_explicit_progress(5, 1.0, "Scoring ICP terminé")
+        # Step 5: ICP scoring — deliberately inert until task 12 reorders the
+        # pipeline: scoring now runs AFTER evidence collection, and no
+        # evidence exists at this point. Emitting verdicts here would label
+        # every lead from an empty fact set.
+        handler.set_explicit_progress(5, 0.0, "Scoring ICP déplacé après la collecte de preuves (tâche 12)...")
+        for lead in leads:
+            lead.setdefault("icp_score", None)
+            lead.setdefault("icp_tier", None)
+            lead.setdefault("icp_rationale", None)
+            lead.setdefault("icp_scores_detail", None)
+            lead.setdefault("disqualification_reason", None)
+            lead.setdefault("evidence_level", None)
+            lead.setdefault("evidence_verified", None)
+        handler.set_explicit_progress(5, 1.0, "Scoring ICP déplacé après la collecte de preuves (tâche 12)")
         _check_cancelled(job_id)
 
         # Step 6: Website scraping + Claude AI

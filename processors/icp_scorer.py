@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
-from processors.icp_rules import IcpRules, load_rules
+from processors.icp_rules import IcpRules, load_rules, normalize_label
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ def _value(fact) -> object:
     return None
 
 
-def _months_between(older: str, reference: date) -> Optional[int]:
+def _months_between(older: Optional[str], reference: date) -> Optional[int]:
     """Months from a 'YYYY-MM' (or 'YYYY-MM-DD') string to the reference date."""
     if not older:
         return None
@@ -62,8 +62,10 @@ def _score_sector(facts: dict, rules: IcpRules) -> int:
     sector = _value(facts.get("secteur"))
     if not sector:
         return rules.sector_points.get("unknown", 0)
-    normalized = str(sector).strip().lower()
-    if any(h in normalized for h in rules.high_value_sectors):
+    # Accent/case-insensitive: a sourced "santé" must match "sante" in the
+    # rule table just as reliably as an exact-cased "sante" would.
+    normalized = normalize_label(sector)
+    if any(normalize_label(h) in normalized for h in rules.high_value_sectors):
         return rules.sector_points.get("high_value", 100)
     return rules.sector_points.get("other", 50)
 
@@ -88,7 +90,8 @@ def _score_location(facts: dict, rules: IcpRules) -> int:
     return rules.zone_points.get(zone, 0)
 
 
-def _score_signals(facts: dict, rules: IcpRules, run_date: date) -> int:
+def _score_signals(facts: dict, rules: IcpRules, run_date: date) -> tuple[int, int]:
+    """Return (signal_axis_score, maturity_bonus_applied)."""
     signals = [s for s in (facts.get("signaux") or []) if isinstance(s, dict)]
     count = len(signals)
 
@@ -108,16 +111,19 @@ def _score_signals(facts: dict, rules: IcpRules, run_date: date) -> int:
         key = "none"
     points = rules.signal_points.get(key, 0)
 
-    # Digital maturity encodes BoxCom's ideal profile: a weak or ageing
-    # digital presence is the buying signal, a mature one is not.
+    # Digital maturity encodes BoxCom's ideal profile: a weak digital
+    # presence is a buying signal and earns a bonus. A mature presence is
+    # merely neutral — exactly like an unknown one — never a penalty.
+    # Acquiring the maturity fact must never be able to lower a score: that
+    # inversion (more evidence -> lower score) is the client's original
+    # complaint, and a penalty branch here would reintroduce it.
+    maturity_bonus = 0
     maturity = _value(facts.get("maturite_digitale"))
-    if isinstance(maturity, (int, float)):
-        if maturity <= rules.maturity_low_max:
-            points += rules.maturity_bonus
-        elif maturity >= rules.maturity_high_min:
-            points -= rules.maturity_penalty
+    if isinstance(maturity, (int, float)) and maturity <= rules.maturity_low_max:
+        maturity_bonus = rules.maturity_bonus
 
-    return max(0, min(100, points))
+    total = max(0, min(100, points + maturity_bonus))
+    return total, maturity_bonus
 
 
 # ── Disqualification ─────────────────────────────────────────────────────────
@@ -134,9 +140,9 @@ def _disqualification_reason(facts: dict, rules: IcpRules) -> Optional[str]:
 
     sector = _value(facts.get("secteur"))
     if sector:
-        normalized = str(sector).strip().lower()
+        normalized = normalize_label(sector)
         for excluded in rules.excluded_sectors:
-            if excluded in normalized:
+            if normalize_label(excluded) in normalized:
                 return f"secteur exclu — {sector}"
 
     country = _value(facts.get("pays"))
@@ -155,21 +161,32 @@ def score_lead(
     run_date: date,
 ) -> IcpResult:
     """Turn validated facts into a score, a tier and, where warranted, a refusal."""
-    detail = {
+    signal_score, maturity_bonus = _score_signals(facts, rules, run_date)
+    weighted_axes = {
         "secteur": _score_sector(facts, rules),
         "taille": _score_size(facts, rules),
         "localisation": _score_location(facts, rules),
-        "signaux": _score_signals(facts, rules, run_date),
+        "signaux": signal_score,
     }
-    raw_score = round(sum(detail[axis] * rules.weights[axis] for axis in detail))
+    raw_score = round(sum(weighted_axes[axis] * rules.weights[axis] for axis in weighted_axes))
+    # "maturite_ajustement" is informational only — never weighted on its own,
+    # since the bonus it reports is already folded into "signaux" above. It
+    # exists so a rationale reader can answer "why this score?" on the axis
+    # that carries 40% of the weight and was the subject of the client's
+    # complaint.
+    detail = dict(weighted_axes)
+    detail["maturite_ajustement"] = maturity_bonus
     detail_json = json.dumps(detail)
     verified = evidence_level == "sufficient"
 
     # 1. A sourced competitor is disqualified whatever the evidence level:
-    #    the fact alone settles it.
+    #    the fact alone settles it. Evidence still gates the *score* though —
+    #    an unverified competitor must respect the same cap as any other
+    #    unverified lead, not carry a full, unchecked score.
     if facts.get("est_concurrent") is True:
+        competitor_score = raw_score if verified else min(raw_score, rules.unverified_score_cap)
         return IcpResult(
-            icp_score=raw_score, icp_tier="disqualified",
+            icp_score=competitor_score, icp_tier="disqualified",
             icp_rationale="Concurrent direct de BoxCom — ne peut pas être client.",
             icp_scores_detail=detail_json,
             disqualification_reason="concurrent direct",
@@ -212,10 +229,15 @@ def score_lead(
         tier = "cold"
 
     signal_count = len([s for s in (facts.get("signaux") or []) if isinstance(s, dict)])
+    maturity_note = (
+        f", dont +{maturity_bonus} pt(s) bonus maturité digitale faible"
+        if maturity_bonus else ""
+    )
     rationale = (
         f"Secteur {detail['secteur']}/100, taille {detail['taille']}/100, "
         f"localisation {detail['localisation']}/100, "
-        f"signaux {detail['signaux']}/100 ({signal_count} signal(aux) sourcé(s))."
+        f"signaux {detail['signaux']}/100 ({signal_count} signal(aux) sourcé(s)"
+        f"{maturity_note})."
     )
 
     return IcpResult(

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from processors.icp_rules import IcpRules, load_rules
+from processors.icp_rules import IcpRules, load_rules, normalize_label
 
 
 def test_default_rules_load():
@@ -34,3 +34,22 @@ def test_invalid_weights_are_rejected(tmp_path):
                    encoding="utf-8")
     with pytest.raises(ValueError, match="weights"):
         load_rules(str(bad))
+
+
+# ── Label normalization (case/accent-insensitive matching) ──────────────────
+
+def test_normalize_label_strips_accents_case_and_whitespace():
+    assert normalize_label("Maroc") == "maroc"
+    assert normalize_label("MAROC") == "maroc"
+    assert normalize_label(" Maroc ") == "maroc"
+    assert normalize_label("Sénégal") == "senegal"
+    assert normalize_label("") == ""
+
+
+@pytest.mark.parametrize("country", ["maroc", "MAROC", " Maroc ", "Maroc"])
+def test_country_zone_is_case_and_accent_insensitive(country):
+    # Regression: a sourced fact rarely comes back in the exact casing used
+    # in zone_countries. A mismatch here silently disqualified a lead that
+    # was squarely in the ideal zone.
+    rules = load_rules()
+    assert rules.country_zone(country) == "maroc"

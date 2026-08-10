@@ -6,6 +6,7 @@ the score must be reproducible and reviewable without an API call.
 """
 import json
 import os
+import unicodedata
 from dataclasses import dataclass
 
 RULES_PATH = os.path.join(
@@ -14,6 +15,20 @@ RULES_PATH = os.path.join(
 )
 
 _REQUIRED_AXES = ("secteur", "taille", "localisation", "signaux")
+
+
+def normalize_label(value: str) -> str:
+    """Lowercase, strip accents and trim whitespace for label comparisons.
+
+    Duplicated from processors/coherence.py's private ``_deaccent`` rather
+    than imported: this module is read as plain data by the scorer and must
+    not depend on coherence.py.
+    """
+    if not value:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", str(value))
+    deaccented = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return deaccented.strip().lower()
 
 
 @dataclass(frozen=True)
@@ -30,20 +45,24 @@ class IcpRules:
     signal_points: dict[str, int]
     signal_recency_months: int
     maturity_low_max: int
-    maturity_high_min: int
     maturity_bonus: int
-    maturity_penalty: int
     tier_hot_min: int
     tier_warm_min: int
     unverified_score_cap: int
     competitor_keywords: list[str]
 
     def country_zone(self, country: str) -> str | None:
-        """Return the zone a country belongs to, or None if outside all zones."""
+        """Return the zone a country belongs to, or None if outside all zones.
+
+        Comparison is accent/case/whitespace-insensitive: a sourced fact like
+        "maroc" or " Maroc " must match the "Maroc" label in zone_countries
+        just as reliably as an exact match would.
+        """
         if not country:
             return None
+        normalized = normalize_label(country)
         for zone, countries in self.zone_countries.items():
-            if country in countries:
+            if normalized in {normalize_label(c) for c in countries}:
                 return zone
         return None
 
@@ -74,9 +93,7 @@ def load_rules(path: str | None = None) -> IcpRules:
         signal_points=raw.get("signal_points", {}),
         signal_recency_months=raw.get("signal_recency_months", 6),
         maturity_low_max=raw.get("maturity_low_max", 4),
-        maturity_high_min=raw.get("maturity_high_min", 8),
         maturity_bonus=raw.get("maturity_bonus", 20),
-        maturity_penalty=raw.get("maturity_penalty", 20),
         tier_hot_min=raw.get("tier_hot_min", 70),
         tier_warm_min=raw.get("tier_warm_min", 40),
         unverified_score_cap=raw.get("unverified_score_cap", 39),

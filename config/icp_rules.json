@@ -45,9 +45,7 @@
   "signal_recency_months": 6,
 
   "maturity_low_max": 4,
-  "maturity_high_min": 8,
   "maturity_bonus": 20,
-  "maturity_penalty": 20,
 
   "tier_hot_min": 70,
   "tier_warm_min": 40,
