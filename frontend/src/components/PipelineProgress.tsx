@@ -3,23 +3,19 @@ import { CheckCircle2, Circle, Loader2, AlertCircle, XCircle } from 'lucide-reac
 import type { ProgressEvent, PipelineStatus } from '@/hooks/usePipeline'
 
 const STEPS = [
-  { id: 1, label: 'Scraping Apollo',       desc: 'Extraction des leads via Playwright' },
-  { id: 2, label: 'Enrichissement Google', desc: 'LinkedIn URL + site web' },
-  { id: 3, label: 'Dropcontact',           desc: 'Email pro + téléphone' },
-  { id: 4, label: 'Calcul du hit score',   desc: 'Score 0-100, seuil 50' },
-  { id: 5, label: 'Scoring ICP',           desc: 'Profil client idéal (Claude AI)' },
-  { id: 6, label: 'Enrichissement IA',     desc: 'Claude AI — résumé, angle de conversion' },
-  { id: 7, label: 'Perplexity',            desc: 'Maturité digitale, budget, signaux' },
+  { id: 2, label: 'Scraping Apollo',                             desc: 'Extraction des leads via Playwright' },
+  { id: 3, label: 'Enrichissement contacts',                     desc: 'Google + Dropcontact + Hunter — LinkedIn, site web, email, téléphone' },
+  { id: 4, label: 'Calcul du taux de hit',                       desc: 'Score 0-100, seuil 50' },
+  { id: 5, label: 'Collecte de preuves',                         desc: 'Scraping site web + Perplexity' },
+  { id: 6, label: 'Extraction de faits sourcés',                 desc: 'Faits vérifiables extraits par Claude AI' },
+  { id: 7, label: 'Scoring ICP',                                 desc: 'Profil client idéal — scoring déterministe' },
+  { id: 8, label: 'Rédaction des angles commerciaux',            desc: 'Claude AI — résumé, angle de conversion' },
 ]
 
-function mapApiStepToDisplay(apiStep: number, stepProgress: number): number {
+function mapApiStepToDisplay(apiStep: number): number {
   if (apiStep <= 1) return 0
-  if (apiStep === 2) return 1
-  if (apiStep === 3) return stepProgress >= 0.5 ? 3 : 2
-  if (apiStep === 4) return 4
-  if (apiStep === 5) return 5
-  if (apiStep === 6) return 6
-  return 7
+  if (apiStep > 8) return 8
+  return apiStep
 }
 
 function formatEta(ms: number): string {
@@ -40,7 +36,7 @@ interface Props {
 }
 
 export function PipelineProgress({ status, latestEvent, events, error, startedAt, onCancel }: Props) {
-  const currentDisplayStep = latestEvent ? mapApiStepToDisplay(latestEvent.step, latestEvent.progress) : 0
+  const currentDisplayStep = latestEvent ? mapApiStepToDisplay(latestEvent.step) : 0
   const totalProgress = latestEvent?.total_progress ?? 0
   const pct = status === 'done' ? 100 : Math.round(totalProgress * 100)
 

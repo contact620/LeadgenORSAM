@@ -53,7 +53,7 @@ export function StatsBar({ result }: Props) {
       </div>
 
       {/* ICP distribution */}
-      {(stats.icp_hot_count > 0 || stats.icp_warm_count > 0 || stats.icp_cold_count > 0) && (
+      {(stats.icp_hot_count > 0 || stats.icp_warm_count > 0 || stats.icp_cold_count > 0 || stats.icp_disqualified_count > 0) && (
         <div
           className="mt-3 rounded-xl px-5 py-4"
           style={{ background: 'var(--th-glass-sm-bg)', border: '1px solid var(--th-glass-sm-border)' }}
@@ -81,16 +81,24 @@ export function StatsBar({ result }: Props) {
               </span>
               <span className="font-mono text-sm font-semibold" style={{ color: 'var(--th-text-primary)' }}>{stats.icp_cold_count}</span>
             </div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" style={{ background: 'rgba(148,163,184,0.12)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.28)' }}>
+                ⛔ Disqualifié
+              </span>
+              <span className="font-mono text-sm font-semibold" style={{ color: 'var(--th-text-primary)' }}>{stats.icp_disqualified_count}</span>
+            </div>
           </div>
           {(() => {
-            const total = stats.icp_hot_count + stats.icp_warm_count + stats.icp_cold_count
+            const total = stats.icp_hot_count + stats.icp_warm_count + stats.icp_cold_count + stats.icp_disqualified_count
             if (!total) return null
             const hotPct = (stats.icp_hot_count / total) * 100
             const warmPct = (stats.icp_warm_count / total) * 100
+            const disqualifiedPct = (stats.icp_disqualified_count / total) * 100
             return (
               <div className="mt-3 h-1.5 rounded-full overflow-hidden flex" style={{ background: 'var(--th-border-default)' }}>
                 {hotPct > 0 && <div className="h-full" style={{ width: `${hotPct}%`, background: '#fb923c' }} />}
                 {warmPct > 0 && <div className="h-full" style={{ width: `${warmPct}%`, background: '#fbbf24' }} />}
+                {disqualifiedPct > 0 && <div className="h-full" style={{ width: `${disqualifiedPct}%`, background: '#94a3b8' }} />}
                 <div className="h-full flex-1" style={{ background: 'rgba(148,163,184,0.25)' }} />
               </div>
             )

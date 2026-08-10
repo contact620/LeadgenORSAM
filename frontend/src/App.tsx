@@ -66,7 +66,7 @@ export default function App() {
     toast.info('Paramètres pré-remplis depuis l\'historique')
   }
 
-  const handleTemplateRun = (jobId: string) => {
+  const handleTemplateRun = () => {
     // Template was launched via API, need to connect SSE
     setPage('main')
   }

@@ -1,8 +1,9 @@
 import { useState, useMemo } from 'react'
-import { Download, Search, ExternalLink, ChevronLeft, ChevronRight, SearchX, ArrowUpDown, ArrowUp, ArrowDown, Copy, AlertTriangle, CheckCircle2, XCircle, HelpCircle } from 'lucide-react'
+import { Download, Search, ExternalLink, ChevronLeft, ChevronRight, SearchX, ArrowUpDown, ArrowUp, ArrowDown, Copy, CheckCircle2, XCircle, HelpCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { getDownloadUrl, type Lead } from '@/lib/api'
+import { TIER_ICON, TIER_STYLE, tierOf } from '@/lib/tiers'
 import { LeadDetailModal } from './LeadDetailModal'
 
 // Visual style for each Hunter.io email_status value
@@ -46,11 +47,11 @@ export function ResultsTable({ leads, jobId }: Props) {
   const [tab, setTab] = useState<Tab>('all')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
-  const [expandedRow, setExpandedRow] = useState<number | null>(null)
+  const [expandedRow] = useState<number | null>(null)
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
   const [sortBy, setSortBy] = useState<SortKey>(null)
   const [sortDir, setSortDir] = useState<SortDir>('desc')
-  const [icpFilter, setIcpFilter] = useState<'all' | 'hot' | 'warm' | 'cold'>('all')
+  const [icpFilter, setIcpFilter] = useState<'all' | 'hot' | 'warm' | 'cold' | 'disqualified'>('all')
 
   const handleSort = (key: SortKey) => {
     if (sortBy === key) {
@@ -171,6 +172,7 @@ export function ResultsTable({ leads, jobId }: Props) {
             { key: 'hot', label: '🔥 Hot' },
             { key: 'warm', label: '🟡 Warm' },
             { key: 'cold', label: '❄️ Cold' },
+            { key: 'disqualified', label: '⛔ Disqualifié' },
           ] as { key: typeof icpFilter; label: string }[]).map(f => (
             <button
               key={f.key}
@@ -263,13 +265,13 @@ export function ResultsTable({ leads, jobId }: Props) {
                       <td className="px-4 py-3 whitespace-nowrap">
                         <span className="inline-flex items-center gap-1.5">
                           <span className="font-medium" style={{ color: 'var(--th-text-primary)' }}>{fullName || '—'}</span>
-                          {lead.inconsistency_detected && (
+                          {lead.evidence_verified === false && (
                             <span
-                              title={lead.inconsistency_reason || 'Incohérence détectée entre Apollo et la source scrapée'}
-                              className="inline-flex items-center"
-                              style={{ color: '#fb923c' }}
+                              title={lead.icp_rationale || 'Preuves insuffisantes'}
+                              className="text-xs px-1.5 py-0.5 rounded"
+                              style={{ background: 'rgba(148,163,184,0.12)', color: '#94a3b8' }}
                             >
-                              <AlertTriangle className="w-3.5 h-3.5" />
+                              non vérifié
                             </span>
                           )}
                         </span>
@@ -352,13 +354,9 @@ export function ResultsTable({ leads, jobId }: Props) {
                         {lead.icp_score != null ? (
                           <span
                             className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium"
-                            style={
-                              lead.icp_tier === 'hot' ? { background: 'rgba(249,115,22,0.12)', color: '#fb923c', border: '1px solid rgba(249,115,22,0.25)' }
-                              : lead.icp_tier === 'warm' ? { background: 'rgba(251,191,36,0.10)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.22)' }
-                              : { background: 'rgba(148,163,184,0.08)', color: 'rgba(148,163,184,0.7)', border: '1px solid rgba(148,163,184,0.15)' }
-                            }
+                            style={TIER_STYLE[tierOf(lead.icp_tier)]}
                           >
-                            {lead.icp_tier === 'hot' ? '🔥' : lead.icp_tier === 'warm' ? '🟡' : '❄️'} {lead.icp_score}
+                            {TIER_ICON[tierOf(lead.icp_tier)]} {lead.icp_score}
                           </span>
                         ) : <span style={{ color: 'var(--th-text-ghost)' }}>—</span>}
                       </td>
@@ -379,6 +377,11 @@ export function ResultsTable({ leads, jobId }: Props) {
                                   Scoring ICP — {lead.icp_tier?.toUpperCase()} ({lead.icp_score}/100)
                                 </p>
                                 <p className="mb-2" style={{ color: 'var(--th-text-secondary)', lineHeight: 1.6 }}>{lead.icp_rationale}</p>
+                                {lead.disqualification_reason && (
+                                  <div className="text-xs mb-2" style={{ color: '#94a3b8' }}>
+                                    ⛔ Disqualifié — {lead.disqualification_reason}
+                                  </div>
+                                )}
                                 {lead.icp_scores_detail && (() => {
                                   try {
                                     const detail = JSON.parse(lead.icp_scores_detail)

@@ -86,7 +86,7 @@ export function History({ onBack, onRerun }: Props) {
         website_pct: viewEntry.website_pct,
         avg_score: viewEntry.avg_score,
         email_count: 0, linkedin_count: 0, phone_count: 0, website_count: 0,
-        icp_hot_count: 0, icp_warm_count: 0, icp_cold_count: 0,
+        icp_hot_count: 0, icp_warm_count: 0, icp_cold_count: 0, icp_disqualified_count: 0,
       },
       leads: viewLeads ?? [],
     }

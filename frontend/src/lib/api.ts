@@ -29,6 +29,7 @@ export interface JobStats {
   icp_hot_count: number
   icp_warm_count: number
   icp_cold_count: number
+  icp_disqualified_count: number
 }
 
 export interface Lead {
@@ -48,9 +49,6 @@ export interface Lead {
   is_hit?: boolean
   activity_summary?: string
   conversion_angle?: string
-  inconsistency_detected?: boolean
-  inconsistency_reason?: string
-  llm_confidence?: string
   digital_maturity?: string
   estimated_budget?: string
   business_signals?: string
@@ -58,6 +56,12 @@ export interface Lead {
   icp_tier?: string
   icp_rationale?: string
   icp_scores_detail?: string
+  website_coherent?: boolean
+  website_rejected?: string
+  disqualification_reason?: string
+  evidence_level?: 'none' | 'weak' | 'sufficient'
+  evidence_verified?: boolean
+  facts_json?: string
   is_duplicate?: boolean
   first_seen_at?: string
 }
@@ -119,7 +123,7 @@ export interface PoolLead {
 
 export interface JobResult {
   job_id: string
-  status: 'running' | 'done' | 'error'
+  status: 'running' | 'done' | 'error' | 'completed_with_errors'
   total_leads: number
   hit_leads: number
   nohit_leads: number
@@ -128,6 +132,7 @@ export interface JobResult {
   error?: string
   csv_path?: string
   executive_summary?: string
+  provider_status?: Record<string, { status: string; reason: string | null; leads_affected: number }>
 }
 
 export interface HealthCheck {
