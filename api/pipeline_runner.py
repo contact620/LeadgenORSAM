@@ -73,15 +73,16 @@ def get_queue(job_id: str) -> Optional[asyncio.Queue]:
 
 # ── Progress mapping ──────────────────────────────────────────────────────────
 # Step weights for total_progress calculation (must sum to 1.0)
-STEP_WEIGHTS = {1: 0.05, 2: 0.18, 3: 0.22, 4: 0.05, 5: 0.12, 6: 0.23, 7: 0.15}
+STEP_WEIGHTS = {1: 0.05, 2: 0.18, 3: 0.22, 4: 0.05, 5: 0.25, 6: 0.13, 7: 0.05, 8: 0.07}
 STEP_NAMES = {
     1: "Input Apollo URL",
     2: "Scraping Apollo",
     3: "Enrichissement (Google + Dropcontact + Hunter)",
     4: "Calcul du taux de hit",
-    5: "Scoring ICP (profil client idéal)",
-    6: "Enrichissement IA (Claude)",
-    7: "Enrichissement Perplexity (maturité, budget, signaux)",
+    5: "Collecte de preuves (site + Perplexity)",
+    6: "Extraction de faits sourcés",
+    7: "Scoring ICP",
+    8: "Rédaction des angles commerciaux",
 }
 
 # Patterns to detect which step a log message belongs to
@@ -89,9 +90,10 @@ STEP_PATTERNS = [
     (2, re.compile(r"Step 2|Scraping Apollo|apollo|page \d+", re.I)),
     (3, re.compile(r"Step 3|Google enrichment|Dropcontact|dropcontact|batch \d+|Hunter\.io|email verification", re.I)),
     (4, re.compile(r"Step 4|hit score|Hit score complete", re.I)),
-    (5, re.compile(r"Step 5|ICP scoring|ICP|icp_score", re.I)),
-    (6, re.compile(r"Step 6|GPT|LinkedIn profile|Scraping hit lead|Claude AI", re.I)),
-    (7, re.compile(r"Step 7|Perplexity|perplexity enrichment|digital_maturity", re.I)),
+    (5, re.compile(r"Step 5|Evidence|Perplexity|Scraping hit lead|website", re.I)),
+    (6, re.compile(r"Step 6|Fact extraction", re.I)),
+    (7, re.compile(r"Step 7|ICP scoring", re.I)),
+    (8, re.compile(r"Step 8|Angle writing", re.I)),
 ]
 
 
@@ -199,15 +201,15 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         from enrichers.google_search import _reset_state as _reset_google
         from enrichers.dropcontact import _reset_state as _reset_dc
         from enrichers.hunter_verifier import _reset_state as _reset_hunter
-        from enrichers.gpt_enricher import _reset_state as _reset_gpt
         from enrichers.perplexity_enricher import _reset_state as _reset_perplexity
-        from processors.icp_scorer import _reset_state as _reset_icp
+        from enrichers.fact_extractor import _reset_state as _reset_facts
+        from enrichers.angle_writer import _reset_state as _reset_angles
         _reset_google()
         _reset_dc()
         _reset_hunter()
-        _reset_gpt()
         _reset_perplexity()
-        _reset_icp()
+        _reset_facts()
+        _reset_angles()
 
         # Run async pipeline steps in a new event loop for this thread
         new_loop = _asyncio.new_event_loop()
@@ -288,47 +290,61 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
 
         _check_cancelled(job_id)
 
-        # ── Step 5: ICP scoring ───────────────────────────────────────────────
-        # Deliberately inert until task 12 reorders the pipeline: scoring now
-        # runs AFTER evidence collection, and no evidence exists at this point.
-        # Emitting verdicts here would label every lead from an empty fact set.
-        handler.set_explicit_progress(5, 0.0, "Scoring ICP déplacé après la collecte de preuves...")
-        for lead in hit_leads:
-            lead.setdefault("icp_score", None)
-            lead.setdefault("icp_tier", None)
-            lead.setdefault("icp_rationale", None)
-            lead.setdefault("icp_scores_detail", None)
-            lead.setdefault("disqualification_reason", None)
-            lead.setdefault("evidence_level", None)
-            lead.setdefault("evidence_verified", None)
-        handler.set_explicit_progress(5, 1.0, "Scoring ICP déplacé après la collecte de preuves")
+        # Apollo scraping was the only consumer of this loop (Step 2). Evidence
+        # collection below opens and closes its own loop, so new_loop is closed
+        # here rather than left dangling as the thread's "current" loop for the
+        # remaining sync steps.
+        new_loop.close()
 
-        # ── Step 6: AI enrichment (hit leads only) ────────────────────────────
+        # ── Step 5: Evidence collection ───────────────────────────────────
         if not skip_gpt and hit_leads:
-            handler.set_explicit_progress(6, 0.0, "Scraping sites web des hit leads...")
-            from scrapers.website_scraper import scrape_hit_leads
-            hit_leads = new_loop.run_until_complete(scrape_hit_leads(hit_leads))
-
-            handler.set_explicit_progress(6, 0.5, "Appel Claude AI — enrichissement IA...")
-            from enrichers.gpt_enricher import enrich_leads_gpt
-            hit_leads = enrich_leads_gpt(hit_leads, enrich_instructions=enrich_instructions)
-            handler.set_explicit_progress(6, 1.0, "Enrichissement IA terminé")
+            handler.set_explicit_progress(5, 0.0, "Collecte de preuves (sites web + Perplexity)...")
+            from enrichers.evidence_collector import collect_evidence
+            hit_leads, active_providers = collect_evidence(
+                hit_leads, enrich_instructions, registry=registry
+            )
+            handler.set_explicit_progress(5, 1.0, "Collecte de preuves terminée")
             _check_cancelled(job_id)
 
-            # ── Step 7: Perplexity enrichment ──────────────────────────────
-            handler.set_explicit_progress(7, 0.0, "Enrichissement Perplexity (maturité digitale, budget, signaux)...")
-            from enrichers.perplexity_enricher import enrich_leads_perplexity
-            hit_leads = enrich_leads_perplexity(hit_leads, enrich_instructions=enrich_instructions)
-            handler.set_explicit_progress(7, 1.0, "Enrichissement Perplexity terminé")
+            # ── Step 6: Fact extraction ───────────────────────────────────
+            handler.set_explicit_progress(6, 0.0, "Extraction des faits sourcés...")
+            from enrichers.fact_extractor import extract_leads_facts
+            hit_leads = extract_leads_facts(hit_leads, active_providers, registry=registry)
+            confirmed = sum(1 for l in hit_leads if (l.get("facts") or {}).get("identite_confirmee"))
+            handler.set_explicit_progress(
+                6, 1.0, f"Faits extraits — {confirmed}/{len(hit_leads)} identités confirmées"
+            )
+            _check_cancelled(job_id)
+
+            # ── Step 7: Deterministic ICP scoring ─────────────────────────
+            handler.set_explicit_progress(7, 0.0, "Scoring ICP...")
+            from processors.icp_scorer import apply_scores
+            hit_leads = apply_scores(hit_leads)
+            disq = sum(1 for l in hit_leads if l.get("icp_tier") == "disqualified")
+            handler.set_explicit_progress(
+                7, 1.0, f"Scoring terminé — {disq} lead(s) disqualifié(s)"
+            )
+
+            # ── Step 8: Angle writing ─────────────────────────────────────
+            handler.set_explicit_progress(8, 0.0, "Rédaction des angles commerciaux...")
+            from enrichers.angle_writer import write_leads_angles
+            hit_leads = write_leads_angles(hit_leads, enrich_instructions, registry=registry)
+            handler.set_explicit_progress(8, 1.0, "Rédaction terminée")
         else:
             for lead in hit_leads:
+                lead.setdefault("icp_score", None)
+                lead.setdefault("icp_tier", None)
+                lead.setdefault("icp_rationale", None)
+                lead.setdefault("icp_scores_detail", None)
+                lead.setdefault("disqualification_reason", None)
+                lead.setdefault("evidence_level", None)
+                lead.setdefault("evidence_verified", None)
+                lead.setdefault("facts_json", None)
                 lead.setdefault("activity_summary", None)
                 lead.setdefault("conversion_angle", None)
                 lead.setdefault("digital_maturity", None)
                 lead.setdefault("estimated_budget", None)
                 lead.setdefault("business_signals", None)
-
-        new_loop.close()
 
         # ── Export CSV ────────────────────────────────────────────────────────
         os.makedirs(pipeline_config.OUTPUT_DIR, exist_ok=True)
@@ -441,7 +457,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
                     messages=[{"role": "user", "content": summary_prompt}],
                 )
                 executive_summary = msg.content[0].text.strip()
-                handler.set_explicit_progress(7, 1.0, "Résumé exécutif généré")
+                handler.set_explicit_progress(8, 1.0, "Résumé exécutif généré")
             except Exception as e:
                 logging.getLogger("pipeline_runner").warning(f"Executive summary failed: {e}")
 
@@ -749,9 +765,7 @@ def start_scrape_job(url: str, max_leads: int, pool_name: str) -> str:
 
 def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
                           loop: asyncio.AbstractEventLoop, queue: asyncio.Queue):
-    """Runs steps 5-7 (ICP + Claude + Perplexity) on leads from an existing pool."""
-    import asyncio as _asyncio
-
+    """Runs steps 5-8 (evidence + facts + ICP scoring + angle writing) on leads from an existing pool."""
     handler = _QueueLogHandler(loop, queue, job_id)
     handler.setFormatter(logging.Formatter("%(message)s"))
     root_logger = logging.getLogger()
@@ -762,12 +776,15 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
     try:
         _jobs[job_id].status = "running"
 
-        from enrichers.gpt_enricher import _reset_state as _reset_gpt
+        from api.provider_status import ProviderRegistry
+        registry = ProviderRegistry()
+
         from enrichers.perplexity_enricher import _reset_state as _reset_perplexity
-        from processors.icp_scorer import _reset_state as _reset_icp
-        _reset_gpt()
+        from enrichers.fact_extractor import _reset_state as _reset_facts
+        from enrichers.angle_writer import _reset_state as _reset_angles
         _reset_perplexity()
-        _reset_icp()
+        _reset_facts()
+        _reset_angles()
 
         # Load unenriched hit leads from pool
         from api.leads_db import get_pool_leads, mark_leads_enriched
@@ -779,42 +796,31 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
         lead_ids = [l["id"] for l in leads]
         handler.set_explicit_progress(5, 0.0, f"Enrichissement de {len(leads)} leads...")
 
-        new_loop = _asyncio.new_event_loop()
-        _asyncio.set_event_loop(new_loop)
-
-        # Step 5: ICP scoring — deliberately inert until task 12 reorders the
-        # pipeline: scoring now runs AFTER evidence collection, and no
-        # evidence exists at this point. Emitting verdicts here would label
-        # every lead from an empty fact set.
-        handler.set_explicit_progress(5, 0.0, "Scoring ICP déplacé après la collecte de preuves...")
-        for lead in leads:
-            lead.setdefault("icp_score", None)
-            lead.setdefault("icp_tier", None)
-            lead.setdefault("icp_rationale", None)
-            lead.setdefault("icp_scores_detail", None)
-            lead.setdefault("disqualification_reason", None)
-            lead.setdefault("evidence_level", None)
-            lead.setdefault("evidence_verified", None)
-        handler.set_explicit_progress(5, 1.0, "Scoring ICP déplacé après la collecte de preuves")
+        # Step 5: Evidence collection
+        handler.set_explicit_progress(5, 0.0, "Collecte de preuves...")
+        from enrichers.evidence_collector import collect_evidence
+        leads, active_providers = collect_evidence(leads, registry=registry)
+        handler.set_explicit_progress(5, 1.0, "Collecte terminée")
         _check_cancelled(job_id)
 
-        # Step 6: Website scraping + Claude AI
-        handler.set_explicit_progress(6, 0.0, "Scraping sites web...")
-        from scrapers.website_scraper import scrape_hit_leads
-        leads = new_loop.run_until_complete(scrape_hit_leads(leads))
-        handler.set_explicit_progress(6, 0.5, "Appel Claude AI...")
-        from enrichers.gpt_enricher import enrich_leads_gpt
-        leads = enrich_leads_gpt(leads)
-        handler.set_explicit_progress(6, 1.0, "Enrichissement IA terminé")
+        # Step 6: Fact extraction
+        handler.set_explicit_progress(6, 0.0, "Extraction des faits...")
+        from enrichers.fact_extractor import extract_leads_facts
+        leads = extract_leads_facts(leads, active_providers, registry=registry)
+        handler.set_explicit_progress(6, 1.0, "Faits extraits")
         _check_cancelled(job_id)
 
-        # Step 7: Perplexity
-        handler.set_explicit_progress(7, 0.0, "Enrichissement Perplexity...")
-        from enrichers.perplexity_enricher import enrich_leads_perplexity
-        leads = enrich_leads_perplexity(leads)
-        handler.set_explicit_progress(7, 1.0, "Enrichissement Perplexity terminé")
+        # Step 7: ICP scoring
+        handler.set_explicit_progress(7, 0.0, "Scoring ICP...")
+        from processors.icp_scorer import apply_scores
+        leads = apply_scores(leads)
+        handler.set_explicit_progress(7, 1.0, "Scoring terminé")
 
-        new_loop.close()
+        # Step 8: Angle writing
+        handler.set_explicit_progress(8, 0.0, "Rédaction des angles...")
+        from enrichers.angle_writer import write_leads_angles
+        leads = write_leads_angles(leads, registry=registry)
+        handler.set_explicit_progress(8, 1.0, "Rédaction terminée")
 
         # Store enrichment data back to pool
         enrich_data = {}
@@ -841,6 +847,7 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
             job_id=job_id, status="done",
             total_leads=len(leads), hit_leads=len(leads), nohit_leads=0,
             leads=leads, csv_path=csv_path,
+            provider_status=registry.to_dict(),
         )
 
         from api.history import save_job as _save_hist

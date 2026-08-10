@@ -16,6 +16,7 @@ from typing import Optional
 import requests
 
 import config
+from api.provider_status import StepOutcome
 from enrichers.retry import retry_api_call, AuthError
 
 logger = logging.getLogger(__name__)
@@ -122,7 +123,7 @@ def _call_perplexity(lead: dict, enrich_instructions: str = "") -> tuple[Optiona
         return None, None, None
 
 
-def enrich_leads_perplexity(hit_leads: list[dict], enrich_instructions: str = "") -> list[dict]:
+def enrich_leads_perplexity(hit_leads: list[dict], enrich_instructions: str = "", registry=None) -> list[dict]:
     """
     For each hit lead, call Perplexity Sonar and store:
       lead["digital_maturity"]
@@ -179,4 +180,7 @@ def enrich_leads_perplexity(hit_leads: list[dict], enrich_instructions: str = ""
         f"Perplexity enrichment complete. {success}/{total} leads enriched "
         f"({unique_companies} unique companies queried)."
     )
+    if registry:
+        status = "degraded" if _perplexity_disabled else "ok"
+        registry.record(StepOutcome("perplexity", status, None, success))
     return hit_leads

@@ -1,12 +1,15 @@
 """
 ORSAM — B2B Lead Generation Pipeline
 ======================================
-Pipeline en 5 étapes :
+Pipeline en 8 étapes :
   1. Input Apollo URL          (CLI arg)
   2. Scraping Apollo            (Playwright headless)
-  3. Enrichissement multi-sources  (Google Search + Dropcontact)
+  3. Enrichissement multi-sources  (Google Search + Dropcontact + Hunter.io)
   4. Calcul du taux de hit     (score 0-100, seuil 50)
-  5. Enrichissement IA          (web scraping + GPT-4o-mini)
+  5. Collecte de preuves        (site web + Perplexity, hit leads uniquement)
+  6. Extraction de faits sourcés (Claude, à partir des preuves collectées)
+  7. Scoring ICP déterministe   (règles versionnées appliquées aux faits)
+  8. Rédaction des angles commerciaux (Claude, leads retenus uniquement)
 
 Usage:
   python main.py --url "https://app.apollo.io/#/people?..." [options]
@@ -34,9 +37,6 @@ from enrichers.google_search import enrich_leads_google
 from enrichers.dropcontact import enrich_leads_dropcontact
 from enrichers.hunter_verifier import enrich_leads_hunter
 from processors.hit_calculator import score_all_leads
-from scrapers.website_scraper import scrape_hit_leads
-from enrichers.gpt_enricher import enrich_leads_gpt
-from enrichers.perplexity_enricher import enrich_leads_perplexity
 from lead_schema import CSV_COLUMNS
 
 
@@ -90,6 +90,9 @@ def print_summary(all_leads: list[dict], hit_leads: list[dict], nohit_leads: lis
         icp_cold = sum(1 for l in all_leads if l.get("icp_tier") == "cold")
         if icp_hot or icp_warm or icp_cold:
             print(f"  ICP Hot / Warm / Cold   : {icp_hot} / {icp_warm} / {icp_cold}")
+        icp_disq = sum(1 for l in all_leads if l.get("icp_tier") == "disqualified")
+        if icp_disq:
+            print(f"  ICP disqualifiés        : {icp_disq}")
     print(f"\n  Output file: {path}")
     print("=" * 60 + "\n")
 
@@ -133,55 +136,38 @@ async def run_pipeline(args):
     logger.info("Step 4 — Calculating hit scores...")
     hit_leads, nohit_leads = score_all_leads(leads)
 
-    # ── Step 5: ICP scoring ───────────────────────────────────────────────────
-    # Deliberately inert until task 12 reorders the pipeline: scoring now runs
-    # AFTER evidence collection, and no evidence exists at this point. Emitting
-    # verdicts here would label every lead from an empty fact set.
-    for lead in hit_leads:
-        lead.setdefault("icp_score", None)
-        lead.setdefault("icp_tier", None)
-        lead.setdefault("icp_rationale", None)
-        lead.setdefault("icp_scores_detail", None)
-        lead.setdefault("disqualification_reason", None)
-        lead.setdefault("evidence_level", None)
-        lead.setdefault("evidence_verified", None)
-    logger.info("Step 5 — ICP scoring déplacé après la collecte de preuves (tâche 12)")
-
-    # ── Save intermediate CSV (all leads, before AI enrichment) ───────────────
+    # ── Save intermediate CSV (all leads, before evidence collection) ─────────
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     intermediate_filename = f"leads_intermediate_{ts}.csv"
     intermediate_path = export_csv(leads, intermediate_filename)
     logger.info(f"Intermediate CSV saved: {intermediate_path}")
 
-    # ── Step 6: AI enrichment (hit leads only) ────────────────────────────────
+    # ── Step 5: Evidence collection (hit leads only) ──────────────────────────
     if not args.skip_gpt and hit_leads:
-        logger.info(f"Step 5 — AI enrichment on {len(hit_leads)} hit leads...")
+        logger.info(f"Step 5 — Evidence collection on {len(hit_leads)} hit leads...")
+        from enrichers.evidence_collector import collect_evidence
+        hit_leads, active_providers = collect_evidence(hit_leads)
 
-        # 5a: Scrape company websites
-        logger.info("Step 5a — Scraping company websites...")
-        hit_leads = await scrape_hit_leads(hit_leads)
+        logger.info("Step 6 — Fact extraction...")
+        from enrichers.fact_extractor import extract_leads_facts
+        hit_leads = extract_leads_facts(hit_leads, active_providers)
 
-        # 5b: GPT-4o-mini
-        logger.info("Step 5b — GPT-4o-mini enrichment...")
-        hit_leads = enrich_leads_gpt(hit_leads)
+        logger.info("Step 7 — ICP scoring...")
+        from processors.icp_scorer import apply_scores
+        hit_leads = apply_scores(hit_leads)
 
-        # 5c: Perplexity Sonar (digital maturity, budget, signals)
-        logger.info("Step 5c — Perplexity enrichment (maturité digitale, budget, signaux)...")
-        hit_leads = enrich_leads_perplexity(hit_leads)
+        logger.info("Step 8 — Angle writing...")
+        from enrichers.angle_writer import write_leads_angles
+        hit_leads = write_leads_angles(hit_leads)
     else:
-        if args.skip_gpt:
-            logger.info("Step 5 — Skipped (--skip-gpt flag set)")
-        else:
-            logger.info("Step 5 — Skipped (no hit leads)")
-
+        reason = "--skip-gpt flag set" if args.skip_gpt else "no hit leads"
+        logger.info(f"Steps 5-8 — Skipped ({reason})")
         for lead in hit_leads:
-            lead.setdefault("linkedin_text", "")
-            lead.setdefault("website_text", "")
-            lead.setdefault("activity_summary", None)
-            lead.setdefault("conversion_angle", None)
-            lead.setdefault("digital_maturity", None)
-            lead.setdefault("estimated_budget", None)
-            lead.setdefault("business_signals", None)
+            for field in ("icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
+                          "disqualification_reason", "evidence_level", "evidence_verified",
+                          "facts_json", "activity_summary", "conversion_angle",
+                          "digital_maturity", "estimated_budget", "business_signals"):
+                lead.setdefault(field, None)
 
     # ── Final CSV export ──────────────────────────────────────────────────────
     output_filename = args.output or f"leads_final_{ts}.csv"
@@ -221,7 +207,7 @@ def parse_args():
     parser.add_argument(
         "--skip-gpt",
         action="store_true",
-        help="Skip GPT-4o-mini enrichment (Step 6)",
+        help="Skip evidence collection and AI enrichment (Steps 5-8)",
     )
     parser.add_argument(
         "--log-level",
