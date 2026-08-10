@@ -3,7 +3,7 @@ import { Download, Search, ExternalLink, ChevronLeft, ChevronRight, SearchX, Arr
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { getDownloadUrl, type Lead } from '@/lib/api'
-import { TIER_ICON, TIER_STYLE, tierOf } from '@/lib/tiers'
+import { TIER_ICON, TIER_STYLE, evidenceLabel, tierOf } from '@/lib/tiers'
 import { LeadDetailModal } from './LeadDetailModal'
 
 // Visual style for each Hunter.io email_status value
@@ -274,7 +274,15 @@ export function ResultsTable({ leads, jobId }: Props) {
                           <span className="font-medium" style={{ color: 'var(--th-text-primary)' }}>{fullName || '—'}</span>
                           {lead.evidence_verified === false && (
                             <span
-                              title={lead.icp_rationale || 'Preuves insuffisantes'}
+                              // The tooltip names the evidence level: "none" and
+                              // "weak" both land here, but only one of them means
+                              // nothing at all was found.
+                              title={[
+                                lead.evidence_level
+                                  ? `Niveau de preuve : ${evidenceLabel(lead.evidence_level)}`
+                                  : null,
+                                lead.icp_rationale || 'Preuves insuffisantes',
+                              ].filter(Boolean).join('\n')}
                               className="text-xs px-1.5 py-0.5 rounded"
                               style={{ background: 'rgba(148,163,184,0.12)', color: '#94a3b8' }}
                             >

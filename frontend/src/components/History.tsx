@@ -21,13 +21,27 @@ function truncateUrl(url: string, max = 50): string {
   return clean.length > max ? clean.slice(0, max) + '...' : clean
 }
 
+// A run that degraded still produced a CSV: it is finished, not failed, and
+// must keep its download/view actions — while never looking as clean as a
+// fully healthy run.
+function isFinished(status: HistoryEntry['status']): boolean {
+  return status === 'done' || status === 'completed_with_errors'
+}
+
+const STATUS_BADGE: Record<HistoryEntry['status'], { label: string; bg: string; color: string; border: string }> = {
+  done: { label: 'Terminé', bg: 'var(--th-success-soft)', color: 'var(--th-success)', border: 'var(--th-success-border)' },
+  completed_with_errors: { label: 'Terminé (erreurs)', bg: 'var(--th-warning-soft)', color: 'var(--th-warning-text)', border: 'var(--th-warning-soft)' },
+  running: { label: 'En cours', bg: 'var(--th-glass-inset)', color: 'var(--th-text-tertiary)', border: 'var(--th-glass-sm-border)' },
+  error: { label: 'Erreur', bg: 'var(--th-error-soft)', color: 'var(--th-error)', border: 'var(--th-error-border)' },
+}
+
 export function History({ onBack, onRerun }: Props) {
   const [entries, setEntries] = useState<HistoryEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const [historySearch, setHistorySearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'done' | 'error'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'done' | 'completed_with_errors' | 'error'>('all')
 
   const [viewEntry, setViewEntry] = useState<HistoryEntry | null>(null)
   const [viewLeads, setViewLeads] = useState<Lead[] | null>(null)
@@ -75,7 +89,7 @@ export function History({ onBack, onRerun }: Props) {
   if (viewEntry) {
     const jobResult: JobResult = {
       job_id: viewEntry.job_id,
-      status: 'done',
+      status: viewEntry.status,
       total_leads: viewEntry.total_leads,
       hit_leads: viewEntry.hit_leads,
       nohit_leads: viewEntry.nohit_leads,
@@ -179,6 +193,7 @@ export function History({ onBack, onRerun }: Props) {
             {([
               { key: 'all' as const, label: 'Tous' },
               { key: 'done' as const, label: 'Terminés' },
+              { key: 'completed_with_errors' as const, label: 'Avec erreurs' },
               { key: 'error' as const, label: 'Erreurs' },
             ]).map(f => (
               <button
@@ -308,15 +323,20 @@ export function History({ onBack, onRerun }: Props) {
                         </div>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
-                        <span
-                          className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                          style={entry.status === 'done'
-                            ? { background: 'var(--th-success-soft)', color: 'var(--th-success)', border: '1px solid var(--th-success-border)' }
-                            : { background: 'var(--th-error-soft)', color: 'var(--th-error)', border: '1px solid var(--th-error-border)' }
-                          }
-                        >
-                          {entry.status === 'done' ? 'Terminé' : 'Erreur'}
-                        </span>
+                        {(() => {
+                          const badge = STATUS_BADGE[entry.status] ?? STATUS_BADGE.error
+                          return (
+                            <span
+                              className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+                              style={{ background: badge.bg, color: badge.color, border: `1px solid ${badge.border}` }}
+                              title={entry.status === 'completed_with_errors'
+                                ? 'Un fournisseur critique a échoué : les résultats sont incomplets.'
+                                : undefined}
+                            >
+                              {badge.label}
+                            </span>
+                          )
+                        })()}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex items-center gap-1">
@@ -330,7 +350,7 @@ export function History({ onBack, onRerun }: Props) {
                               <RotateCcw className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          {entry.status === 'done' && entry.csv_available && (
+                          {isFinished(entry.status) && entry.csv_available && (
                             <>
                               <button
                                 onClick={() => handleView(entry)}
@@ -360,7 +380,7 @@ export function History({ onBack, onRerun }: Props) {
                               </a>
                             </>
                           )}
-                          {entry.status === 'done' && !entry.csv_available && (
+                          {isFinished(entry.status) && !entry.csv_available && (
                             <span className="text-xs" style={{ color: 'var(--th-text-ghost)' }} title="CSV supprimé">
                               Fichier absent
                             </span>

@@ -1,6 +1,6 @@
 import { X, Briefcase, MapPin, Mail, Phone, Linkedin, Globe, Target, TrendingUp, DollarSign, Activity, Zap, Copy, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
-import { TIER_ICON, TIER_STYLE, tierOf } from '@/lib/tiers'
+import { EVIDENCE_LEVEL_STYLE, TIER_ICON, TIER_STYLE, evidenceLabel, tierOf } from '@/lib/tiers'
 
 function copyToClipboard(text: string, label: string) {
   navigator.clipboard.writeText(text).then(() => toast.success(`${label} copié`))
@@ -31,6 +31,7 @@ interface LeadData {
   evidence_level?: 'none' | 'weak' | 'sufficient'
   evidence_verified?: boolean
   website_rejected?: string
+  website_check_reason?: string
   enriched?: boolean
 }
 
@@ -109,6 +110,11 @@ export function LeadDetailModal({ lead, onClose }: Props) {
               <div className="text-sm rounded-lg px-3 py-2 mb-2"
                    style={{ background: 'var(--th-warning-soft)', color: 'var(--th-warning-text)' }}>
                 Preuves insuffisantes — qualification manuelle nécessaire
+                {lead.evidence_level && (
+                  <span className="block text-xs mt-0.5" style={{ opacity: 0.85 }}>
+                    {evidenceLabel(lead.evidence_level)}
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -165,11 +171,25 @@ export function LeadDetailModal({ lead, onClose }: Props) {
               </span>
             </div>
           )}
+          {lead.evidence_level && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Niveau de preuve
+              </span>
+              <span
+                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+                style={EVIDENCE_LEVEL_STYLE[lead.evidence_level] ?? { background: 'var(--th-glass-inset)', color: 'var(--th-text-muted)' }}
+              >
+                {evidenceLabel(lead.evidence_level)}
+              </span>
+            </div>
+          )}
         </div>
 
         {lead.website_rejected && (
           <p className="text-xs mt-2 px-6" style={{ color: 'var(--th-text-faint)' }}>
             Site écarté (incohérent) : {lead.website_rejected}
+            {lead.website_check_reason ? ` — ${lead.website_check_reason}` : ''}
           </p>
         )}
 

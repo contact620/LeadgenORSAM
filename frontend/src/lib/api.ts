@@ -58,6 +58,7 @@ export interface Lead {
   icp_scores_detail?: string
   website_coherent?: boolean
   website_rejected?: string
+  website_check_reason?: string
   disqualification_reason?: string
   evidence_level?: 'none' | 'weak' | 'sufficient'
   evidence_verified?: boolean
@@ -224,7 +225,9 @@ export async function saveConfig(data: ConfigUpdate): Promise<void> {
 
 export interface HistoryEntry {
   job_id: string
-  status: 'done' | 'error'
+  // Mirrors JobResult['status']: the backend persists 'running' while a job is
+  // in flight and 'completed_with_errors' when a critical provider degraded.
+  status: 'running' | 'done' | 'error' | 'completed_with_errors'
   apollo_url: string
   max_leads: number
   skip_gpt: boolean
