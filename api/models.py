@@ -83,6 +83,7 @@ class JobResult(BaseModel):
     error: Optional[str] = None
     csv_path: Optional[str] = None
     executive_summary: Optional[str] = None
+    provider_status: dict[str, dict] = {}
 
 
 class HistoryEntry(BaseModel):

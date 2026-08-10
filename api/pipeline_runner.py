@@ -191,6 +191,9 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
     try:
         _jobs[job_id].status = "running"
 
+        from api.provider_status import ProviderFailure, ProviderRegistry
+        registry = ProviderRegistry()
+
         # Reset enricher state from any previous run
         from enrichers.google_search import _reset_state as _reset_google
         from enrichers.dropcontact import _reset_state as _reset_dc
@@ -234,7 +237,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
 
         # ── Step 3b: Dropcontact enrichment ───────────────────────────────────
         from enrichers.dropcontact import enrich_leads_dropcontact
-        leads = enrich_leads_dropcontact(leads)
+        leads = enrich_leads_dropcontact(leads, registry=registry)
 
         email_count = sum(1 for l in leads if l.get("email"))
         phone_count = sum(1 for l in leads if l.get("phone"))
@@ -424,7 +427,7 @@ Rédige un résumé actionnable en français. Mentionne les chiffres clés, les 
         # ── Update job state ──────────────────────────────────────────────────
         _jobs[job_id] = JobResult(
             job_id=job_id,
-            status="done",
+            status="completed_with_errors" if registry.has_critical_failure() else "done",
             total_leads=total,
             hit_leads=len(hit_leads),
             nohit_leads=len(nohit_leads),
@@ -432,6 +435,7 @@ Rédige un résumé actionnable en français. Mentionne les chiffres clés, les 
             leads=leads,
             csv_path=csv_path,
             executive_summary=executive_summary,
+            provider_status=registry.to_dict(),
         )
 
         # ── Persist to history DB ────────────────────────────────────────────
@@ -476,6 +480,25 @@ Rédige un résumé actionnable en français. Mentionne les chiffres clés, les 
         asyncio.run_coroutine_threadsafe(queue.put(cancel_payload), loop)
         _cancelled.pop(job_id, None)
         return  # skip the generic error handler
+
+    except ProviderFailure as exc:
+        message = f"Étape contacts interrompue — {exc.reason}"
+        logging.getLogger("pipeline_runner").error(message)
+        _jobs[job_id] = JobResult(job_id=job_id, status="error", error=message)
+        from api.history import save_job as _save_hist
+        meta = _job_meta.get(job_id, {})
+        _save_hist(
+            job_id=job_id, status="error",
+            apollo_url=meta.get("apollo_url", ""),
+            max_leads=meta.get("max_leads", 0),
+            skip_gpt=meta.get("skip_gpt", False),
+            started_at=meta.get("started_at", ""),
+            finished_at=datetime.now().isoformat(),
+            error=message,
+        )
+        error_payload = json.dumps({"type": "error", "data": {"message": message}})
+        asyncio.run_coroutine_threadsafe(queue.put(error_payload), loop)
+        return
 
     except Exception as exc:
         error_msg = str(exc)
@@ -563,6 +586,9 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
     try:
         _jobs[job_id].status = "running"
 
+        from api.provider_status import ProviderFailure, ProviderRegistry
+        registry = ProviderRegistry()
+
         from enrichers.google_search import _reset_state as _reset_google
         from enrichers.dropcontact import _reset_state as _reset_dc
         from enrichers.hunter_verifier import _reset_state as _reset_hunter
@@ -590,7 +616,7 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
 
         # Step 3b: Dropcontact
         from enrichers.dropcontact import enrich_leads_dropcontact
-        leads = enrich_leads_dropcontact(leads)
+        leads = enrich_leads_dropcontact(leads, registry=registry)
         handler.set_explicit_progress(3, 0.75, "Dropcontact terminé. Vérification Hunter.io...")
 
         # Step 3c: Hunter.io email verification
@@ -652,6 +678,14 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
         cancel_payload = json.dumps({"type": "cancelled", "data": {"job_id": job_id}})
         asyncio.run_coroutine_threadsafe(queue.put(cancel_payload), loop)
         _cancelled.pop(job_id, None)
+        return
+
+    except ProviderFailure as exc:
+        message = f"Étape contacts interrompue — {exc.reason}"
+        logging.getLogger("pipeline_runner").error(message)
+        _jobs[job_id] = JobResult(job_id=job_id, status="error", error=message)
+        error_payload = json.dumps({"type": "error", "data": {"message": message}})
+        asyncio.run_coroutine_threadsafe(queue.put(error_payload), loop)
         return
 
     except Exception as exc:
