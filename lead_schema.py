@@ -11,6 +11,9 @@ CSV_COLUMNS: list[str] = [
     # Contact
     "email", "email_status", "email_confidence", "phone",
     "linkedin_url", "website", "website_coherent", "website_rejected",
+    # Why a candidate site was kept or dropped — auditable in the export,
+    # not only in the UI modal.
+    "website_check_reason",
     # Hit scoring
     "hit_score", "is_hit",
     # ICP scoring

@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 import requests
 
 import config
+from api.provider_status import ProviderRegistry, StepOutcome
 from enrichers.retry import retry_api_call, AuthError
 from processors.coherence import CoherenceResult, check_site_coherence, names_match, strip_www
 
@@ -172,11 +173,17 @@ def _find_company_website(company: str, location: str = "") -> Optional[str]:
 
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
-LIGHT_CHECK_MAX_CHARS = 1500
+
+# Upper bound on the text handed to the coherence check. It used to be 1500
+# characters, which stopped short of the footer where a French SME states its
+# legal name — the check then reported the name as absent and rejected a
+# perfectly valid site. The bound now only guards against a pathological
+# page; it is not a sampling window.
+MAX_PAGE_TEXT_CHARS = 200_000
 
 
 def _light_page_text(html: str) -> tuple[str, str]:
-    """Extract (title, plain text head) from raw HTML without a parser dependency."""
+    """Extract (title, full plain text) from raw HTML without a parser dependency."""
     title_match = _TITLE_RE.search(html)
     title = _TAG_RE.sub(" ", title_match.group(1)).strip() if title_match else ""
 
@@ -185,7 +192,7 @@ def _light_page_text(html: str) -> tuple[str, str]:
     body = _TAG_RE.sub(" ", body)
     body = re.sub(r"&[a-zA-Z]+;", " ", body)
     body = re.sub(r"\s{2,}", " ", body).strip()
-    return title, body[:LIGHT_CHECK_MAX_CHARS]
+    return title, body[:MAX_PAGE_TEXT_CHARS]
 
 
 def verify_website(url: str, company: str, location: str) -> CoherenceResult:
@@ -274,20 +281,27 @@ def find_linkedin_and_website(lead: dict) -> dict:
         else:
             lead["website"] = None
             lead["website_coherent"] = False
+            lead["website_check_reason"] = "aucun site candidat trouvé"
             logger.debug(f"No website found for {company}")
     else:
         lead["website"] = None
         lead["website_coherent"] = False
+        lead["website_check_reason"] = "aucun nom d'entreprise fourni"
 
     time.sleep(config.REQUEST_DELAY / 2)
 
     return lead
 
 
-def enrich_leads_google(leads: list[dict]) -> list[dict]:
+def enrich_leads_google(leads: list[dict], registry: ProviderRegistry | None = None) -> list[dict]:
     """
     Enrich a list of leads with LinkedIn URLs and company websites.
     Runs sequentially with rate limiting to avoid hitting API quotas.
+
+    Records a Serper outcome on `registry`: an expired key disables LinkedIn
+    search for the whole run and costs 30 hit-score points per lead, which
+    used to leave a portfolio just under the threshold with nothing anywhere
+    saying why.
     """
     total = len(leads)
     # Count LinkedIn URLs already present from Apollo before enrichment
@@ -325,7 +339,29 @@ def enrich_leads_google(leads: list[dict]) -> list[dict]:
             f"({', '.join(l.get('company', '?') for l in rejected[:5])})"
         )
 
+    if registry:
+        registry.record(_serper_outcome(len(no_linkedin), linkedin_found))
+
     return leads
+
+
+def _serper_outcome(missing_linkedin: int, linkedin_found: int) -> StepOutcome:
+    """Turn Serper's end-of-run state into a reportable outcome.
+
+    - skipped  : no key configured; DuckDuckGo carried the searches alone.
+    - degraded : the key was rejected mid-run (see _serper_disabled), so every
+                 remaining LinkedIn lookup fell through to the fallback.
+    - ok       : the provider answered for the whole run.
+    """
+    if config._is_placeholder(config.SERPER_API_KEY):
+        return StepOutcome("serper", "skipped", "clé API absente", 0)
+    if _serper_disabled:
+        return StepOutcome(
+            "serper", "degraded",
+            "clé rejetée en cours de run — recherche LinkedIn repliée sur DuckDuckGo",
+            missing_linkedin,
+        )
+    return StepOutcome("serper", "ok", None, linkedin_found)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,17 @@ GENERIC_TOKENS = frozenset({
     "agence", "systems", "global", "france", "maroc", "africa",
 })
 
+# Words that make up whole homepage titles and name no company. A title built
+# only from these ("Accueil", "Bienvenue sur notre site", "Home | Contact")
+# identifies nobody, so its silence about the prospect proves nothing.
+PAGE_TITLE_NOISE = frozenset({
+    "accueil", "bienvenue", "home", "welcome", "index", "page", "site",
+    "web", "officiel", "official", "website", "internet", "portail",
+    "contact", "contactez", "nous", "propos", "about", "apropos",
+    "entreprise", "societe", "boutique", "shop", "store", "blog",
+    "actualites", "news", "menu", "connexion", "login",
+})
+
 _PUNCTUATION_RE = re.compile(r"[^a-z0-9\s]+")
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -58,6 +69,15 @@ def significant_tokens(name: str) -> set[str]:
         t for t in normalize_tokens(name)
         if t not in LEGAL_SUFFIXES and t not in GENERIC_TOKENS and len(t) > 2
     }
+
+
+def title_names_a_company(page_title: str) -> bool:
+    """True when the page title identifies some company, whichever one.
+
+    Used to decide whether a title's failure to mention the prospect is
+    evidence of a *different* entity or merely an uninformative title.
+    """
+    return bool(significant_tokens(page_title) - PAGE_TITLE_NOISE)
 
 
 def names_match(candidate: str, reference: str, min_overlap: float = 0.5) -> bool:
@@ -122,21 +142,30 @@ def _normalized_text(value: str) -> str:
 
 def detect_country(text: str) -> str | None:
     """
-    Return the first canonical country label found in the text, if any.
+    Return the canonical country label the text most specifically designates.
 
     Word order must be preserved here: multi-word aliases such as
     "cote d ivoire" cannot be matched against a sorted token set.
-    Dictionary order decides ties when a text mentions several countries.
+
+    The *longest* matching alias wins, never dictionary order. A Senegalese
+    company whose page mentions a Paris office matches both "dakar"/"senegal"
+    and "paris"; dictionary order returned France and had the site rejected
+    for "pays incohérent". Length is the available proxy for specificity:
+    "senegal" (7) outranks "paris" (5), and "democratic republic of the congo"
+    outranks "congo". Ties fall back to dictionary order so the result stays
+    deterministic.
     """
     if not text:
         return None
     haystack = _normalized_text(text)
+    best_country: str | None = None
+    best_length = 0
     for country, aliases in COUNTRY_ALIASES.items():
         for alias in aliases:
             needle = _normalized_text(alias)
-            if needle.strip() and needle in haystack:
-                return country
-    return None
+            if needle.strip() and needle in haystack and len(needle) > best_length:
+                best_country, best_length = country, len(needle)
+    return best_country
 
 
 def check_site_coherence(
@@ -148,22 +177,48 @@ def check_site_coherence(
     """
     Decide whether a scraped page really belongs to the prospect's company.
 
-    Rejects only on positive evidence of a different entity. A thin or empty
-    page returns coherent=True with verified=False.
+    Rejects only on positive evidence of a different entity: the page names
+    an identifiable company and it is not this one, or the countries
+    contradict each other. Everything else — a thin page, a title that names
+    no company, a prospect whose name is entirely generic — returns
+    coherent=True with verified=False. A rejection costs the lead its
+    website, ten hit-score points and any chance of reaching
+    evidence_level="sufficient", so it must be earned, not assumed.
     """
     combined = f"{page_title} {page_text}".strip()
     if len(combined) < MIN_TEXT_FOR_VERDICT:
         return CoherenceResult(coherent=True, verified=False,
                                reason="page trop pauvre pour conclure")
 
-    # 1. Company name present in the title or anywhere in the body
-    name_found = names_match(page_title, company)
-    if not name_found:
-        company_sig = significant_tokens(company)
-        body_tokens = normalize_tokens(page_text)
-        name_found = bool(company_sig) and company_sig.issubset(body_tokens)
+    # 1. Company name present in the title or anywhere on the page.
+    #    The needle is the significant part of the name when there is one;
+    #    for a fully generic name ("Digital Solutions") every token is
+    #    generic, so the full token set is used instead — otherwise
+    #    names_match falls back to requiring identical token sets and reports
+    #    "ne mentionne pas « Digital Solutions »" about a title that spells
+    #    it out word for word.
+    company_sig = significant_tokens(company)
+    needle = company_sig or normalize_tokens(company)
+    page_tokens = normalize_tokens(f"{page_title} {page_text}")
+    name_found = names_match(page_title, company) or (
+        bool(needle) and needle.issubset(page_tokens)
+    )
 
     if not name_found:
+        # A name with nothing discriminating in it cannot ground a rejection:
+        # "Groupe Conseil" absent from a page proves nothing about whose page
+        # it is.
+        if not company_sig:
+            return CoherenceResult(coherent=True, verified=False,
+                                   reason="nom trop générique pour conclure")
+        # Rejection requires positive evidence of a *different* entity. A
+        # title like "Accueil", "Bienvenue" or "Home" names no company at
+        # all, so its silence about the prospect is not evidence of anything.
+        if not title_names_a_company(page_title):
+            return CoherenceResult(
+                coherent=True, verified=False,
+                reason="le site ne nomme aucune entreprise identifiable",
+            )
         title_label = page_title.strip() or "le site"
         return CoherenceResult(
             coherent=False, verified=True,

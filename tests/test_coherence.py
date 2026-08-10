@@ -128,6 +128,89 @@ def test_check_site_coherence_is_inconclusive_on_empty_page():
     assert result.verified is False
 
 
+def test_detect_country_prefers_the_most_specific_match_over_dict_order():
+    """Regression: a Senegalese company mentioning a Paris office was rejected.
+
+    detect_country returned the first hit in dictionary order — France, listed
+    before Sénégal — and the site was dropped for "pays incohérent".
+    """
+    text = ("Groupe Teranga, basé à Dakar, Sénégal. "
+            "Bureau de représentation à Paris pour l'Europe.")
+    assert detect_country(text) == "Sénégal"
+
+
+def test_detect_country_prefers_the_longest_alias():
+    # "cote d ivoire" (13) must win over any shorter alias also present.
+    assert detect_country("Abidjan, Côte d'Ivoire") == "Côte d'Ivoire"
+
+
+def test_check_site_coherence_does_not_reject_on_a_generic_homepage_title():
+    """A title naming no company is not evidence of a different company.
+
+    Real case: "Groupe Zenith Immobilier" against a homepage titled
+    "Accueil" came back coherent=False / verified=True — a rejection asserted
+    from silence, costing the lead its site, 10 hit points and any chance of
+    evidence_level = "sufficient".
+    """
+    result = check_site_coherence(
+        company="Groupe Zenith Immobilier",
+        location="Casablanca, Maroc",
+        page_title="Accueil",
+        page_text=(
+            "Bienvenue sur notre site. Nous accompagnons les investisseurs "
+            "dans leurs projets d'acquisition et de gestion de patrimoine "
+            "depuis plus de quinze ans."
+        ),
+    )
+    assert result.coherent is True
+    assert result.verified is False
+
+
+def test_check_site_coherence_finds_the_name_beyond_the_first_1500_chars():
+    """The legal name usually sits in the footer, past the old truncation."""
+    filler = "Nous accompagnons les investisseurs dans leurs projets. " * 60
+    result = check_site_coherence(
+        company="Groupe Zenith Immobilier",
+        location="Casablanca, Maroc",
+        page_title="Accueil",
+        page_text=filler + " Mentions légales — Groupe Zenith Immobilier SARL, Casablanca.",
+    )
+    assert result.coherent is True
+    assert result.verified is True
+
+
+def test_check_site_coherence_accepts_a_fully_generic_company_name_in_the_title():
+    """Regression: the rejection reason was factually false.
+
+    significant_tokens("Digital Solutions") is empty, so names_match fell back
+    to requiring identical token sets and reported that a title spelling the
+    name out word for word "ne mentionne pas « Digital Solutions »".
+    """
+    result = check_site_coherence(
+        company="Digital Solutions",
+        location="Casablanca, Maroc",
+        page_title="Accueil - Digital Solutions Maroc",
+        page_text=(
+            "Nous concevons des plateformes sur mesure pour les entreprises "
+            "marocaines, de la conception au déploiement et à la maintenance."
+        ),
+    )
+    assert result.coherent is True
+    assert result.reason is None or "ne mentionne pas" not in result.reason
+
+
+def test_generic_company_name_absent_from_the_page_is_inconclusive_not_rejected():
+    result = check_site_coherence(
+        company="Groupe Conseil",
+        location="Paris, France",
+        page_title="Rentkasa — Location de vacances",
+        page_text="Rentkasa propose des locations saisonnières en Espagne depuis 2015.",
+    )
+    assert result.coherent is True
+    assert result.verified is False
+    assert "générique" in (result.reason or "")
+
+
 def test_check_site_coherence_ignores_corrupted_apollo_location():
     # Apollo's `location` is often garbage; it must never trigger a rejection
     result = check_site_coherence(
