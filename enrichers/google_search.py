@@ -24,6 +24,7 @@ import requests
 
 import config
 from enrichers.retry import retry_api_call, AuthError
+from processors.coherence import names_match, strip_www
 
 logger = logging.getLogger(__name__)
 
@@ -101,15 +102,16 @@ def _clearbit_domain(company: str) -> Optional[str]:
         logger.error(f"Clearbit lookup error for '{company}': {e}")
         return None
 
-    if results:
-        hit = results[0]
-        domain = hit.get("domain", "")
-        returned_name = hit.get("name", "").lower()
-        input_words = [w for w in company.lower().split() if len(w) > 3]
-        if domain and input_words and any(w in returned_name for w in input_words):
+    for hit in results or []:
+        domain = (hit.get("domain") or "").strip()
+        returned_name = (hit.get("name") or "").strip()
+        if not domain:
+            continue
+        if names_match(returned_name, company):
             return f"https://{domain}"
-        elif domain:
-            logger.debug(f"Clearbit rejected '{returned_name}' for '{company}' (name mismatch)")
+        logger.debug(
+            f"Clearbit rejected '{returned_name}' ({domain}) for '{company}' (name mismatch)"
+        )
     return None
 
 
@@ -139,7 +141,7 @@ def _pick_website(urls: list[str]) -> Optional[str]:
     """Return the first URL that doesn't belong to a blocked domain."""
     for url in urls:
         try:
-            domain = urlparse(url).netloc.lower().lstrip("www.")
+            domain = strip_www(urlparse(url).netloc)
             if not any(b in domain for b in _BLOCKED_DOMAINS):
                 return url
         except Exception:
@@ -147,25 +149,25 @@ def _pick_website(urls: list[str]) -> Optional[str]:
     return None
 
 
-def _find_company_website(company: str) -> Optional[str]:
-    """Find company website: Clearbit first, DuckDuckGo as fallback."""
+def _find_company_website(company: str, location: str = "") -> Optional[str]:
+    """Find company website: Clearbit first, Serper then DuckDuckGo as fallback."""
     website = _clearbit_domain(company)
     if website:
         logger.debug(f"Clearbit domain found for '{company}': {website}")
         return website
 
-    # Fallback: Serper
+    # Location narrows the search and keeps homonymous foreign companies out.
+    locality = (location or "").strip()
+    query = f"{company} {locality} site officiel".strip() if locality else f"{company} official website"
+
     if not config._is_placeholder(config.SERPER_API_KEY):
         logger.debug(f"Clearbit miss for '{company}', trying Serper...")
-        urls = _serper_search(f"{company} official website")
-        website = _pick_website(urls)
+        website = _pick_website(_serper_search(query))
         if website:
             return website
 
-    # Last resort: DuckDuckGo
     logger.debug(f"Serper miss for '{company}', trying DuckDuckGo...")
-    urls = _ddg_search(f"{company} official website")
-    return _pick_website(urls)
+    return _pick_website(_ddg_search(query))
 
 
 # ── Main enrichment logic ──────────────────────────────────────────────────────
@@ -212,7 +214,7 @@ def find_linkedin_and_website(lead: dict) -> dict:
 
     # ── Website via Clearbit (+ DuckDuckGo fallback) ─────────────────────────
     if company:
-        lead["website"] = _find_company_website(company)
+        lead["website"] = _find_company_website(company, lead.get("location", ""))
         if lead["website"]:
             logger.debug(f"Website found for {company}: {lead['website']}")
         else:
