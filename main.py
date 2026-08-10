@@ -145,8 +145,8 @@ async def run_pipeline(args):
     # ── Step 5: Evidence collection (hit leads only) ──────────────────────────
     if not args.skip_gpt and hit_leads:
         logger.info(f"Step 5 — Evidence collection on {len(hit_leads)} hit leads...")
-        from enrichers.evidence_collector import collect_evidence
-        hit_leads, active_providers = collect_evidence(hit_leads)
+        from enrichers.evidence_collector import collect_evidence_async
+        hit_leads, active_providers = await collect_evidence_async(hit_leads)
 
         logger.info("Step 6 — Fact extraction...")
         from enrichers.fact_extractor import extract_leads_facts

@@ -136,7 +136,7 @@ def write_leads_angles(leads: list[dict], enrich_instructions: str = "", registr
     if config._is_placeholder(config.ANTHROPIC_API_KEY):
         logger.error("ANTHROPIC_API_KEY not set. Skipping angle writing.")
         if registry:
-            registry.record(StepOutcome("anthropic", "skipped", "clé API absente", 0))
+            registry.record(StepOutcome("anthropic_angles", "skipped", "clé API absente", 0))
         return leads
 
     written = 0
@@ -157,5 +157,5 @@ def write_leads_angles(leads: list[dict], enrich_instructions: str = "", registr
 
     logger.info(f"Angle writing complete. {written}/{total} written.")
     if registry:
-        registry.record(StepOutcome("anthropic", "degraded" if _writer_disabled else "ok", None, written))
+        registry.record(StepOutcome("anthropic_angles", "degraded" if _writer_disabled else "ok", None, written))
     return leads

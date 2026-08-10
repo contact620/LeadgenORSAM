@@ -90,7 +90,7 @@ STEP_PATTERNS = [
     (2, re.compile(r"Step 2|Scraping Apollo|apollo|page \d+", re.I)),
     (3, re.compile(r"Step 3|Google enrichment|Dropcontact|dropcontact|batch \d+|Hunter\.io|email verification", re.I)),
     (4, re.compile(r"Step 4|hit score|Hit score complete", re.I)),
-    (5, re.compile(r"Step 5|Evidence|Perplexity|Scraping hit lead|website", re.I)),
+    (5, re.compile(r"Step 5|Evidence|Perplexity|Scraping hit lead", re.I)),
     (6, re.compile(r"Step 6|Fact extraction", re.I)),
     (7, re.compile(r"Step 7|ICP scoring", re.I)),
     (8, re.compile(r"Step 8|Angle writing", re.I)),
@@ -396,9 +396,10 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
                 _summary_client = _anth.Anthropic(api_key=pipeline_config.ANTHROPIC_API_KEY)
 
                 # Build context for summary. icp_tier is None for every lead
-                # while ICP scoring is inert (see Step 5 above) — an all-None
-                # column must never be reported as "0 relevant leads found",
-                # which is what a naive count against an unscored run would say.
+                # when Steps 5-8 were skipped (--skip-gpt or no hit leads) —
+                # an all-None column must never be reported as "0 relevant
+                # leads found", which is what a naive count against an
+                # unscored run would say.
                 icp_scored = any(l.get("icp_tier") for l in leads)
                 hot_count = sum(1 for l in leads if l.get("icp_tier") == "hot")
                 warm_count = sum(1 for l in leads if l.get("icp_tier") == "warm")
@@ -422,7 +423,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
                     )
                 else:
                     data_lines.append(
-                        "- Scoring ICP : non calculé sur ce run (déplacé après la collecte de preuves)"
+                        "- Scoring ICP : non calculé sur ce run (aucun lead qualifié à scorer)"
                     )
                 data_lines += [
                     f"- Taux d'emails trouvés : {stats.email_pct}%",

@@ -245,7 +245,7 @@ def extract_leads_facts(
             lead["facts_json"] = json.dumps(_EMPTY_FACTS, ensure_ascii=False)
             lead["evidence_level"] = "none"
         if registry:
-            registry.record(StepOutcome("anthropic", "skipped", "clé API absente", 0))
+            registry.record(StepOutcome("anthropic_facts", "skipped", "clé API absente", 0))
         return leads
 
     total = len(leads)
@@ -285,5 +285,5 @@ def extract_leads_facts(
     logger.info(f"Fact extraction complete. {extracted}/{total} identities confirmed.")
     if registry:
         status = "degraded" if _extractor_disabled else "ok"
-        registry.record(StepOutcome("anthropic", status, None, extracted))
+        registry.record(StepOutcome("anthropic_facts", status, None, extracted))
     return leads
