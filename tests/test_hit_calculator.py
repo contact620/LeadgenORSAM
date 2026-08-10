@@ -3,11 +3,14 @@ from processors.hit_calculator import calculate_hit_score
 
 
 def test_incoherent_website_does_not_earn_points():
+    # website is set but was rejected by the coherence check: the 10 points
+    # must not be awarded. With website=None this test would pass even
+    # without the coherence guard, proving nothing.
     lead = {
         "email": None,
         "linkedin_url": "https://linkedin.com/in/x",
         "phone": None,
-        "website": None,
+        "website": "https://rentkasa.com",
         "website_coherent": False,
     }
     calculate_hit_score(lead)
