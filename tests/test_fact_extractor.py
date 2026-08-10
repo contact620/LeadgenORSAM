@@ -47,3 +47,22 @@ def test_unparseable_headcount_is_dropped():
 
 def test_valid_sources_are_the_three_expected():
     assert VALID_SOURCES == frozenset({"website", "linkedin", "perplexity"})
+
+
+def test_non_dict_input_returns_complete_shape():
+    for bad in ([], "texte", 42, True, None):
+        facts = sanitize_facts(bad)
+        assert facts["identite_confirmee"] is False
+        assert facts["est_concurrent"] is False
+        assert facts["signaux"] == []
+        assert facts["secteur"] is None
+
+
+def test_non_list_signaux_is_ignored():
+    facts = sanitize_facts({"signaux": "levée de fonds"})
+    assert facts["signaux"] == []
+
+
+def test_negative_headcount_is_dropped():
+    raw = {"effectif": {"value": -5, "source": "perplexity"}}
+    assert sanitize_facts(raw)["effectif"] is None

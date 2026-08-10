@@ -129,16 +129,30 @@ def _as_int(fact: Optional[dict]) -> Optional[dict]:
     if fact is None:
         return None
     try:
-        return {"value": int(str(fact["value"]).strip()), "source": fact["source"]}
+        value = int(str(fact["value"]).strip())
     except (ValueError, TypeError):
         return None
+    if value < 0:
+        return None
+    return {"value": value, "source": fact["source"]}
 
 
 def sanitize_facts(raw: dict) -> dict:
-    """Drop every unsourced or malformed fact. Always returns a complete shape."""
-    raw = raw or {}
+    """Drop every unsourced or malformed fact. Always returns a complete shape.
+
+    Guarantee: never raises and always returns the full 7-key shape, whatever
+    the input — including a non-dict `raw` (list, string, int, bool, None) or
+    a non-list `signaux`. This is the enforcement point for "no source, no
+    fact"; callers (present and future, see task 12) must be able to rely on
+    it without wrapping it in their own try/except.
+    """
+    if not isinstance(raw, dict):
+        raw = {}
+    raw_signals = raw.get("signaux")
+    if not isinstance(raw_signals, list):
+        raw_signals = []
     signals = []
-    for signal in raw.get("signaux") or []:
+    for signal in raw_signals:
         if not isinstance(signal, dict):
             continue
         if signal.get("source") not in VALID_SOURCES:
