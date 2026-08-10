@@ -133,31 +133,19 @@ async def run_pipeline(args):
     logger.info("Step 4 — Calculating hit scores...")
     hit_leads, nohit_leads = score_all_leads(leads)
 
-    # ── Step 5: ICP scoring (hit leads only) ───────────────────────────────────
-    if not args.skip_gpt and hit_leads:
-        logger.info(f"Step 5 — ICP scoring on {len(hit_leads)} hit leads...")
-        # Lazy import: score_leads_icp is scheduled for removal in task 12
-        # (replaced by processors.icp_scorer.apply_scores once the pipeline
-        # is reordered to collect facts/evidence before scoring). Keeping
-        # this import local — instead of at module level — keeps `import
-        # main` safe on this intermediate commit without pre-empting that
-        # rewiring.
-        from processors.icp_scorer import score_leads_icp
-        hit_leads = score_leads_icp(hit_leads)
-        icp_hot = sum(1 for l in hit_leads if l.get("icp_tier") == "hot")
-        icp_warm = sum(1 for l in hit_leads if l.get("icp_tier") == "warm")
-        icp_cold = sum(1 for l in hit_leads if l.get("icp_tier") == "cold")
-        logger.info(f"Step 5 complete: {icp_hot} hot, {icp_warm} warm, {icp_cold} cold")
-    else:
-        if args.skip_gpt:
-            logger.info("Step 5 — Skipped (--skip-gpt flag set)")
-        else:
-            logger.info("Step 5 — Skipped (no hit leads)")
-        for lead in hit_leads:
-            lead.setdefault("icp_score", None)
-            lead.setdefault("icp_tier", None)
-            lead.setdefault("icp_rationale", None)
-            lead.setdefault("icp_scores_detail", None)
+    # ── Step 5: ICP scoring ───────────────────────────────────────────────────
+    # Deliberately inert until task 12 reorders the pipeline: scoring now runs
+    # AFTER evidence collection, and no evidence exists at this point. Emitting
+    # verdicts here would label every lead from an empty fact set.
+    for lead in hit_leads:
+        lead.setdefault("icp_score", None)
+        lead.setdefault("icp_tier", None)
+        lead.setdefault("icp_rationale", None)
+        lead.setdefault("icp_scores_detail", None)
+        lead.setdefault("disqualification_reason", None)
+        lead.setdefault("evidence_level", None)
+        lead.setdefault("evidence_verified", None)
+    logger.info("Step 5 — ICP scoring déplacé après la collecte de preuves (tâche 12)")
 
     # ── Save intermediate CSV (all leads, before AI enrichment) ───────────────
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
