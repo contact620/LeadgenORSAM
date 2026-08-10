@@ -68,3 +68,75 @@ def test_normalize_label_folds_curly_apostrophes():
 def test_country_zone_matches_curly_apostrophe_variant():
     rules = load_rules()
     assert rules.country_zone("Côte d’Ivoire") == "afrique_francophone"
+
+
+# ── Country canonicalization ────────────────────────────────────────────────
+
+@pytest.mark.parametrize("label,canonical", [
+    ("Morocco", "Maroc"),
+    ("morocco", "Maroc"),
+    ("Maroc (Casablanca)", "Maroc"),
+    ("Casablanca", "Maroc"),
+    ("Tunisia", "Tunisie"),
+    ("Ivory Coast", "Côte d'Ivoire"),
+    ("Belgium", "Belgique"),
+    ("Quebec", "Canada"),
+    ("United States", "États-Unis"),
+])
+def test_canonical_country_resolves_common_labels(label, canonical):
+    assert load_rules().canonical_country(label) == canonical
+
+
+def test_canonical_country_returns_none_for_an_unknown_label():
+    """None must read as "unknown", never as "out of zone"."""
+    rules = load_rules()
+    assert rules.canonical_country("Zzz") is None
+    assert rules.canonical_country("") is None
+    assert rules.canonical_country("   ") is None
+
+
+def test_canonical_country_prefers_the_longest_alias():
+    # "congo" is an alias of Congo and a substring of the RDC aliases;
+    # dictionary order must not decide this.
+    rules = load_rules()
+    assert rules.canonical_country("Democratic Republic of the Congo") == "RDC"
+    assert rules.canonical_country("Congo-Brazzaville") == "Congo"
+
+
+def test_alias_matching_respects_word_boundaries():
+    # "Niger" is in zone, "Nigeria" is not: a substring match would merge them.
+    rules = load_rules()
+    assert rules.canonical_country("Nigeria") == "Nigeria"
+    assert rules.canonical_country("Niger") == "Niger"
+    assert rules.country_zone("Niger") == "afrique_francophone"
+    assert rules.country_zone("Nigeria") is None
+
+
+def test_every_zone_country_is_recognised():
+    """A zone country that canonicalization cannot recognise would be scored
+    for its zone but reported as unknown by canonical_country — the two must
+    never disagree."""
+    rules = load_rules()
+    for zone, countries in rules.zone_countries.items():
+        for country in countries:
+            assert rules.canonical_country(country) is not None, country
+            assert rules.country_zone(country) == zone, country
+
+
+def test_missing_rules_file_names_the_expected_path(tmp_path):
+    missing = tmp_path / "nope" / "icp_rules.json"
+    with pytest.raises(FileNotFoundError, match="icp_rules:"):
+        load_rules(str(missing))
+
+
+def test_malformed_rules_file_is_reported_clearly(tmp_path):
+    broken = tmp_path / "broken.json"
+    broken.write_text("{ not json", encoding="utf-8")
+    with pytest.raises(ValueError, match="icp_rules:"):
+        load_rules(str(broken))
+
+
+def test_competitor_keywords_no_longer_exist():
+    """Dead config invites the belief that something reads it. Nothing did."""
+    rules = load_rules()
+    assert not hasattr(rules, "competitor_keywords")

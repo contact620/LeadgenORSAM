@@ -57,9 +57,13 @@ En cas de doute : true.
 
 - "pays" : pays d'opération principal, en français ("Maroc", "France", "Sénégal"...)
 - "secteur" : secteur d'activité en français, en deux mots maximum
-- "effectif" : nombre d'employés, entier. null si aucune source ne le donne.
-- "est_concurrent" : true si l'entreprise est une agence de communication,
-  de marketing digital, de création ou de développement web.
+- "effectif" : nombre d'employés, entier strictement positif. null si aucune
+  source ne le donne — n'écris jamais 0 pour dire « non communiqué ».
+- "est_concurrent" : fait sourcé comme les autres. Mets
+  {"value": true, "source": "..."} uniquement si une source décrit l'entreprise
+  comme une agence de communication, de marketing digital, de création ou de
+  développement web. Le nom de l'entreprise n'est pas une source. Si aucune
+  source ne le dit, mets null.
 - "maturite_digitale" : entier de 1 à 10 si une source l'évalue, sinon null
 - "signaux" : événements datés des 12 derniers mois (recrutement, levée de fonds,
   lancement, expansion, refonte). Liste vide si aucune source n'en mentionne.
@@ -72,7 +76,7 @@ Réponds UNIQUEMENT par ce JSON, sans markdown ni commentaire :
   "pays": {"value": "Maroc", "source": "website"},
   "secteur": {"value": "immobilier", "source": "website"},
   "effectif": {"value": 45, "source": "perplexity"},
-  "est_concurrent": false,
+  "est_concurrent": null,
   "maturite_digitale": {"value": 4, "source": "perplexity"},
   "signaux": [
     {"type": "recrutement_marketing", "date": "2026-04",
@@ -101,7 +105,7 @@ _EMPTY_FACTS = {
     "pays": None,
     "secteur": None,
     "effectif": None,
-    "est_concurrent": False,
+    "est_concurrent": None,
     "maturite_digitale": None,
     "signaux": [],
 }
@@ -126,15 +130,41 @@ def _sourced(fact) -> Optional[dict]:
 
 
 def _as_int(fact: Optional[dict]) -> Optional[dict]:
+    """Coerce a sourced fact's value to a strictly positive int, or drop it.
+
+    Zero is dropped, not kept: no source ever reports a company with zero
+    employees or a digital maturity of zero. A model rendering "effectif non
+    communiqué" as 0 would otherwise disqualify the lead for good as a
+    "micro-entreprise" — a definitive verdict built on a missing value.
+    """
     if fact is None:
         return None
     try:
         value = int(str(fact["value"]).strip())
     except (ValueError, TypeError):
         return None
-    if value < 0:
+    if value <= 0:
         return None
     return {"value": value, "source": fact["source"]}
+
+
+def _as_competitor(fact) -> Optional[dict]:
+    """Keep est_concurrent only when a source backs the claim, and only if true.
+
+    "Concurrent direct" is the one verdict that disqualifies a prospect at any
+    evidence level, so it is exactly the claim that must not be assertable
+    from the company name alone. A bare boolean carries no source and is
+    dropped here; a sourced `false` carries no consequence and is dropped too,
+    keeping the field's only meaning "a source says this is a competitor".
+    """
+    sourced = _sourced(fact)
+    if sourced is None:
+        return None
+    value = sourced["value"]
+    is_true = value is True or str(value).strip().lower() in ("true", "1", "yes", "oui")
+    if not is_true:
+        return None
+    return {"value": True, "source": sourced["source"]}
 
 
 def sanitize_facts(raw: dict) -> dict:
@@ -169,8 +199,7 @@ def sanitize_facts(raw: dict) -> dict:
         "pays": _sourced(raw.get("pays")),
         "secteur": _sourced(raw.get("secteur")),
         "effectif": _as_int(_sourced(raw.get("effectif"))),
-        "est_concurrent": str(raw.get("est_concurrent", "")).strip().lower() in ("true", "1", "yes")
-                          or raw.get("est_concurrent") is True,
+        "est_concurrent": _as_competitor(raw.get("est_concurrent")),
         "maturite_digitale": _as_int(_sourced(raw.get("maturite_digitale"))),
         "signaux": signals,
     }

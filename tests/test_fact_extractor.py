@@ -1,4 +1,14 @@
-from enrichers.fact_extractor import VALID_SOURCES, sanitize_facts
+from unittest.mock import patch
+
+import enrichers.fact_extractor as fx
+from api.provider_status import ProviderRegistry
+from enrichers.fact_extractor import (
+    VALID_SOURCES,
+    _EMPTY_FACTS,
+    extract_leads_facts,
+    sanitize_facts,
+)
+from enrichers.retry import AuthError
 
 
 def test_unsourced_scalar_fact_is_dropped():
@@ -30,9 +40,37 @@ def test_missing_identity_defaults_to_false():
     assert sanitize_facts({})["identite_confirmee"] is False
 
 
-def test_competitor_flag_is_coerced_to_bool():
-    assert sanitize_facts({"est_concurrent": "true"})["est_concurrent"] is True
-    assert sanitize_facts({})["est_concurrent"] is False
+def test_sourced_competitor_flag_survives_as_a_sourced_fact():
+    raw = {"est_concurrent": {"value": True, "source": "website"}}
+    assert sanitize_facts(raw)["est_concurrent"] == {"value": True, "source": "website"}
+
+
+def test_sourced_competitor_flag_accepts_a_string_true():
+    raw = {"est_concurrent": {"value": "true", "source": "perplexity"}}
+    assert sanitize_facts(raw)["est_concurrent"] == {"value": True, "source": "perplexity"}
+
+
+def test_bare_competitor_boolean_is_dropped():
+    """A source is required here as for every other fact.
+
+    est_concurrent is the only disqualification that applies even at
+    evidence_level = "none", so a bare boolean the model can assert from the
+    company name alone must not reach the scorer.
+    """
+    assert sanitize_facts({"est_concurrent": True})["est_concurrent"] is None
+    assert sanitize_facts({"est_concurrent": "true"})["est_concurrent"] is None
+    assert sanitize_facts({})["est_concurrent"] is None
+
+
+def test_competitor_with_unknown_source_is_dropped():
+    raw = {"est_concurrent": {"value": True, "source": "intuition"}}
+    assert sanitize_facts(raw)["est_concurrent"] is None
+
+
+def test_sourced_competitor_false_is_dropped():
+    """A sourced "not a competitor" carries no consequence; only True does."""
+    raw = {"est_concurrent": {"value": False, "source": "website"}}
+    assert sanitize_facts(raw)["est_concurrent"] is None
 
 
 def test_headcount_string_is_coerced_to_int():
@@ -53,7 +91,7 @@ def test_non_dict_input_returns_complete_shape():
     for bad in ([], "texte", 42, True, None):
         facts = sanitize_facts(bad)
         assert facts["identite_confirmee"] is False
-        assert facts["est_concurrent"] is False
+        assert facts["est_concurrent"] is None
         assert facts["signaux"] == []
         assert facts["secteur"] is None
 
@@ -66,3 +104,106 @@ def test_non_list_signaux_is_ignored():
 def test_negative_headcount_is_dropped():
     raw = {"effectif": {"value": -5, "source": "perplexity"}}
     assert sanitize_facts(raw)["effectif"] is None
+
+
+def test_zero_headcount_is_treated_as_unsourced():
+    """A model rendering "effectif non communiqué" as 0 must not disqualify.
+
+    Kept as a value, 0 falls under size_disqualify_below and produces
+    "micro-entreprise — 0 employés" — a definitive verdict built on a missing
+    number.
+    """
+    raw = {"effectif": {"value": 0, "source": "perplexity"}}
+    assert sanitize_facts(raw)["effectif"] is None
+
+
+def test_zero_digital_maturity_is_treated_as_unsourced():
+    # The maturity scale runs 1-10; a 0 is a missing value, not a reading.
+    raw = {"maturite_digitale": {"value": 0, "source": "perplexity"}}
+    assert sanitize_facts(raw)["maturite_digitale"] is None
+
+
+# ── Blast radius of a single auth failure (the riskiest path in the branch) ──
+
+def _leads(n):
+    return [
+        {"first_name": f"A{i}", "last_name": "B", "company": "Acme",
+         "job_title": "CEO", "location": "Casablanca, Maroc",
+         "website_text": "x" * 500, "website_coherent": True}
+        for i in range(n)
+    ]
+
+
+def test_auth_failure_leaves_every_remaining_lead_in_a_complete_shape():
+    """One AuthError disables extraction for the whole run.
+
+    Every remaining lead must still come out with the full fact shape and
+    evidence_level = "none" — a missing key downstream would crash the scorer,
+    and a stale evidence_level would let an unevidenced lead keep a score.
+    """
+    fx._reset_state()
+    reg = ProviderRegistry()
+    leads = _leads(4)
+
+    with patch("enrichers.fact_extractor.config.ANTHROPIC_API_KEY", "sk-test"), \
+         patch("enrichers.fact_extractor.retry_api_call",
+               side_effect=AuthError("401 invalid x-api-key")), \
+         patch("enrichers.fact_extractor.time.sleep", return_value=None):
+        try:
+            result = extract_leads_facts(leads, frozenset({"website"}), registry=reg)
+        finally:
+            fx._reset_state()
+
+    assert len(result) == 4
+    for lead in result:
+        assert set(lead["facts"].keys()) == set(_EMPTY_FACTS.keys())
+        assert lead["facts"]["identite_confirmee"] is False
+        assert lead["facts"]["est_concurrent"] is None
+        assert lead["evidence_level"] == "none"
+        assert lead["facts_json"]
+
+
+def test_auth_failure_is_recorded_as_degraded_not_ok():
+    """The run scores the whole portfolio cold; it must not report as healthy."""
+    fx._reset_state()
+    reg = ProviderRegistry()
+
+    with patch("enrichers.fact_extractor.config.ANTHROPIC_API_KEY", "sk-test"), \
+         patch("enrichers.fact_extractor.retry_api_call",
+               side_effect=AuthError("401 invalid x-api-key")), \
+         patch("enrichers.fact_extractor.time.sleep", return_value=None):
+        try:
+            extract_leads_facts(_leads(3), frozenset({"website"}), registry=reg)
+        finally:
+            fx._reset_state()
+
+    assert reg.to_dict()["anthropic_facts"]["status"] == "degraded"
+
+
+def test_auth_failure_stops_calling_the_api_after_the_first_lead():
+    """_extractor_disabled must short-circuit, not retry 200 times."""
+    fx._reset_state()
+    calls = []
+
+    def _record(*args, **kwargs):
+        calls.append(1)
+        raise AuthError("401")
+
+    with patch("enrichers.fact_extractor.config.ANTHROPIC_API_KEY", "sk-test"), \
+         patch("enrichers.fact_extractor.retry_api_call", side_effect=_record), \
+         patch("enrichers.fact_extractor.time.sleep", return_value=None):
+        try:
+            extract_leads_facts(_leads(10), frozenset({"website"}), registry=ProviderRegistry())
+        finally:
+            fx._reset_state()
+
+    assert len(calls) == 1
+
+
+def test_missing_api_key_is_recorded_as_skipped():
+    fx._reset_state()
+    reg = ProviderRegistry()
+    with patch("enrichers.fact_extractor.config.ANTHROPIC_API_KEY", ""):
+        leads = extract_leads_facts(_leads(2), frozenset({"website"}), registry=reg)
+    assert reg.to_dict()["anthropic_facts"]["status"] == "skipped"
+    assert all(l["evidence_level"] == "none" for l in leads)

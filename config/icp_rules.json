@@ -10,6 +10,59 @@
   ],
   "sector_points": { "high_value": 100, "other": 50, "unknown": 0 },
 
+  "country_aliases": {
+    "Maroc": ["morocco", "royaume du maroc", "kingdom of morocco", "casablanca", "rabat", "marrakech", "tanger", "tangier", "fes", "agadir"],
+    "Algérie": ["algeria", "alger", "algiers", "oran"],
+    "Tunisie": ["tunisia", "tunis", "sfax"],
+    "Sénégal": ["senegal", "dakar"],
+    "Côte d'Ivoire": ["cote d ivoire", "ivory coast", "abidjan", "yamoussoukro"],
+    "Cameroun": ["cameroon", "douala", "yaounde"],
+    "Gabon": ["gabon", "libreville"],
+    "Bénin": ["benin", "cotonou"],
+    "Burkina Faso": ["burkina faso", "burkina", "ouagadougou"],
+    "Mali": ["mali", "bamako"],
+    "Niger": ["niger", "niamey"],
+    "Togo": ["togo", "lome"],
+    "Guinée": ["guinee", "guinea", "conakry"],
+    "Congo": ["congo brazzaville", "republique du congo", "republic of the congo", "brazzaville"],
+    "RDC": ["rdc", "drc", "republique democratique du congo", "democratic republic of the congo", "congo kinshasa", "kinshasa"],
+    "Madagascar": ["madagascar", "antananarivo"],
+    "Mauritanie": ["mauritania", "nouakchott"],
+    "Tchad": ["chad", "ndjamena"],
+    "France": ["france", "paris", "lyon", "marseille", "bordeaux", "lille", "toulouse", "nantes"],
+    "Belgique": ["belgium", "bruxelles", "brussels", "anvers", "antwerp"],
+    "Suisse": ["switzerland", "geneve", "geneva", "zurich", "lausanne"],
+    "Luxembourg": ["luxembourg"],
+    "Canada": ["canada", "quebec", "montreal", "toronto", "ottawa"],
+
+    "Espagne": ["spain", "madrid", "barcelone", "barcelona", "valence"],
+    "Portugal": ["portugal", "lisbonne", "lisbon", "porto"],
+    "Italie": ["italy", "italia", "rome", "milan", "milano"],
+    "Allemagne": ["germany", "deutschland", "berlin", "munich", "hambourg"],
+    "Royaume-Uni": ["royaume uni", "united kingdom", "angleterre", "england", "london", "londres", "manchester"],
+    "Irlande": ["ireland", "dublin"],
+    "Pays-Bas": ["pays bas", "netherlands", "holland", "amsterdam", "rotterdam"],
+    "Pologne": ["poland", "polska", "varsovie", "warsaw"],
+    "Roumanie": ["romania", "bucarest", "bucharest"],
+    "États-Unis": ["etats unis", "united states", "usa", "u s a", "new york", "california", "californie", "texas", "chicago", "san francisco"],
+    "Mexique": ["mexico", "mexique"],
+    "Brésil": ["brazil", "bresil", "sao paulo", "rio de janeiro"],
+    "Nigeria": ["nigeria", "lagos", "abuja"],
+    "Ghana": ["ghana", "accra"],
+    "Kenya": ["kenya", "nairobi"],
+    "Égypte": ["egypt", "egypte", "le caire", "cairo"],
+    "Afrique du Sud": ["afrique du sud", "south africa", "johannesburg", "le cap", "cape town"],
+    "Émirats arabes unis": ["emirats arabes unis", "united arab emirates", "uae", "dubai", "abu dhabi"],
+    "Arabie saoudite": ["arabie saoudite", "saudi arabia", "riyad", "riyadh", "djeddah", "jeddah"],
+    "Qatar": ["qatar", "doha"],
+    "Turquie": ["turkey", "turquie", "turkiye", "istanbul", "ankara"],
+    "Inde": ["india", "inde", "mumbai", "bangalore", "new delhi"],
+    "Chine": ["china", "chine", "pekin", "beijing", "shanghai", "shenzhen"],
+    "Japon": ["japan", "japon", "tokyo"],
+    "Australie": ["australia", "australie", "sydney", "melbourne"],
+    "Russie": ["russia", "russie", "moscou", "moscow"]
+  },
+
   "zone_countries": {
     "maroc": ["Maroc"],
     "afrique_francophone": [
@@ -49,10 +102,5 @@
 
   "tier_hot_min": 70,
   "tier_warm_min": 40,
-  "unverified_score_cap": 39,
-
-  "competitor_keywords": [
-    "agence de communication", "communication digitale", "marketing digital",
-    "agence web", "agence creative", "regie publicitaire", "agence seo"
-  ]
+  "unverified_score_cap": 39
 }

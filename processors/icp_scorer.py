@@ -33,10 +33,19 @@ class IcpResult:
 # ── Fact readers ─────────────────────────────────────────────────────────────
 
 def _value(fact) -> object:
-    """Read the value of a sourced fact, or None when the fact is absent."""
-    if isinstance(fact, dict):
-        return fact.get("value")
-    return None
+    """Read the value of a sourced fact, or None when the fact is absent.
+
+    The source is required here too, not only in sanitize_facts. Both ends
+    enforcing "no source, no fact" costs one condition and means a caller that
+    hands us raw model output — a future step, a replayed facts_json — cannot
+    smuggle in an unsourced claim.
+    """
+    if not isinstance(fact, dict):
+        return None
+    source = fact.get("source")
+    if not isinstance(source, str) or not source.strip():
+        return None
+    return fact.get("value")
 
 
 def _months_between(older: Optional[str], reference: date) -> Optional[int]:
@@ -148,9 +157,16 @@ def _disqualification_reason(facts: dict, rules: IcpRules) -> Optional[str]:
             if normalize_label(excluded) in normalized:
                 return f"secteur exclu — {sector}"
 
+    # Geography disqualifies only a country we actually recognise. An
+    # unrecognised label ("Zzz", a corrupted extraction) tells us nothing
+    # about where the company operates, and "hors zone géographique" is a
+    # claim we would be unable to substantiate — the same principle applied
+    # to every other rule here.
     country = _value(facts.get("pays"))
-    if country and rules.country_zone(str(country)) is None:
-        return f"hors zone géographique — {country}"
+    if country:
+        canonical = rules.canonical_country(str(country))
+        if canonical is not None and rules.country_zone(canonical) is None:
+            return f"hors zone géographique — {canonical}"
 
     return None
 
@@ -184,10 +200,12 @@ def score_lead(
     verified = evidence_level == "sufficient"
 
     # 1. A sourced competitor is disqualified whatever the evidence level:
-    #    the fact alone settles it. Evidence still gates the *score* though —
-    #    an unverified competitor must respect the same cap as any other
-    #    unverified lead, not carry a full, unchecked score.
-    if facts.get("est_concurrent") is True:
+    #    the fact alone settles it. "Sourced" is load-bearing — an unsourced
+    #    est_concurrent is dropped by sanitize_facts, so a model cannot
+    #    disqualify a prospect on the strength of its company name alone.
+    #    Evidence still gates the *score* though: an unverified competitor
+    #    must respect the same cap as any other unverified lead.
+    if _value(facts.get("est_concurrent")) is True:
         competitor_score = raw_score if verified else min(raw_score, rules.unverified_score_cap)
         return IcpResult(
             icp_score=competitor_score, icp_tier="disqualified",
