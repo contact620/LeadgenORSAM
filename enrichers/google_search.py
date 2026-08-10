@@ -195,7 +195,7 @@ def _light_page_text(html: str) -> tuple[str, str]:
     return title, body[:MAX_PAGE_TEXT_CHARS]
 
 
-def verify_website(url: str, company: str, location: str) -> CoherenceResult:
+def verify_website(url: str, company: str) -> CoherenceResult:
     """
     Cheap homepage fetch to confirm the domain belongs to the prospect's company.
 
@@ -217,7 +217,7 @@ def verify_website(url: str, company: str, location: str) -> CoherenceResult:
         logger.debug(f"Light website check failed for {url}: {e}")
         return CoherenceResult(coherent=True, verified=False, reason="site injoignable")
 
-    return check_site_coherence(company, location, title, text)
+    return check_site_coherence(company, title, text)
 
 
 # ── Main enrichment logic ──────────────────────────────────────────────────────
@@ -268,7 +268,7 @@ def find_linkedin_and_website(lead: dict) -> dict:
     if company:
         candidate = _find_company_website(company, lead.get("location", ""))
         if candidate:
-            check = verify_website(candidate, company, lead.get("location", ""))
+            check = verify_website(candidate, company)
             lead["website_coherent"] = check.coherent
             lead["website_check_reason"] = check.reason
             if check.coherent:

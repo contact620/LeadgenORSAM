@@ -61,14 +61,14 @@ def test_verify_website_rejects_unrelated_page():
             return None
 
     with patch("enrichers.google_search.requests.get", return_value=_Resp()):
-        result = verify_website("https://rentkasa.com", "Houzing", "Paris, France")
+        result = verify_website("https://rentkasa.com", "Houzing")
     assert result.coherent is False
 
 
 def test_verify_website_is_inconclusive_when_fetch_fails():
     from enrichers.google_search import verify_website
     with patch("enrichers.google_search.requests.get", side_effect=OSError("boom")):
-        result = verify_website("https://acme.ma", "Acme", "Casablanca, Maroc")
+        result = verify_website("https://acme.ma", "Acme")
     assert result.coherent is True
     assert result.verified is False
 
@@ -91,8 +91,7 @@ def test_verify_website_reads_the_whole_page_not_just_the_first_1500_chars():
             return None
 
     with patch("enrichers.google_search.requests.get", return_value=_Resp()):
-        result = verify_website("https://zenith.ma", "Groupe Zenith Immobilier",
-                                "Casablanca, Maroc")
+        result = verify_website("https://zenith.ma", "Groupe Zenith Immobilier")
     assert result.coherent is True
     assert result.verified is True
 
