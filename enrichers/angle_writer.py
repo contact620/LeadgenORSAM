@@ -135,6 +135,8 @@ def write_leads_angles(leads: list[dict], enrich_instructions: str = "", registr
 
     if config._is_placeholder(config.ANTHROPIC_API_KEY):
         logger.error("ANTHROPIC_API_KEY not set. Skipping angle writing.")
+        if registry:
+            registry.record(StepOutcome("anthropic", "skipped", "clé API absente", 0))
         return leads
 
     written = 0
