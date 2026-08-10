@@ -22,6 +22,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import config as pipeline_config
 from api.models import JobResult, JobStats, ProgressEvent
+# Imported at module level, not inside the run functions: the `except
+# ProviderFailure` clauses below must resolve the name even when the failure
+# happens before the function body reaches its own imports.
+from api.provider_status import ProviderFailure, ProviderRegistry
 from lead_schema import CSV_COLUMNS, ENRICH_FIELDS
 
 # ── In-memory job store ────────────────────────────────────────────────────────
@@ -171,6 +175,114 @@ class _QueueLogHandler(logging.Handler):
         asyncio.run_coroutine_threadsafe(self._queue.put(payload), self._loop)
 
 
+# ── Executive summary prompt ──────────────────────────────────────────────────
+
+# Providers whose degradation changes how the run's numbers should be read.
+_PROVIDER_LABELS = {
+    "dropcontact": "Dropcontact (emails/téléphones)",
+    "hunter": "Hunter.io (vérification des emails)",
+    "serper": "Serper (recherche LinkedIn)",
+    "website": "Scraping des sites web",
+    "perplexity": "Perplexity (signaux business)",
+    "anthropic_facts": "Extraction de faits",
+    "anthropic_angles": "Rédaction des angles",
+}
+
+
+def _build_summary_prompt(
+    leads: list[dict],
+    hit_count: int,
+    nohit_count: int,
+    stats: JobStats,
+    enrich_instructions: str = "",
+    provider_status: Optional[dict] = None,
+) -> str:
+    """Build the executive-summary prompt from a finished run's numbers.
+
+    Pure function, no I/O: the summary is the one artefact the operator reads
+    before anything else, and a portfolio that silently loses thirty
+    disqualified leads out of fifty is a reporting bug worth pinning in tests.
+
+    Three things the model must never have to infer:
+      - disqualified leads exist and are counted (they are neither hot, warm
+        nor cold, so a three-tier breakdown makes them vanish);
+      - unverified leads are unverified, not merely low-scoring;
+      - a degraded provider makes the numbers themselves unreliable.
+    """
+    total = len(leads)
+    icp_scored = any(l.get("icp_tier") for l in leads)
+    top_companies = [l.get("company", "?") for l in leads if l.get("icp_tier") == "hot"][:10]
+    unverified = sum(1 for l in leads if l.get("evidence_verified") is False)
+
+    data_lines = [
+        f"- {total} prospects analysés",
+        f"- {hit_count} leads qualifiés (hit score >= seuil)",
+        f"- {nohit_count} non qualifiés",
+    ]
+    if icp_scored:
+        data_lines.append(
+            f"- ICP : {stats.icp_hot_count} haute pertinence, "
+            f"{stats.icp_warm_count} pertinence moyenne, "
+            f"{stats.icp_cold_count} faible pertinence, "
+            f"{stats.icp_disqualified_count} disqualifiés"
+        )
+        data_lines.append(
+            f"- {unverified} leads non vérifiés (preuves insuffisantes, "
+            f"qualification manuelle nécessaire)"
+        )
+    else:
+        data_lines.append(
+            "- Scoring ICP : non calculé sur ce run (aucun lead qualifié à scorer)"
+        )
+    data_lines += [
+        f"- Taux d'emails trouvés : {stats.email_pct}%",
+        f"- Taux LinkedIn trouvés : {stats.linkedin_pct}%",
+        f"- Score moyen : {stats.avg_score}/100",
+    ]
+    if icp_scored:
+        data_lines.append(
+            f"- Top entreprises haute pertinence : "
+            f"{', '.join(top_companies[:5]) if top_companies else 'aucune'}"
+        )
+
+    impaired = [
+        (name, entry) for name, entry in (provider_status or {}).items()
+        if isinstance(entry, dict) and entry.get("status") in ("failed", "degraded")
+    ]
+    if impaired:
+        described = "; ".join(
+            f"{_PROVIDER_LABELS.get(name, name)} — "
+            f"{'en échec' if entry.get('status') == 'failed' else 'dégradé'}"
+            f"{': ' + entry['reason'] if entry.get('reason') else ''}"
+            for name, entry in impaired
+        )
+        data_lines.append(f"- Fournisseurs en difficulté sur ce run : {described}")
+
+    data_lines.append(
+        f"- Instructions utilisateur : {enrich_instructions or 'aucune instruction spécifique'}"
+    )
+
+    icp_writing_instruction = (
+        "" if icp_scored else
+        " Ne commente pas la pertinence ICP des leads : le scoring n'a pas été calculé sur ce run."
+    )
+    provider_writing_instruction = (
+        " Signale explicitement que des fournisseurs ont été dégradés ou en échec "
+        "et que les chiffres ci-dessus en sont affectés."
+        if impaired else ""
+    )
+
+    return (
+        "Génère un résumé exécutif en 4-5 phrases pour ce run de lead generation.\n\n"
+        "Données :\n" + "\n".join(data_lines) + "\n\n"
+        "Rédige un résumé actionnable en français. Mentionne les chiffres clés, les tendances, "
+        "et une recommandation concrète de prochaine action."
+        + icp_writing_instruction
+        + provider_writing_instruction
+        + " Pas de markdown, juste du texte."
+    )
+
+
 # ── Pipeline execution ────────────────────────────────────────────────────────
 
 def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
@@ -194,7 +306,6 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
     try:
         _jobs[job_id].status = "running"
 
-        from api.provider_status import ProviderFailure, ProviderRegistry
         registry = ProviderRegistry()
 
         # Reset enricher state from any previous run
@@ -228,7 +339,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         # ── Step 3a: Google enrichment ────────────────────────────────────────
         handler.set_explicit_progress(3, 0.0, "Enrichissement Google (LinkedIn URL + site web)...")
         from enrichers.google_search import enrich_leads_google
-        leads = enrich_leads_google(leads)
+        leads = enrich_leads_google(leads, registry=registry)
 
         linkedin_count = sum(1 for l in leads if l.get("linkedin_url"))
         website_count = sum(1 for l in leads if l.get("website"))
@@ -252,7 +363,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
 
         # ── Step 3c: Hunter.io email verification ─────────────────────────────
         from enrichers.hunter_verifier import enrich_leads_hunter
-        leads = enrich_leads_hunter(leads)
+        leads = enrich_leads_hunter(leads, registry=registry)
 
         valid_emails = sum(1 for l in leads if l.get("email_status") == "valid")
         handler.set_explicit_progress(
@@ -396,61 +507,13 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
                 import anthropic as _anth
                 _summary_client = _anth.Anthropic(api_key=pipeline_config.ANTHROPIC_API_KEY)
 
-                # Build context for summary. icp_tier is None for every lead
-                # when Steps 5-8 were skipped (--skip-gpt or no hit leads) —
-                # an all-None column must never be reported as "0 relevant
-                # leads found", which is what a naive count against an
-                # unscored run would say.
-                icp_scored = any(l.get("icp_tier") for l in leads)
-                hot_count = sum(1 for l in leads if l.get("icp_tier") == "hot")
-                warm_count = sum(1 for l in leads if l.get("icp_tier") == "warm")
-                cold_count = sum(1 for l in leads if l.get("icp_tier") == "cold")
-                top_companies = [l.get("company", "?") for l in leads if l.get("icp_tier") == "hot"][:10]
-                sectors = {}
-                for l in leads:
-                    s = (l.get("job_title") or "").split("/")[0].split(",")[0].strip()
-                    if s:
-                        sectors[s] = sectors.get(s, 0) + 1
-
-                data_lines = [
-                    f"- {total} prospects analysés",
-                    f"- {len(hit_leads)} leads qualifiés (hit score >= seuil)",
-                    f"- {len(nohit_leads)} non qualifiés",
-                ]
-                if icp_scored:
-                    data_lines.append(
-                        f"- ICP : {hot_count} haute pertinence, {warm_count} pertinence moyenne, "
-                        f"{cold_count} faible pertinence"
-                    )
-                else:
-                    data_lines.append(
-                        "- Scoring ICP : non calculé sur ce run (aucun lead qualifié à scorer)"
-                    )
-                data_lines += [
-                    f"- Taux d'emails trouvés : {stats.email_pct}%",
-                    f"- Taux LinkedIn trouvés : {stats.linkedin_pct}%",
-                    f"- Score moyen : {stats.avg_score}/100",
-                ]
-                if icp_scored:
-                    data_lines.append(
-                        f"- Top entreprises haute pertinence : "
-                        f"{', '.join(top_companies[:5]) if top_companies else 'aucune'}"
-                    )
-                data_lines.append(
-                    f"- Instructions utilisateur : {enrich_instructions or 'aucune instruction spécifique'}"
-                )
-
-                icp_writing_instruction = (
-                    "" if icp_scored else
-                    " Ne commente pas la pertinence ICP des leads : le scoring n'a pas été calculé sur ce run."
-                )
-                summary_prompt = (
-                    "Génère un résumé exécutif en 4-5 phrases pour ce run de lead generation.\n\n"
-                    "Données :\n" + "\n".join(data_lines) + "\n\n"
-                    "Rédige un résumé actionnable en français. Mentionne les chiffres clés, les tendances, "
-                    "et une recommandation concrète de prochaine action."
-                    + icp_writing_instruction +
-                    " Pas de markdown, juste du texte."
+                summary_prompt = _build_summary_prompt(
+                    leads=leads,
+                    hit_count=len(hit_leads),
+                    nohit_count=len(nohit_leads),
+                    stats=stats,
+                    enrich_instructions=enrich_instructions,
+                    provider_status=registry.to_dict(),
                 )
 
                 msg = _summary_client.messages.create(
@@ -464,9 +527,13 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
                 logging.getLogger("pipeline_runner").warning(f"Executive summary failed: {e}")
 
         # ── Update job state ──────────────────────────────────────────────────
+        # The same status goes to the in-memory job and to the history row: a
+        # run that lost its contacts must not sit in the history as a plain
+        # green "done" forever.
+        final_status = "completed_with_errors" if registry.has_critical_failure() else "done"
         _jobs[job_id] = JobResult(
             job_id=job_id,
-            status="completed_with_errors" if registry.has_critical_failure() else "done",
+            status=final_status,
             total_leads=total,
             hit_leads=len(hit_leads),
             nohit_leads=len(nohit_leads),
@@ -481,7 +548,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         from api.history import save_job as _save_hist
         meta = _job_meta.get(job_id, {})
         _save_hist(
-            job_id=job_id, status="done",
+            job_id=job_id, status=final_status,
             apollo_url=meta.get("apollo_url", ""),
             max_leads=meta.get("max_leads", 0),
             skip_gpt=meta.get("skip_gpt", False),
@@ -625,7 +692,6 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
     try:
         _jobs[job_id].status = "running"
 
-        from api.provider_status import ProviderFailure, ProviderRegistry
         registry = ProviderRegistry()
 
         from enrichers.google_search import _reset_state as _reset_google
@@ -650,7 +716,7 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
         # Step 3a: Google
         handler.set_explicit_progress(3, 0.0, "Enrichissement Google...")
         from enrichers.google_search import enrich_leads_google
-        leads = enrich_leads_google(leads)
+        leads = enrich_leads_google(leads, registry=registry)
         handler.set_explicit_progress(3, 0.4, "Google terminé. Lancement Dropcontact...")
 
         # Step 3b: Dropcontact
@@ -660,7 +726,7 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
 
         # Step 3c: Hunter.io email verification
         from enrichers.hunter_verifier import enrich_leads_hunter
-        leads = enrich_leads_hunter(leads)
+        leads = enrich_leads_hunter(leads, registry=registry)
         handler.set_explicit_progress(3, 1.0, "Vérification email terminée")
         _check_cancelled(job_id)
 
@@ -692,9 +758,10 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
 
         # Update job
         total = len(leads)
+        final_status = "completed_with_errors" if registry.has_critical_failure() else "done"
         _jobs[job_id] = JobResult(
             job_id=job_id,
-            status="completed_with_errors" if registry.has_critical_failure() else "done",
+            status=final_status,
             total_leads=total, hit_leads=len(hit_leads), nohit_leads=len(nohit_leads),
             leads=leads,
             provider_status=registry.to_dict(),
@@ -704,7 +771,7 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
         from api.history import save_job as _save_hist
         meta = _job_meta.get(job_id, {})
         _save_hist(
-            job_id=job_id, status="done",
+            job_id=job_id, status=final_status,
             apollo_url=url, max_leads=max_leads, skip_gpt=True,
             started_at=meta.get("started_at", ""),
             finished_at=datetime.now().isoformat(),
@@ -766,7 +833,8 @@ def start_scrape_job(url: str, max_leads: int, pool_name: str) -> str:
 # ── Enrich-only pipeline ─────────────────────────────────────────────────────
 
 def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
-                          loop: asyncio.AbstractEventLoop, queue: asyncio.Queue):
+                          loop: asyncio.AbstractEventLoop, queue: asyncio.Queue,
+                          enrich_instructions: str = ""):
     """Runs steps 5-8 (evidence + facts + ICP scoring + angle writing) on leads from an existing pool."""
     handler = _QueueLogHandler(loop, queue, job_id)
     handler.setFormatter(logging.Formatter("%(message)s"))
@@ -778,7 +846,6 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
     try:
         _jobs[job_id].status = "running"
 
-        from api.provider_status import ProviderRegistry
         registry = ProviderRegistry()
 
         from enrichers.perplexity_enricher import _reset_state as _reset_perplexity
@@ -801,7 +868,9 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
         # Step 5: Evidence collection
         handler.set_explicit_progress(5, 0.0, "Collecte de preuves...")
         from enrichers.evidence_collector import collect_evidence
-        leads, active_providers = collect_evidence(leads, registry=registry)
+        leads, active_providers = collect_evidence(
+            leads, enrich_instructions, registry=registry
+        )
         handler.set_explicit_progress(5, 1.0, "Collecte terminée")
         _check_cancelled(job_id)
 
@@ -821,7 +890,7 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
         # Step 8: Angle writing
         handler.set_explicit_progress(8, 0.0, "Rédaction des angles...")
         from enrichers.angle_writer import write_leads_angles
-        leads = write_leads_angles(leads, registry=registry)
+        leads = write_leads_angles(leads, enrich_instructions, registry=registry)
         handler.set_explicit_progress(8, 1.0, "Rédaction terminée")
 
         # Store enrichment data back to pool
@@ -845,8 +914,9 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
                 df[col] = None
         df[CSV_COLUMNS].to_csv(csv_path, index=False, encoding="utf-8-sig")
 
+        final_status = "completed_with_errors" if registry.has_critical_failure() else "done"
         _jobs[job_id] = JobResult(
-            job_id=job_id, status="done",
+            job_id=job_id, status=final_status,
             total_leads=len(leads), hit_leads=len(leads), nohit_leads=0,
             leads=leads, csv_path=csv_path,
             provider_status=registry.to_dict(),
@@ -855,7 +925,7 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
         from api.history import save_job as _save_hist
         meta = _job_meta.get(job_id, {})
         _save_hist(
-            job_id=job_id, status="done",
+            job_id=job_id, status=final_status,
             apollo_url=f"pool:{pool_id}", max_leads=batch_size, skip_gpt=False,
             started_at=meta.get("started_at", ""),
             finished_at=datetime.now().isoformat(),
@@ -873,6 +943,14 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
         _cancelled.pop(job_id, None)
         return
 
+    except ProviderFailure as exc:
+        message = f"Étape contacts interrompue — {exc.reason}"
+        logging.getLogger("pipeline_runner").error(message)
+        _jobs[job_id] = JobResult(job_id=job_id, status="error", error=message)
+        error_payload = json.dumps({"type": "error", "data": {"message": message}})
+        asyncio.run_coroutine_threadsafe(queue.put(error_payload), loop)
+        return
+
     except Exception as exc:
         error_msg = str(exc)
         _jobs[job_id] = JobResult(job_id=job_id, status="error", error=error_msg)
@@ -885,7 +963,7 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
         asyncio.run_coroutine_threadsafe(queue.put(None), loop)
 
 
-def start_enrich_job(pool_id: str, batch_size: int) -> str:
+def start_enrich_job(pool_id: str, batch_size: int, enrich_instructions: str = "") -> str:
     """Start an enrich-only job on an existing pool. Returns job_id."""
     job_id = str(uuid.uuid4())
     try:
@@ -898,7 +976,13 @@ def start_enrich_job(pool_id: str, batch_size: int) -> str:
 
     _jobs[job_id] = JobResult(job_id=job_id, status="running")
     _queues[job_id] = queue
-    _job_meta[job_id] = {"apollo_url": f"pool:{pool_id}", "max_leads": batch_size, "skip_gpt": False, "started_at": started_at}
+    _job_meta[job_id] = {
+        "apollo_url": f"pool:{pool_id}", "max_leads": batch_size, "skip_gpt": False,
+        "started_at": started_at, "enrich_instructions": enrich_instructions or "",
+    }
 
-    _executor.submit(_run_enrich_only_sync, job_id, pool_id, batch_size, loop, queue)
+    _executor.submit(
+        _run_enrich_only_sync, job_id, pool_id, batch_size, loop, queue,
+        enrich_instructions or "",
+    )
     return job_id

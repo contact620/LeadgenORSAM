@@ -39,6 +39,11 @@ CREATE TABLE IF NOT EXISTS lead_pool (
     phone        TEXT,
     linkedin_url TEXT,
     website      TEXT,
+    website_coherent INTEGER,
+    website_rejected TEXT,
+    website_check_reason TEXT,
+    email_status TEXT,
+    email_confidence INTEGER,
     hit_score    REAL,
     is_hit       INTEGER DEFAULT 0,
     is_duplicate INTEGER DEFAULT 0,
@@ -49,6 +54,17 @@ CREATE TABLE IF NOT EXISTS lead_pool (
     enrich_data  TEXT
 )
 """
+
+# Columns added after the first pools were created. Scoring and export read
+# them, so a pool stored without them exports empty cells for the whole
+# enrich-only flow.
+_LEAD_POOL_ADDED_COLUMNS = {
+    "website_coherent": "INTEGER",
+    "website_rejected": "TEXT",
+    "website_check_reason": "TEXT",
+    "email_status": "TEXT",
+    "email_confidence": "INTEGER",
+}
 
 _CREATE_POOL_META = """
 CREATE TABLE IF NOT EXISTS pool_meta (
@@ -76,6 +92,22 @@ def init_leads_table() -> None:
         con.execute(_CREATE_KNOWN_LEADS)
         con.execute(_CREATE_LEAD_POOL)
         con.execute(_CREATE_POOL_META)
+        _migrate_lead_pool(con)
+
+
+def _migrate_lead_pool(con: sqlite3.Connection) -> None:
+    """Add columns introduced after a pool DB was first created.
+
+    CREATE TABLE IF NOT EXISTS leaves an existing table untouched, so a DB
+    from before these columns existed would keep silently dropping the
+    values on insert.
+    """
+    existing = {row["name"] for row in con.execute("PRAGMA table_info(lead_pool)")}
+    if not existing:
+        return  # table not created yet — init_leads_table() will create it complete
+    for column, sql_type in _LEAD_POOL_ADDED_COLUMNS.items():
+        if column not in existing:
+            con.execute(f"ALTER TABLE lead_pool ADD COLUMN {column} {sql_type}")
 
 
 # ── Deduplication (existing) ─────────────────────────────────────────────────
@@ -134,20 +166,29 @@ def create_pool(name: str, apollo_url: str, scrape_job_id: str, leads: list[dict
     hit_count = sum(1 for l in leads if l.get("is_hit"))
 
     with _conn() as con:
+        _migrate_lead_pool(con)
         con.execute(
             "INSERT INTO pool_meta (pool_id, name, apollo_url, created_at, scrape_job_id, total_leads, hit_leads) VALUES (?,?,?,?,?,?,?)",
             (pool_id, name, apollo_url, now, scrape_job_id, total, hit_count),
         )
         for lead in leads:
+            coherent = lead.get("website_coherent")
             con.execute(
                 """INSERT INTO lead_pool
                    (pool_id, first_name, last_name, company, job_title, location,
-                    email, phone, linkedin_url, website, hit_score, is_hit,
-                    is_duplicate, first_seen_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    email, phone, linkedin_url, website,
+                    website_coherent, website_rejected, website_check_reason,
+                    email_status, email_confidence,
+                    hit_score, is_hit, is_duplicate, first_seen_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (pool_id, lead.get("first_name"), lead.get("last_name"),
                  lead.get("company"), lead.get("job_title"), lead.get("location"),
                  lead.get("email"), lead.get("phone"), lead.get("linkedin_url"), lead.get("website"),
+                 # None stays None: "not checked" and "checked, incoherent"
+                 # are different states and hit_calculator distinguishes them.
+                 None if coherent is None else int(bool(coherent)),
+                 lead.get("website_rejected"), lead.get("website_check_reason"),
+                 lead.get("email_status"), lead.get("email_confidence"),
                  lead.get("hit_score", 0), int(lead.get("is_hit", False)),
                  int(lead.get("is_duplicate", False)), lead.get("first_seen_at")),
             )
@@ -181,6 +222,7 @@ def get_pool_leads(pool_id: str, only_hit: bool = False, only_unenriched: bool =
         params.append(limit)
 
     with _conn() as con:
+        _migrate_lead_pool(con)
         rows = con.execute(query, params).fetchall()
 
     result = []
@@ -189,6 +231,8 @@ def get_pool_leads(pool_id: str, only_hit: bool = False, only_unenriched: bool =
         d["is_hit"] = bool(d["is_hit"])
         d["is_duplicate"] = bool(d["is_duplicate"])
         d["enriched"] = bool(d["enriched"])
+        if d.get("website_coherent") is not None:
+            d["website_coherent"] = bool(d["website_coherent"])
         # Parse enrich_data JSON if present; absent keys stay None so pools
         # created before the ICP rework keep loading.
         for field_name in ENRICH_FIELDS:

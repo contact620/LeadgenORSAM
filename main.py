@@ -32,12 +32,24 @@ from datetime import datetime
 import pandas as pd
 
 import config
+from api.provider_status import ProviderFailure, ProviderRegistry
 from scrapers.apollo_scraper import scrape_apollo
 from enrichers.google_search import enrich_leads_google
 from enrichers.dropcontact import enrich_leads_dropcontact
 from enrichers.hunter_verifier import enrich_leads_hunter
 from processors.hit_calculator import score_all_leads
 from lead_schema import CSV_COLUMNS
+
+# How each provider is named to the operator in the CLI summary.
+PROVIDER_LABELS = {
+    "dropcontact": "Dropcontact (emails/téléphones)",
+    "hunter": "Hunter.io (vérification des emails)",
+    "serper": "Serper (recherche LinkedIn)",
+    "website": "Scraping des sites web",
+    "perplexity": "Perplexity (signaux business)",
+    "anthropic_facts": "Extraction de faits",
+    "anthropic_angles": "Rédaction des angles",
+}
 
 
 def setup_logging(level: str):
@@ -68,7 +80,41 @@ def export_csv(leads: list[dict], output_path: str):
     return full_path
 
 
-def print_summary(all_leads: list[dict], hit_leads: list[dict], nohit_leads: list[dict], path: str):
+def print_provider_health(registry: ProviderRegistry):
+    """Print one line per provider that did not deliver.
+
+    Without this, a run where Serper's key expired mid-way ends on an
+    impeccable-looking summary: the missing 30 points per lead show up only as
+    a low LinkedIn rate, indistinguishable from a hard search batch.
+    """
+    outcomes = registry.to_dict()
+    impaired = {
+        name: entry for name, entry in outcomes.items()
+        if entry["status"] in ("failed", "degraded")
+    }
+    skipped = {
+        name: entry for name, entry in outcomes.items()
+        if entry["status"] == "skipped"
+    }
+    if not impaired and not skipped:
+        return
+
+    print("  " + "-" * 56)
+    print("  Santé des fournisseurs :")
+    for name, entry in impaired.items():
+        label = PROVIDER_LABELS.get(name, name)
+        state = "EN ÉCHEC" if entry["status"] == "failed" else "DÉGRADÉ"
+        detail = f" — {entry['reason']}" if entry["reason"] else ""
+        affected = f" ({entry['leads_affected']} lead(s) concerné(s))" if entry["leads_affected"] else ""
+        print(f"    [{state}] {label}{detail}{affected}")
+    for name, entry in skipped.items():
+        label = PROVIDER_LABELS.get(name, name)
+        detail = f" — {entry['reason']}" if entry["reason"] else ""
+        print(f"    [IGNORÉ] {label}{detail}")
+
+
+def print_summary(all_leads: list[dict], hit_leads: list[dict], nohit_leads: list[dict],
+                  path: str, registry: ProviderRegistry | None = None):
     total = len(all_leads)
     print("\n" + "=" * 60)
     print("  ORSAM — PIPELINE SUMMARY")
@@ -93,12 +139,15 @@ def print_summary(all_leads: list[dict], hit_leads: list[dict], nohit_leads: lis
         icp_disq = sum(1 for l in all_leads if l.get("icp_tier") == "disqualified")
         if icp_disq:
             print(f"  ICP disqualifiés        : {icp_disq}")
+    if registry is not None:
+        print_provider_health(registry)
     print(f"\n  Output file: {path}")
     print("=" * 60 + "\n")
 
 
 async def run_pipeline(args):
     logger = logging.getLogger("main")
+    registry = ProviderRegistry()
 
     # ── Validate config ───────────────────────────────────────────────────────
     missing = config.validate_config()
@@ -122,15 +171,15 @@ async def run_pipeline(args):
 
     # ── Step 3a: Google enrichment ────────────────────────────────────────────
     logger.info("Step 3a — Google enrichment (LinkedIn + website)...")
-    leads = enrich_leads_google(leads)
+    leads = enrich_leads_google(leads, registry=registry)
 
     # ── Step 3b: Dropcontact enrichment ───────────────────────────────────────
     logger.info("Step 3b — Dropcontact enrichment (email + phone)...")
-    leads = enrich_leads_dropcontact(leads)
+    leads = enrich_leads_dropcontact(leads, registry=registry)
 
     # ── Step 3c: Hunter.io email verification ─────────────────────────────────
     logger.info("Step 3c — Hunter.io email verification...")
-    leads = enrich_leads_hunter(leads)
+    leads = enrich_leads_hunter(leads, registry=registry)
 
     # ── Step 4: Hit score ─────────────────────────────────────────────────────
     logger.info("Step 4 — Calculating hit scores...")
@@ -146,11 +195,13 @@ async def run_pipeline(args):
     if not args.skip_gpt and hit_leads:
         logger.info(f"Step 5 — Evidence collection on {len(hit_leads)} hit leads...")
         from enrichers.evidence_collector import collect_evidence_async
-        hit_leads, active_providers = await collect_evidence_async(hit_leads)
+        hit_leads, active_providers = await collect_evidence_async(
+            hit_leads, registry=registry
+        )
 
         logger.info("Step 6 — Fact extraction...")
         from enrichers.fact_extractor import extract_leads_facts
-        hit_leads = extract_leads_facts(hit_leads, active_providers)
+        hit_leads = extract_leads_facts(hit_leads, active_providers, registry=registry)
 
         logger.info("Step 7 — ICP scoring...")
         from processors.icp_scorer import apply_scores
@@ -158,7 +209,7 @@ async def run_pipeline(args):
 
         logger.info("Step 8 — Angle writing...")
         from enrichers.angle_writer import write_leads_angles
-        hit_leads = write_leads_angles(hit_leads)
+        hit_leads = write_leads_angles(hit_leads, registry=registry)
     else:
         reason = "--skip-gpt flag set" if args.skip_gpt else "no hit leads"
         logger.info(f"Steps 5-8 — Skipped ({reason})")
@@ -179,7 +230,7 @@ async def run_pipeline(args):
         nohit_path = export_csv(nohit_leads, nohit_filename)
         logger.info(f"No-hit CSV saved: {nohit_path}")
 
-    print_summary(leads, hit_leads, nohit_leads, final_path)
+    print_summary(leads, hit_leads, nohit_leads, final_path, registry)
 
 
 def parse_args():
@@ -221,4 +272,18 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     setup_logging(args.log_level)
-    asyncio.run(run_pipeline(args))
+    try:
+        asyncio.run(run_pipeline(args))
+    except ProviderFailure as exc:
+        # A critical provider gave up. Say so plainly and exit non-zero rather
+        # than dumping a traceback the operator has to decode.
+        print("\n" + "=" * 60)
+        print("  RUN INTERROMPU — fournisseur critique indisponible")
+        print("=" * 60)
+        print(f"  Fournisseur : {PROVIDER_LABELS.get(exc.provider, exc.provider)}")
+        print(f"  Motif       : {exc.reason}")
+        print("\n  Aucun fichier final n'a été produit : le run s'arrête plutôt")
+        print("  que de livrer un CSV sans données de contact.")
+        print("  Vérifiez la clé API et les crédits du fournisseur, puis relancez.")
+        print("=" * 60 + "\n")
+        sys.exit(1)
