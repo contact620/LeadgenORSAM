@@ -26,6 +26,18 @@ def test_degraded_optional_provider_is_not_critical():
     assert reg.has_critical_failure() is False
 
 
+def test_degraded_critical_provider_flags_the_run():
+    reg = ProviderRegistry()
+    reg.record(StepOutcome("dropcontact", "degraded", "3 lot(s) en échec sur 10", 120))
+    assert reg.has_critical_failure() is True
+
+
+def test_skipped_critical_provider_does_not_flag_the_run():
+    reg = ProviderRegistry()
+    reg.record(StepOutcome("dropcontact", "skipped", "clé API absente", 0))
+    assert reg.has_critical_failure() is False
+
+
 def test_last_record_wins_for_a_provider():
     reg = ProviderRegistry()
     reg.record(StepOutcome("hunter", "ok", None, 10))

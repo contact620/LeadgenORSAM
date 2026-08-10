@@ -654,9 +654,11 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
         # Update job
         total = len(leads)
         _jobs[job_id] = JobResult(
-            job_id=job_id, status="done",
+            job_id=job_id,
+            status="completed_with_errors" if registry.has_critical_failure() else "done",
             total_leads=total, hit_leads=len(hit_leads), nohit_leads=len(nohit_leads),
             leads=leads,
+            provider_status=registry.to_dict(),
         )
 
         # Persist to history

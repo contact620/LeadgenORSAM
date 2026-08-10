@@ -12,6 +12,11 @@ from typing import Optional
 CRITICAL_PROVIDERS = frozenset({"dropcontact"})
 
 # status values: "ok" | "degraded" | "failed" | "skipped"
+# For a provider in CRITICAL_PROVIDERS, both "failed" and "degraded" mark the
+# run as critically impacted: "degraded" means at least one batch never made
+# it to the provider (submission or polling failure), i.e. leads that were
+# never even attempted rather than contacts the provider legitimately
+# couldn't find.
 
 
 @dataclass
@@ -51,7 +56,16 @@ class ProviderRegistry:
         }
 
     def has_critical_failure(self) -> bool:
+        """
+        True if a critical provider ended the run as "failed" or "degraded".
+
+        A critical provider is one whose data is the run's core deliverable
+        (see CRITICAL_PROVIDERS). For such a provider, "degraded" already
+        means some batches never reached it — that is a partial failure of
+        the run, not a benign outcome, so it must flag the run just like
+        "failed" does.
+        """
         return any(
-            o.status == "failed" and name in CRITICAL_PROVIDERS
+            o.status in ("failed", "degraded") and name in CRITICAL_PROVIDERS
             for name, o in self._outcomes.items()
         )

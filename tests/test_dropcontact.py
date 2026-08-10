@@ -26,3 +26,17 @@ def test_missing_key_is_recorded_as_skipped_not_failed():
         enrich_leads_dropcontact(_leads(2), registry=reg)
     assert reg.to_dict()["dropcontact"]["status"] == "skipped"
     assert reg.has_critical_failure() is False
+
+
+def test_non_first_batch_failure_degrades_without_aborting():
+    """A failure past batch 1 must not discard leads already enriched."""
+    _reset_state()
+    reg = ProviderRegistry()
+    with patch("enrichers.dropcontact.config.DROPCONTACT_API_KEY", "key"), \
+         patch("enrichers.dropcontact.config.DROPCONTACT_BATCH_SIZE", 2), \
+         patch("enrichers.dropcontact._post_batch", side_effect=["req-1", None]), \
+         patch("enrichers.dropcontact._poll_batch", return_value=[{}, {}]):
+        result = enrich_leads_dropcontact(_leads(4), registry=reg)
+    assert len(result) == 4
+    assert reg.to_dict()["dropcontact"]["status"] == "degraded"
+    assert reg.has_critical_failure() is True
