@@ -292,7 +292,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         # Deliberately inert until task 12 reorders the pipeline: scoring now
         # runs AFTER evidence collection, and no evidence exists at this point.
         # Emitting verdicts here would label every lead from an empty fact set.
-        handler.set_explicit_progress(5, 0.0, "Scoring ICP déplacé après la collecte de preuves (tâche 12)...")
+        handler.set_explicit_progress(5, 0.0, "Scoring ICP déplacé après la collecte de preuves...")
         for lead in hit_leads:
             lead.setdefault("icp_score", None)
             lead.setdefault("icp_tier", None)
@@ -301,7 +301,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
             lead.setdefault("disqualification_reason", None)
             lead.setdefault("evidence_level", None)
             lead.setdefault("evidence_verified", None)
-        handler.set_explicit_progress(5, 1.0, "Scoring ICP déplacé après la collecte de preuves (tâche 12)")
+        handler.set_explicit_progress(5, 1.0, "Scoring ICP déplacé après la collecte de preuves")
 
         # ── Step 6: AI enrichment (hit leads only) ────────────────────────────
         if not skip_gpt and hit_leads:
@@ -379,7 +379,11 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
                 import anthropic as _anth
                 _summary_client = _anth.Anthropic(api_key=pipeline_config.ANTHROPIC_API_KEY)
 
-                # Build context for summary
+                # Build context for summary. icp_tier is None for every lead
+                # while ICP scoring is inert (see Step 5 above) — an all-None
+                # column must never be reported as "0 relevant leads found",
+                # which is what a naive count against an unscored run would say.
+                icp_scored = any(l.get("icp_tier") for l in leads)
                 hot_count = sum(1 for l in leads if l.get("icp_tier") == "hot")
                 warm_count = sum(1 for l in leads if l.get("icp_tier") == "warm")
                 cold_count = sum(1 for l in leads if l.get("icp_tier") == "cold")
@@ -390,20 +394,46 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
                     if s:
                         sectors[s] = sectors.get(s, 0) + 1
 
-                summary_prompt = f"""Génère un résumé exécutif en 4-5 phrases pour ce run de lead generation.
+                data_lines = [
+                    f"- {total} prospects analysés",
+                    f"- {len(hit_leads)} leads qualifiés (hit score >= seuil)",
+                    f"- {len(nohit_leads)} non qualifiés",
+                ]
+                if icp_scored:
+                    data_lines.append(
+                        f"- ICP : {hot_count} haute pertinence, {warm_count} pertinence moyenne, "
+                        f"{cold_count} faible pertinence"
+                    )
+                else:
+                    data_lines.append(
+                        "- Scoring ICP : non calculé sur ce run (déplacé après la collecte de preuves)"
+                    )
+                data_lines += [
+                    f"- Taux d'emails trouvés : {stats.email_pct}%",
+                    f"- Taux LinkedIn trouvés : {stats.linkedin_pct}%",
+                    f"- Score moyen : {stats.avg_score}/100",
+                ]
+                if icp_scored:
+                    data_lines.append(
+                        f"- Top entreprises haute pertinence : "
+                        f"{', '.join(top_companies[:5]) if top_companies else 'aucune'}"
+                    )
+                data_lines.append(
+                    f"- Instructions utilisateur : {enrich_instructions or 'aucune instruction spécifique'}"
+                )
 
-Données :
-- {total} prospects analysés
-- {len(hit_leads)} leads qualifiés (hit score >= seuil)
-- {len(nohit_leads)} non qualifiés
-- ICP : {hot_count} haute pertinence, {warm_count} pertinence moyenne, {cold_count} faible pertinence
-- Taux d'emails trouvés : {stats.email_pct}%
-- Taux LinkedIn trouvés : {stats.linkedin_pct}%
-- Score moyen : {stats.avg_score}/100
-- Top entreprises haute pertinence : {', '.join(top_companies[:5]) if top_companies else 'aucune'}
-- Instructions utilisateur : {enrich_instructions or 'aucune instruction spécifique'}
-
-Rédige un résumé actionnable en français. Mentionne les chiffres clés, les tendances, et une recommandation concrète de prochaine action. Pas de markdown, juste du texte."""
+                icp_writing_instruction = (
+                    "" if icp_scored else
+                    " Ne commente pas la pertinence ICP des leads : le scoring n'a pas été calculé sur ce run."
+                )
+                summary_prompt = (
+                    "Génère un résumé exécutif en 4-5 phrases pour ce run de lead generation.\n\n"
+                    "Données :\n" + "\n".join(data_lines) + "\n\n"
+                    "Rédige un résumé actionnable en français. Mentionne les chiffres clés, les tendances, "
+                    "et une recommandation concrète de prochaine action."
+                    + icp_writing_instruction +
+                    " Pas de markdown, juste du texte."
+                )
 
                 msg = _summary_client.messages.create(
                     model="claude-haiku-4-5-20251001",
@@ -756,7 +786,7 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
         # pipeline: scoring now runs AFTER evidence collection, and no
         # evidence exists at this point. Emitting verdicts here would label
         # every lead from an empty fact set.
-        handler.set_explicit_progress(5, 0.0, "Scoring ICP déplacé après la collecte de preuves (tâche 12)...")
+        handler.set_explicit_progress(5, 0.0, "Scoring ICP déplacé après la collecte de preuves...")
         for lead in leads:
             lead.setdefault("icp_score", None)
             lead.setdefault("icp_tier", None)
@@ -765,7 +795,7 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
             lead.setdefault("disqualification_reason", None)
             lead.setdefault("evidence_level", None)
             lead.setdefault("evidence_verified", None)
-        handler.set_explicit_progress(5, 1.0, "Scoring ICP déplacé après la collecte de preuves (tâche 12)")
+        handler.set_explicit_progress(5, 1.0, "Scoring ICP déplacé après la collecte de preuves")
         _check_cancelled(job_id)
 
         # Step 6: Website scraping + Claude AI

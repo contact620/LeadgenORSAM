@@ -53,3 +53,18 @@ def test_country_zone_is_case_and_accent_insensitive(country):
     # was squarely in the ideal zone.
     rules = load_rules()
     assert rules.country_zone(country) == "maroc"
+
+
+def test_normalize_label_folds_curly_apostrophes():
+    # Regression: an LLM extraction typically returns the typographic
+    # apostrophe (U+2019), not the straight one (U+0027) used in
+    # config/icp_rules.json's "Côte d'Ivoire". Left unfolded, this
+    # cosmetic difference alone disqualified an in-zone country.
+    assert normalize_label("Côte d’Ivoire") == normalize_label("Côte d'Ivoire")
+    assert normalize_label("Côte d‘Ivoire") == normalize_label("Côte d'Ivoire")
+    assert normalize_label("Côte dʼIvoire") == normalize_label("Côte d'Ivoire")
+
+
+def test_country_zone_matches_curly_apostrophe_variant():
+    rules = load_rules()
+    assert rules.country_zone("Côte d’Ivoire") == "afrique_francophone"

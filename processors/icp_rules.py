@@ -16,9 +16,19 @@ RULES_PATH = os.path.join(
 
 _REQUIRED_AXES = ("secteur", "taille", "localisation", "signaux")
 
+# Typographic apostrophes/quotes an LLM extraction commonly produces
+# ("Côte d'Ivoire" with a curly quote) folded to the straight apostrophe
+# used in config/icp_rules.json — otherwise a cosmetic character difference
+# silently disqualifies an in-zone country.
+_APOSTROPHE_VARIANTS = {
+    "’": "'",  # RIGHT SINGLE QUOTATION MARK
+    "‘": "'",  # LEFT SINGLE QUOTATION MARK
+    "ʼ": "'",  # MODIFIER LETTER APOSTROPHE
+}
+
 
 def normalize_label(value: str) -> str:
-    """Lowercase, strip accents and trim whitespace for label comparisons.
+    """Lowercase, strip accents, fold apostrophe variants, and trim whitespace.
 
     Duplicated from processors/coherence.py's private ``_deaccent`` rather
     than imported: this module is read as plain data by the scorer and must
@@ -26,7 +36,10 @@ def normalize_label(value: str) -> str:
     """
     if not value:
         return ""
-    decomposed = unicodedata.normalize("NFKD", str(value))
+    text = str(value)
+    for variant, straight in _APOSTROPHE_VARIANTS.items():
+        text = text.replace(variant, straight)
+    decomposed = unicodedata.normalize("NFKD", text)
     deaccented = "".join(c for c in decomposed if not unicodedata.combining(c))
     return deaccented.strip().lower()
 

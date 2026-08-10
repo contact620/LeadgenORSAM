@@ -91,7 +91,14 @@ def _score_location(facts: dict, rules: IcpRules) -> int:
 
 
 def _score_signals(facts: dict, rules: IcpRules, run_date: date) -> tuple[int, int]:
-    """Return (signal_axis_score, maturity_bonus_applied)."""
+    """Return (signal_axis_score, effective_maturity_adjustment).
+
+    The adjustment reported is the axis's actual gain, not the nominal bonus:
+    when the signal score is already at the 100-point ceiling, the bonus is
+    entirely absorbed by the clamp and the honest number to report is 0 — a
+    reader reconciling the rationale with the score must never see a bonus
+    that could not have moved the axis.
+    """
     signals = [s for s in (facts.get("signaux") or []) if isinstance(s, dict)]
     count = len(signals)
 
@@ -117,13 +124,14 @@ def _score_signals(facts: dict, rules: IcpRules, run_date: date) -> tuple[int, i
     # Acquiring the maturity fact must never be able to lower a score: that
     # inversion (more evidence -> lower score) is the client's original
     # complaint, and a penalty branch here would reintroduce it.
-    maturity_bonus = 0
+    nominal_bonus = 0
     maturity = _value(facts.get("maturite_digitale"))
     if isinstance(maturity, (int, float)) and maturity <= rules.maturity_low_max:
-        maturity_bonus = rules.maturity_bonus
+        nominal_bonus = rules.maturity_bonus
 
-    total = max(0, min(100, points + maturity_bonus))
-    return total, maturity_bonus
+    total = max(0, min(100, points + nominal_bonus))
+    effective_adjustment = total - points
+    return total, effective_adjustment
 
 
 # ── Disqualification ─────────────────────────────────────────────────────────
@@ -161,7 +169,7 @@ def score_lead(
     run_date: date,
 ) -> IcpResult:
     """Turn validated facts into a score, a tier and, where warranted, a refusal."""
-    signal_score, maturity_bonus = _score_signals(facts, rules, run_date)
+    signal_score, maturity_adjustment = _score_signals(facts, rules, run_date)
     weighted_axes = {
         "secteur": _score_sector(facts, rules),
         "taille": _score_size(facts, rules),
@@ -170,12 +178,13 @@ def score_lead(
     }
     raw_score = round(sum(weighted_axes[axis] * rules.weights[axis] for axis in weighted_axes))
     # "maturite_ajustement" is informational only — never weighted on its own,
-    # since the bonus it reports is already folded into "signaux" above. It
+    # since the adjustment it reports is already folded into "signaux" above.
+    # It is the *effective* gain (post-clamp), not the nominal bonus: it
     # exists so a rationale reader can answer "why this score?" on the axis
     # that carries 40% of the weight and was the subject of the client's
-    # complaint.
+    # complaint, without ever seeing a number the score could not have moved by.
     detail = dict(weighted_axes)
-    detail["maturite_ajustement"] = maturity_bonus
+    detail["maturite_ajustement"] = maturity_adjustment
     detail_json = json.dumps(detail)
     verified = evidence_level == "sufficient"
 
@@ -230,8 +239,8 @@ def score_lead(
 
     signal_count = len([s for s in (facts.get("signaux") or []) if isinstance(s, dict)])
     maturity_note = (
-        f", dont +{maturity_bonus} pt(s) bonus maturité digitale faible"
-        if maturity_bonus else ""
+        f", dont +{maturity_adjustment} pt(s) bonus maturité digitale faible"
+        if maturity_adjustment else ""
     )
     rationale = (
         f"Secteur {detail['secteur']}/100, taille {detail['taille']}/100, "

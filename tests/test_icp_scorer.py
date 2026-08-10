@@ -193,6 +193,25 @@ def test_low_maturity_bonus_is_reported_in_detail_and_rationale(rules):
     assert "maturité" in result.icp_rationale
 
 
+def test_maturity_adjustment_reports_effective_gain_not_nominal_bonus(rules):
+    """When the signal score is already at the 100 ceiling, the bonus is
+    entirely absorbed by the clamp — reporting the nominal +20 would let a
+    reader believe the axis moved when it did not."""
+    facts = _facts(
+        maturite_digitale={"value": 3, "source": "perplexity"},
+        signaux=[
+            {"type": "levee_de_fonds", "date": "2026-06", "source": "perplexity", "citation": "a"},
+            {"type": "recrutement_marketing", "date": "2026-05", "source": "perplexity", "citation": "b"},
+            {"type": "lancement_produit", "date": "2026-07", "source": "website", "citation": "c"},
+        ],
+    )
+    result = score_lead(facts, "sufficient", rules, RUN_DATE)
+    detail = __import__("json").loads(result.icp_scores_detail)
+    assert detail["signaux"] == 100
+    assert detail["maturite_ajustement"] == 0
+    assert "maturité" not in result.icp_rationale
+
+
 # ── Label normalization (case/accent-insensitive matching) ──────────────────
 
 def test_lowercase_country_does_not_disqualify(rules):
