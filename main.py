@@ -37,7 +37,6 @@ from processors.hit_calculator import score_all_leads
 from scrapers.website_scraper import scrape_hit_leads
 from enrichers.gpt_enricher import enrich_leads_gpt
 from enrichers.perplexity_enricher import enrich_leads_perplexity
-from processors.icp_scorer import score_leads_icp
 from lead_schema import CSV_COLUMNS
 
 
@@ -137,6 +136,13 @@ async def run_pipeline(args):
     # ── Step 5: ICP scoring (hit leads only) ───────────────────────────────────
     if not args.skip_gpt and hit_leads:
         logger.info(f"Step 5 — ICP scoring on {len(hit_leads)} hit leads...")
+        # Lazy import: score_leads_icp is scheduled for removal in task 12
+        # (replaced by processors.icp_scorer.apply_scores once the pipeline
+        # is reordered to collect facts/evidence before scoring). Keeping
+        # this import local — instead of at module level — keeps `import
+        # main` safe on this intermediate commit without pre-empting that
+        # rewiring.
+        from processors.icp_scorer import score_leads_icp
         hit_leads = score_leads_icp(hit_leads)
         icp_hot = sum(1 for l in hit_leads if l.get("icp_tier") == "hot")
         icp_warm = sum(1 for l in hit_leads if l.get("icp_tier") == "warm")
