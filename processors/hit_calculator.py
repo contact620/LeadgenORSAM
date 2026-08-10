@@ -53,7 +53,9 @@ def calculate_hit_score(lead: dict) -> dict:
         score += config.SCORE_LINKEDIN
     if lead.get("phone"):
         score += config.SCORE_PHONE
-    if lead.get("website"):
+    # A website rejected by the coherence check must not earn points.
+    # Absent flag = pool scraped before the check existed -> keep legacy behaviour.
+    if lead.get("website") and lead.get("website_coherent") is not False:
         score += config.SCORE_WEBSITE
 
     lead["hit_score"] = score

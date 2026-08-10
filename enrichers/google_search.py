@@ -24,7 +24,7 @@ import requests
 
 import config
 from enrichers.retry import retry_api_call, AuthError
-from processors.coherence import names_match, strip_www
+from processors.coherence import CoherenceResult, check_site_coherence, names_match, strip_www
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +170,49 @@ def _find_company_website(company: str, location: str = "") -> Optional[str]:
     return _pick_website(_ddg_search(query))
 
 
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_TAG_RE = re.compile(r"<[^>]+>")
+LIGHT_CHECK_MAX_CHARS = 1500
+
+
+def _light_page_text(html: str) -> tuple[str, str]:
+    """Extract (title, plain text head) from raw HTML without a parser dependency."""
+    title_match = _TITLE_RE.search(html)
+    title = _TAG_RE.sub(" ", title_match.group(1)).strip() if title_match else ""
+
+    body = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    body = re.sub(r"<style[^>]*>.*?</style>", " ", body, flags=re.DOTALL | re.IGNORECASE)
+    body = _TAG_RE.sub(" ", body)
+    body = re.sub(r"&[a-zA-Z]+;", " ", body)
+    body = re.sub(r"\s{2,}", " ", body).strip()
+    return title, body[:LIGHT_CHECK_MAX_CHARS]
+
+
+def verify_website(url: str, company: str, location: str) -> CoherenceResult:
+    """
+    Cheap homepage fetch to confirm the domain belongs to the prospect's company.
+
+    Runs before the hit score so an unrelated site never earns its 10 points.
+    A failed fetch is inconclusive, never a rejection.
+    """
+    if not url:
+        return CoherenceResult(coherent=True, verified=False, reason="aucun site à vérifier")
+    try:
+        resp = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=8,
+            allow_redirects=True,
+        )
+        resp.raise_for_status()
+        title, text = _light_page_text(resp.text)
+    except Exception as e:
+        logger.debug(f"Light website check failed for {url}: {e}")
+        return CoherenceResult(coherent=True, verified=False, reason="site injoignable")
+
+    return check_site_coherence(company, location, title, text)
+
+
 # ── Main enrichment logic ──────────────────────────────────────────────────────
 
 def find_linkedin_and_website(lead: dict) -> dict:
@@ -212,15 +255,29 @@ def find_linkedin_and_website(lead: dict) -> dict:
 
     time.sleep(config.REQUEST_DELAY / 2)
 
-    # ── Website via Clearbit (+ DuckDuckGo fallback) ─────────────────────────
+    # ── Website via Clearbit (+ Serper / DuckDuckGo fallback) ────────────────
+    lead["website_rejected"] = None
+    lead["website_check_reason"] = None
     if company:
-        lead["website"] = _find_company_website(company, lead.get("location", ""))
-        if lead["website"]:
-            logger.debug(f"Website found for {company}: {lead['website']}")
+        candidate = _find_company_website(company, lead.get("location", ""))
+        if candidate:
+            check = verify_website(candidate, company, lead.get("location", ""))
+            lead["website_coherent"] = check.coherent
+            lead["website_check_reason"] = check.reason
+            if check.coherent:
+                lead["website"] = candidate
+                logger.debug(f"Website accepted for {company}: {candidate}")
+            else:
+                lead["website"] = None
+                lead["website_rejected"] = candidate
+                logger.info(f"Website rejected for '{company}': {candidate} — {check.reason}")
         else:
+            lead["website"] = None
+            lead["website_coherent"] = False
             logger.debug(f"No website found for {company}")
     else:
         lead["website"] = None
+        lead["website_coherent"] = False
 
     time.sleep(config.REQUEST_DELAY / 2)
 
@@ -260,6 +317,13 @@ def enrich_leads_google(leads: list[dict]) -> list[dict]:
         names = ", ".join(f"{l.get('company', '?')}" for l in no_website[:5])
         suffix = f" (+{len(no_website) - 5} others)" if len(no_website) > 5 else ""
         logger.info(f"No website found for: {names}{suffix}")
+
+    rejected = [l for l in leads if l.get("website_rejected")]
+    if rejected:
+        logger.info(
+            f"Websites rejected for incoherence: {len(rejected)} "
+            f"({', '.join(l.get('company', '?') for l in rejected[:5])})"
+        )
 
     return leads
 

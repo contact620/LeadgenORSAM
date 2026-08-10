@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from enrichers.google_search import _clearbit_domain, _pick_website
+from processors.coherence import CoherenceResult
 
 
 def test_clearbit_rejects_generic_word_match():
@@ -42,3 +43,29 @@ def test_pick_website_skips_blocked_domains():
 def test_pick_website_does_not_truncate_domain_names():
     # Regression on lstrip("www."): "wework.com" must not become "ework.com"
     assert _pick_website(["https://wework.com"]) == "https://wework.com"
+
+
+def test_verify_website_rejects_unrelated_page():
+    from enrichers.google_search import verify_website
+    html = "<html><head><title>Rentkasa</title></head><body>" + \
+           "Rentkasa propose des locations saisonnieres en Espagne. " * 5 + \
+           "</body></html>"
+
+    class _Resp:
+        status_code = 200
+        text = html
+
+        def raise_for_status(self):
+            return None
+
+    with patch("enrichers.google_search.requests.get", return_value=_Resp()):
+        result = verify_website("https://rentkasa.com", "Houzing", "Paris, France")
+    assert result.coherent is False
+
+
+def test_verify_website_is_inconclusive_when_fetch_fails():
+    from enrichers.google_search import verify_website
+    with patch("enrichers.google_search.requests.get", side_effect=OSError("boom")):
+        result = verify_website("https://acme.ma", "Acme", "Casablanca, Maroc")
+    assert result.coherent is True
+    assert result.verified is False
