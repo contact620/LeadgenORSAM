@@ -13,9 +13,9 @@
   "sector_aliases": {
     "tourisme": ["hôtellerie restauration", "hôtellerie", "restauration"],
     "sante": ["recherche clinique", "santé", "pharmaceutique", "biotechnologie"],
-    "services b2b": ["conseil qualité", "conseil digital", "conseil", "ingénierie"],
-    "saas": ["datacenters", "infrastructure informatique", "logiciel", "informatique"],
-    "immobilier": ["logement social", "immobilier résidentiel", "promotion immobilière"],
+    "services b2b": ["conseil qualité", "conseil digital", "conseil"],
+    "saas": ["logiciel"],
+    "immobilier": ["immobilier résidentiel", "promotion immobilière"],
     "education": ["formation", "enseignement"]
   },
 

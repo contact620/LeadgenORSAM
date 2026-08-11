@@ -155,12 +155,7 @@ def test_competitor_keywords_no_longer_exist():
     ("conseil qualité", "services b2b"),
     ("conseil digital", "services b2b"),
     ("conseil", "services b2b"),
-    ("ingénierie", "services b2b"),
-    ("datacenters", "saas"),
-    ("infrastructure informatique", "saas"),
     ("logiciel", "saas"),
-    ("informatique", "saas"),
-    ("logement social", "immobilier"),
     ("immobilier résidentiel", "immobilier"),
     ("promotion immobilière", "immobilier"),
     ("formation", "education"),
@@ -178,6 +173,29 @@ def test_canonical_sector_returns_none_for_an_unknown_label():
     assert rules.canonical_sector("vente de mobilier de jardin") is None
     assert rules.canonical_sector("") is None
     assert rules.canonical_sector(None) is None
+
+
+@pytest.mark.parametrize("label", [
+    "datacenters",
+    "infrastructure informatique",
+    "informatique",
+    "logement social",
+    "ingénierie",
+])
+def test_adjacent_sectors_are_deliberately_not_aliased(label):
+    """
+    An alias is a synonym, never a classification judgement.
+
+    These labels appeared in the 10-lead pilot and were briefly aliased to a
+    high-value sector, which handed each affected lead +10 points and moved
+    JERLAURE (a datacenter *builder*) and OPH 05 (a public housing body) from
+    cold to warm. Neither sells through digital acquisition, so the promotion
+    was flattering rather than accurate. They resolve to None and score
+    `other` (50) — "we know what they do, it just is not a priority".
+
+    Revisit only with real conversion data from BoxCom's own client base.
+    """
+    assert load_rules().canonical_sector(label) is None
 
 
 def test_canonical_sector_matches_exactly_not_by_substring():
