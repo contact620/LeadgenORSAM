@@ -17,6 +17,7 @@ from typing import Optional
 import requests
 
 import config
+from api.provider_status import ProviderFailure, ProviderRegistry, StepOutcome
 from enrichers.retry import retry_api_call, AuthError
 
 logger = logging.getLogger(__name__)
@@ -139,22 +140,27 @@ def _extract_phone(dc_item: dict) -> Optional[str]:
     return None
 
 
-def enrich_leads_dropcontact(leads: list[dict]) -> list[dict]:
+def enrich_leads_dropcontact(leads: list[dict], registry: ProviderRegistry | None = None) -> list[dict]:
     """
     Enrich a list of leads with email and phone via Dropcontact.
 
     Processes in batches of DROPCONTACT_BATCH_SIZE. Modifies leads in place.
+    Raises ProviderFailure when the very first batch fails: continuing would
+    produce a CSV with no contact data and a run marked successful.
     """
     if config._is_placeholder(config.DROPCONTACT_API_KEY):
         logger.info("DROPCONTACT_API_KEY not set. Skipping email/phone enrichment.")
         for lead in leads:
             lead.setdefault("email", None)
             lead.setdefault("phone", None)
+        if registry:
+            registry.record(StepOutcome("dropcontact", "skipped", "clé API absente", 0))
         return leads
 
     batch_size = config.DROPCONTACT_BATCH_SIZE
     total = len(leads)
     enriched_count = 0
+    failed_batches = 0
 
     for batch_start in range(0, total, batch_size):
         batch = leads[batch_start : batch_start + batch_size]
@@ -163,6 +169,13 @@ def enrich_leads_dropcontact(leads: list[dict]) -> list[dict]:
 
         request_id = _post_batch(batch)
         if not request_id:
+            if batch_num == 1:
+                raise ProviderFailure(
+                    "dropcontact",
+                    "le premier lot a échoué — clé invalide ou crédits épuisés. "
+                    "Run interrompu pour ne pas produire un fichier sans contacts.",
+                )
+            failed_batches += 1
             logger.warning(f"Batch {batch_num} submission failed. Setting email/phone to None.")
             for lead in batch:
                 lead.setdefault("email", None)
@@ -171,6 +184,13 @@ def enrich_leads_dropcontact(leads: list[dict]) -> list[dict]:
 
         enriched_data = _poll_batch(request_id)
         if not enriched_data:
+            if batch_num == 1:
+                raise ProviderFailure(
+                    "dropcontact",
+                    "le premier lot n'a jamais abouti (timeout de polling). "
+                    "Run interrompu pour ne pas produire un fichier sans contacts.",
+                )
+            failed_batches += 1
             logger.warning(f"Batch {batch_num} polling failed. Setting email/phone to None.")
             for lead in batch:
                 lead.setdefault("email", None)
@@ -210,6 +230,15 @@ def enrich_leads_dropcontact(leads: list[dict]) -> list[dict]:
         f"Dropcontact enrichment complete. "
         f"{enriched_count}/{total} emails, {phone_count}/{total} phones found."
     )
+    if registry:
+        if failed_batches:
+            registry.record(StepOutcome(
+                "dropcontact", "degraded",
+                f"{failed_batches} lot(s) en échec sur {(total + batch_size - 1) // batch_size}",
+                enriched_count,
+            ))
+        else:
+            registry.record(StepOutcome("dropcontact", "ok", None, enriched_count))
     return leads
 
 

@@ -1,268 +1,314 @@
 """
-Step 5 — ICP scoring (hit leads only).
+Step 7 — Deterministic ICP scoring.
 
-Evaluates each hit lead's fit as a potential BoxCom client using Claude Haiku.
-Leads are batched (default 5 per API call) for cost efficiency.
-The ICP (Ideal Customer Profile) is defined in the system prompt — not user input.
+The previous version asked an LLM to grade four axes before any evidence had
+been collected, which made the score inversely correlated with knowledge: an
+unknown company got generous defaults, a known one got real criteria applied.
 
-Produces per lead:
-  - icp_score (0-100, weighted from 4 axes)
-  - icp_tier  ("hot" / "warm" / "cold")
-  - icp_rationale (2-3 sentence justification)
-  - icp_scores_detail (JSON string with per-axis scores)
+Here the LLM only extracts sourced facts (see enrichers/fact_extractor.py).
+This module turns facts into a score using versioned tables, so the result is
+reproducible, explainable and testable without an API call.
 """
 import json
 import logging
-import os
-import re
-import time
+from dataclasses import dataclass
+from datetime import date
 from typing import Optional
 
-import anthropic
-
-import config
-from enrichers.retry import retry_api_call, AuthError
+from processors.icp_rules import IcpRules, load_rules
 
 logger = logging.getLogger(__name__)
 
-# ── Axis weights (must sum to 1.0) ──────────────────────────────────────────
-AXIS_WEIGHTS = {
-    "secteur": 0.20,
-    "taille": 0.20,
-    "localisation": 0.20,
-    "signaux": 0.40,
-}
 
-DEFAULT_SYSTEM_PROMPT = """\
-Tu es un expert en qualification de leads B2B pour BoxCom, une agence de communication digitale \
-basée au Maroc avec +10 ans d'expertise.
-
-BoxCom propose 4 services principaux :
-- Marketing Digital (stratégie, ads, SEO, réseaux sociaux)
-- Contenu Créatif (branding, vidéo, motion design, social media)
-- Développement Web (sites vitrines, e-commerce, landing pages)
-- Lead Generation (funnels, lead scoring, campagnes d'acquisition)
-
-Pour chaque prospect, évalue sa pertinence comme client potentiel pour BoxCom \
-sur 4 axes (score 0-100 chacun) :
-
-1. **secteur** (20%) — L'entreprise opère-t-elle dans un secteur où BoxCom apporte une forte \
-valeur ajoutée ? (e-commerce, SaaS, services B2B, immobilier, éducation, santé, tourisme = élevé)
-2. **taille** (20%) — PME/ETI 10-500 employés = élevé ; micro-entreprise ou grand groupe = moyen/bas
-3. **localisation** (20%) — Maroc, Afrique francophone, France = élevé
-4. **signaux** (40%) — Signaux de besoin pour les services BoxCom ? (site obsolète, pas de social media, \
-recrutement marketing, lancement produit, levée de fonds, expansion, refonte digitale, croissance rapide...)
-
-Note : le poste/séniorité n'est PAS évalué ici — déjà filtré en amont via Apollo.
-
-Puis génère :
-- "icp_rationale" : 2-3 phrases justifiant les scores, mentionnant les services BoxCom pertinents.
-
-Réponds UNIQUEMENT en JSON : un tableau d'objets dans le même ordre que les prospects.
-Chaque objet a les clés : "secteur" (int), "taille" (int), "localisation" (int), "signaux" (int), \
-"icp_rationale" (string).
-Pas de markdown, pas d'explication, juste le JSON brut."""
-
-_icp_disabled = False
+@dataclass
+class IcpResult:
+    icp_score: int
+    icp_tier: str                       # "hot" | "warm" | "cold" | "disqualified"
+    icp_rationale: str
+    icp_scores_detail: str              # JSON string
+    disqualification_reason: Optional[str]
+    evidence_verified: bool
 
 
-def _reset_state():
-    """Reset module state between pipeline runs."""
-    global _icp_disabled
-    _icp_disabled = False
+# ── Fact readers ─────────────────────────────────────────────────────────────
+
+def _value(fact) -> object:
+    """Read the value of a sourced fact, or None when the fact is absent.
+
+    The source is required here too, not only in sanitize_facts. Both ends
+    enforcing "no source, no fact" costs one condition and means a caller that
+    hands us raw model output — a future step, a replayed facts_json — cannot
+    smuggle in an unsourced claim.
+    """
+    if not isinstance(fact, dict):
+        return None
+    source = fact.get("source")
+    if not isinstance(source, str) or not source.strip():
+        return None
+    return fact.get("value")
 
 
-def _load_system_prompt() -> str:
-    """Load system prompt from file, falling back to embedded default."""
-    prompt_path = config.ICP_PROMPT_PATH
-    # Resolve relative to project root
-    if not os.path.isabs(prompt_path):
-        project_root = os.path.dirname(os.path.dirname(__file__))
-        prompt_path = os.path.join(project_root, prompt_path)
+def _months_between(older: Optional[str], reference: date) -> Optional[int]:
+    """Months from a 'YYYY-MM' (or 'YYYY-MM-DD') string to the reference date."""
+    if not older:
+        return None
     try:
-        with open(prompt_path, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-        if content:
-            return content
-    except (FileNotFoundError, OSError) as e:
-        logger.warning(f"Cannot load ICP prompt from {prompt_path}: {e}. Using default.")
-    return DEFAULT_SYSTEM_PROMPT
+        parts = str(older).split("-")
+        year, month = int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return None
+    return (reference.year - year) * 12 + (reference.month - month)
 
 
-def _build_batch_user_prompt(leads: list[dict], enrich_instructions: str = "") -> str:
-    """Build the user prompt for a batch of leads."""
-    parts = [
-        "Évalue chaque prospect ci-dessous comme client potentiel pour BoxCom.\n",
-    ]
-    if enrich_instructions:
-        parts.append(f"INSTRUCTIONS SPÉCIFIQUES DE L'UTILISATEUR :")
-        parts.append(f"{enrich_instructions}")
-        parts.append(f"Utilise ces instructions pour orienter ton évaluation, en particulier l'axe 'signaux' (40%).\n")
-    for i, lead in enumerate(leads, 1):
-        parts.append(f"Prospect {i} :")
-        parts.append(f"  Prénom: {lead.get('first_name', 'N/A')}")
-        parts.append(f"  Nom: {lead.get('last_name', 'N/A')}")
-        parts.append(f"  Poste: {lead.get('job_title', 'N/A')}")
-        parts.append(f"  Entreprise: {lead.get('company', 'N/A')}")
-        parts.append(f"  Localisation: {lead.get('location', 'N/A')}")
-        parts.append(f"  Email: {lead.get('email', 'N/A')}")
-        parts.append(f"  LinkedIn: {lead.get('linkedin_url', 'N/A')}")
-        parts.append(f"  Site web: {lead.get('website', 'N/A')}")
-        parts.append("")
-    return "\n".join(parts)
+# ── Axis scoring ─────────────────────────────────────────────────────────────
+
+def _score_sector(facts: dict, rules: IcpRules) -> int:
+    sector = _value(facts.get("secteur"))
+    if not sector:
+        return rules.sector_points.get("unknown", 0)
+    # Exact match on the canonicalized label, not substring: a substring test
+    # here previously matched "sante" inside "industrie croissante". A
+    # sourced-but-unrecognised label ("nom mal orthographié", a synonym not
+    # yet in sector_aliases) is present, just not prioritised, so it lands on
+    # "other" rather than "unknown" — the sourcing itself is worth something.
+    canonical = rules.canonical_sector(sector)
+    if canonical is not None and canonical in rules.high_value_sectors:
+        return rules.sector_points.get("high_value", 100)
+    return rules.sector_points.get("other", 50)
 
 
-def _compute_weighted_score(scores: dict) -> int:
-    """Compute weighted ICP score from per-axis scores."""
-    total = 0.0
-    for axis, weight in AXIS_WEIGHTS.items():
-        value = scores.get(axis, 0)
-        if not isinstance(value, (int, float)):
-            value = 0
-        total += max(0, min(100, value)) * weight
-    return round(total)
+def _score_size(facts: dict, rules: IcpRules) -> int:
+    headcount = _value(facts.get("effectif"))
+    if not isinstance(headcount, (int, float)):
+        return 0
+    for band in rules.size_bands:
+        if band["min"] <= headcount <= band["max"]:
+            return band["points"]
+    return 0
 
 
-def _score_to_tier(score: int) -> str:
-    """Map numeric score to tier label."""
-    if score > 70:
-        return "hot"
-    elif score >= 40:
-        return "warm"
-    return "cold"
+def _score_location(facts: dict, rules: IcpRules) -> int:
+    country = _value(facts.get("pays"))
+    if not country:
+        return 0
+    zone = rules.country_zone(str(country))
+    if zone is None:
+        return 0
+    return rules.zone_points.get(zone, 0)
 
 
-def _parse_response(text: str, expected_count: int) -> list[Optional[dict]]:
-    """Parse Claude's JSON response, returning a list of score dicts (or None for failures)."""
-    # Strip markdown fences if present
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```[a-z]*\n?", "", cleaned)
-        cleaned = re.sub(r"\n?```$", "", cleaned).strip()
+def _score_signals(facts: dict, rules: IcpRules, run_date: date) -> tuple[int, int]:
+    """Return (signal_axis_score, effective_maturity_adjustment).
 
-    # Try direct JSON parse
-    try:
-        data = json.loads(cleaned)
-        if isinstance(data, list) and len(data) == expected_count:
-            return data
-    except json.JSONDecodeError:
-        pass
+    The adjustment reported is the axis's actual gain, not the nominal bonus:
+    when the signal score is already at the 100-point ceiling, the bonus is
+    entirely absorbed by the clamp and the honest number to report is 0 — a
+    reader reconciling the rationale with the score must never see a bonus
+    that could not have moved the axis.
+    """
+    signals = [s for s in (facts.get("signaux") or []) if isinstance(s, dict)]
+    count = len(signals)
 
-    # Fallback: extract JSON array with regex
-    match = re.search(r"\[.*\]", cleaned, re.DOTALL)
-    if match:
-        try:
-            data = json.loads(match.group())
-            if isinstance(data, list) and len(data) == expected_count:
-                return data
-        except json.JSONDecodeError:
-            pass
-
-    logger.warning(f"ICP: could not parse response or count mismatch (expected {expected_count})")
-    return [None] * expected_count
-
-
-def _call_claude_batch(leads: list[dict], enrich_instructions: str = "") -> list[Optional[dict]]:
-    """Call Claude Haiku for a batch of leads. Returns list of score dicts."""
-    global _icp_disabled
-    if _icp_disabled:
-        return [None] * len(leads)
-
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-    system_prompt = _load_system_prompt()
-    user_prompt = _build_batch_user_prompt(leads, enrich_instructions)
-
-    batch_size = len(leads)
-    lead_names = ", ".join(
-        f"{l.get('first_name', '')} {l.get('last_name', '')}".strip() for l in leads
+    recent = any(
+        (age := _months_between(s.get("date"), run_date)) is not None
+        and 0 <= age <= rules.signal_recency_months
+        for s in signals
     )
 
-    def _do_request():
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=200 * batch_size,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
+    if count >= 3:
+        key = "three_or_more_recent" if recent else "three_or_more"
+    elif count == 2:
+        key = "two"
+    elif count == 1:
+        key = "one"
+    else:
+        key = "none"
+    points = rules.signal_points.get(key, 0)
+
+    # Digital maturity encodes BoxCom's ideal profile: a weak digital
+    # presence is a buying signal and earns a bonus. A mature presence is
+    # merely neutral — exactly like an unknown one — never a penalty.
+    # Acquiring the maturity fact must never be able to lower a score: that
+    # inversion (more evidence -> lower score) is the client's original
+    # complaint, and a penalty branch here would reintroduce it.
+    nominal_bonus = 0
+    maturity = _value(facts.get("maturite_digitale"))
+    if isinstance(maturity, (int, float)) and maturity <= rules.maturity_low_max:
+        nominal_bonus = rules.maturity_bonus
+
+    total = max(0, min(100, points + nominal_bonus))
+    effective_adjustment = total - points
+    return total, effective_adjustment
+
+
+# ── Disqualification ─────────────────────────────────────────────────────────
+
+def _disqualification_reason(facts: dict, rules: IcpRules) -> Optional[str]:
+    headcount = _value(facts.get("effectif"))
+    if isinstance(headcount, (int, float)):
+        if headcount > rules.size_disqualify_above:
+            return (f"grand groupe — {int(headcount)} employés, "
+                    f"au-delà du seuil de {rules.size_disqualify_above}")
+        if headcount < rules.size_disqualify_below:
+            return (f"micro-entreprise — {int(headcount)} employés, "
+                    f"sous le seuil de {rules.size_disqualify_below}")
+
+    sector = _value(facts.get("secteur"))
+    if sector:
+        canonical = rules.canonical_sector(sector)
+        if canonical is not None and canonical in rules.excluded_sectors:
+            return f"secteur exclu — {sector}"
+
+    # Geography disqualifies only a country we actually recognise. An
+    # unrecognised label ("Zzz", a corrupted extraction) tells us nothing
+    # about where the company operates, and "hors zone géographique" is a
+    # claim we would be unable to substantiate — the same principle applied
+    # to every other rule here.
+    country = _value(facts.get("pays"))
+    if country:
+        canonical = rules.canonical_country(str(country))
+        if canonical is not None and rules.country_zone(canonical) is None:
+            return f"hors zone géographique — {canonical}"
+
+    return None
+
+
+# ── Public API ───────────────────────────────────────────────────────────────
+
+def score_lead(
+    facts: dict,
+    evidence_level: str,
+    rules: IcpRules,
+    run_date: date,
+) -> IcpResult:
+    """Turn validated facts into a score, a tier and, where warranted, a refusal."""
+    signal_score, maturity_adjustment = _score_signals(facts, rules, run_date)
+    weighted_axes = {
+        "secteur": _score_sector(facts, rules),
+        "taille": _score_size(facts, rules),
+        "localisation": _score_location(facts, rules),
+        "signaux": signal_score,
+    }
+    raw_score = round(sum(weighted_axes[axis] * rules.weights[axis] for axis in weighted_axes))
+    # "maturite_ajustement" is informational only — never weighted on its own,
+    # since the adjustment it reports is already folded into "signaux" above.
+    # It is the *effective* gain (post-clamp), not the nominal bonus: it
+    # exists so a rationale reader can answer "why this score?" on the axis
+    # that carries 40% of the weight and was the subject of the client's
+    # complaint, without ever seeing a number the score could not have moved by.
+    detail = dict(weighted_axes)
+    detail["maturite_ajustement"] = maturity_adjustment
+    detail_json = json.dumps(detail)
+    verified = evidence_level == "sufficient"
+
+    # 1. Insufficient evidence: cap and fall into cold immediately. No rule
+    #    below this point — including the competitor check — may override
+    #    it, "sourced" competitor claim or not: every verdict must rest on
+    #    evidence we can point to. This used to be checked second, behind an
+    #    unconditional competitor exception; the pilot run disqualified
+    #    Astrak France (a construction-equipment parts distributor) as a
+    #    "concurrent direct" on evidence_level="weak" — exactly the false
+    #    positive this ordering now prevents.
+    if not verified:
+        return IcpResult(
+            icp_score=min(raw_score, rules.unverified_score_cap),
+            icp_tier="cold",
+            icp_rationale=(
+                "Preuves insuffisantes pour évaluer ce prospect "
+                f"(niveau de preuve : {evidence_level}). Score plafonné, "
+                "qualification manuelle nécessaire."
+            ),
+            icp_scores_detail=detail_json,
+            disqualification_reason=None,
+            evidence_verified=False,
         )
-        content = message.content[0].text.strip()
-        logger.debug(f"Raw ICP response: {content!r}")
-        return _parse_response(content, batch_size)
 
-    try:
-        return retry_api_call(_do_request, max_retries=3, operation_name=f"ICP scoring ({lead_names})")
-    except AuthError as e:
-        _icp_disabled = True
-        logger.error(f"ICP scoring auth failed — disabled for this run: {e}")
-        return [None] * batch_size
-    except Exception as e:
-        logger.error(f"ICP scoring failed after retries for batch [{lead_names}]: {e}")
-        return [None] * batch_size
+    # 2. Hard rules, only on properly evidenced leads. The competitor check
+    #    now sits here, alongside every other hard rule, instead of ahead of
+    #    the evidence gate above: "sourced" is still load-bearing (an
+    #    unsourced est_concurrent is dropped by sanitize_facts, so a model
+    #    cannot disqualify a prospect on the strength of its company name
+    #    alone), but a source is no longer sufficient by itself — the
+    #    evidence level must also clear the same bar as any other verdict.
+    if _value(facts.get("est_concurrent")) is True:
+        return IcpResult(
+            icp_score=raw_score, icp_tier="disqualified",
+            icp_rationale="Concurrent direct de BoxCom — ne peut pas être client.",
+            icp_scores_detail=detail_json,
+            disqualification_reason="concurrent direct",
+            evidence_verified=True,
+        )
+
+    reason = _disqualification_reason(facts, rules)
+    if reason:
+        return IcpResult(
+            icp_score=raw_score, icp_tier="disqualified",
+            icp_rationale=f"Prospect disqualifié : {reason}.",
+            icp_scores_detail=detail_json,
+            disqualification_reason=reason,
+            evidence_verified=True,
+        )
+
+    # 3. Normal tiers
+    if raw_score >= rules.tier_hot_min:
+        tier = "hot"
+    elif raw_score >= rules.tier_warm_min:
+        tier = "warm"
+    else:
+        tier = "cold"
+
+    signal_count = len([s for s in (facts.get("signaux") or []) if isinstance(s, dict)])
+    maturity_note = (
+        f", dont +{maturity_adjustment} pt(s) bonus maturité digitale faible"
+        if maturity_adjustment else ""
+    )
+    rationale = (
+        f"Secteur {detail['secteur']}/100, taille {detail['taille']}/100, "
+        f"localisation {detail['localisation']}/100, "
+        f"signaux {detail['signaux']}/100 ({signal_count} signal(aux) sourcé(s)"
+        f"{maturity_note})."
+    )
+
+    return IcpResult(
+        icp_score=raw_score, icp_tier=tier,
+        icp_rationale=rationale,
+        icp_scores_detail=detail_json,
+        disqualification_reason=None,
+        evidence_verified=True,
+    )
 
 
-def score_leads_icp(hit_leads: list[dict], enrich_instructions: str = "") -> list[dict]:
+def apply_scores(
+    leads: list[dict],
+    rules: Optional[IcpRules] = None,
+    run_date: Optional[date] = None,
+) -> list[dict]:
     """
-    Score hit leads against BoxCom's ICP. Sets on each lead:
-      lead["icp_score"]         — int 0-100
-      lead["icp_tier"]          — "hot" / "warm" / "cold"
-      lead["icp_rationale"]     — string
-      lead["icp_scores_detail"] — JSON string {"secteur": .., "taille": .., ...}
+    Score every lead in place from lead['facts'] and lead['evidence_level'].
+
+    Both keys are produced by enrichers/fact_extractor.py earlier in the run.
     """
-    _reset_state()
+    active_rules = rules or load_rules()
+    today = run_date or date.today()
 
-    if config._is_placeholder(config.ANTHROPIC_API_KEY):
-        logger.error("ANTHROPIC_API_KEY not set. Skipping ICP scoring.")
-        for lead in hit_leads:
-            lead["icp_score"] = None
-            lead["icp_tier"] = None
-            lead["icp_rationale"] = None
-            lead["icp_scores_detail"] = None
-        return hit_leads
+    counts = {"hot": 0, "warm": 0, "cold": 0, "disqualified": 0}
+    for lead in leads:
+        result = score_lead(
+            lead.get("facts") or {},
+            lead.get("evidence_level") or "none",
+            active_rules,
+            today,
+        )
+        lead["icp_score"] = result.icp_score
+        lead["icp_tier"] = result.icp_tier
+        lead["icp_rationale"] = result.icp_rationale
+        lead["icp_scores_detail"] = result.icp_scores_detail
+        lead["disqualification_reason"] = result.disqualification_reason
+        lead["evidence_verified"] = result.evidence_verified
+        counts[result.icp_tier] = counts.get(result.icp_tier, 0) + 1
 
-    total = len(hit_leads)
-    batch_size = config.ICP_BATCH_SIZE
-    scored = 0
-
-    for batch_start in range(0, total, batch_size):
-        batch = hit_leads[batch_start:batch_start + batch_size]
-        batch_num = batch_start // batch_size + 1
-        total_batches = (total + batch_size - 1) // batch_size
-
-        logger.info(f"ICP scoring [batch {batch_num}/{total_batches}]: {len(batch)} leads")
-
-        results = _call_claude_batch(batch, enrich_instructions)
-
-        for lead, result in zip(batch, results):
-            if result and isinstance(result, dict):
-                detail = {
-                    "secteur": result.get("secteur", 0),
-                    "taille": result.get("taille", 0),
-                    "localisation": result.get("localisation", 0),
-                    "signaux": result.get("signaux", 0),
-                }
-                score = _compute_weighted_score(detail)
-                lead["icp_score"] = score
-                lead["icp_tier"] = _score_to_tier(score)
-                lead["icp_rationale"] = result.get("icp_rationale", "")
-                lead["icp_scores_detail"] = json.dumps(detail)
-                scored += 1
-            else:
-                lead["icp_score"] = None
-                lead["icp_tier"] = None
-                lead["icp_rationale"] = None
-                lead["icp_scores_detail"] = None
-
-        if _icp_disabled:
-            logger.warning(f"ICP disabled — skipping remaining {total - batch_start - len(batch)} leads")
-            for remaining in hit_leads[batch_start + len(batch):]:
-                remaining["icp_score"] = None
-                remaining["icp_tier"] = None
-                remaining["icp_rationale"] = None
-                remaining["icp_scores_detail"] = None
-            break
-
-        # Rate limit between batches
-        if batch_start + batch_size < total:
-            time.sleep(0.5)
-
-    logger.info(f"ICP scoring complete. {scored}/{total} leads scored.")
-    return hit_leads
+    logger.info(
+        f"ICP scoring complete: {counts['hot']} hot, {counts['warm']} warm, "
+        f"{counts['cold']} cold, {counts['disqualified']} disqualified."
+    )
+    return leads

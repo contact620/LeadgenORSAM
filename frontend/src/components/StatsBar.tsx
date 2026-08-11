@@ -1,5 +1,6 @@
 import { Users, Zap, Mail, Linkedin, Phone, Target, Sparkles } from 'lucide-react'
 import type { JobResult } from '@/lib/api'
+import { TIER_ICON, TIER_STYLE } from '@/lib/tiers'
 
 interface Props {
   result: JobResult
@@ -53,7 +54,7 @@ export function StatsBar({ result }: Props) {
       </div>
 
       {/* ICP distribution */}
-      {(stats.icp_hot_count > 0 || stats.icp_warm_count > 0 || stats.icp_cold_count > 0) && (
+      {(stats.icp_hot_count > 0 || stats.icp_warm_count > 0 || stats.icp_cold_count > 0 || stats.icp_disqualified_count > 0) && (
         <div
           className="mt-3 rounded-xl px-5 py-4"
           style={{ background: 'var(--th-glass-sm-bg)', border: '1px solid var(--th-glass-sm-border)' }}
@@ -64,34 +65,43 @@ export function StatsBar({ result }: Props) {
           </div>
           <div className="flex gap-4">
             <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" style={{ background: 'rgba(249,115,22,0.12)', color: '#fb923c', border: '1px solid rgba(249,115,22,0.25)' }}>
-                🔥 Hot
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" style={TIER_STYLE.hot}>
+                {TIER_ICON.hot} Hot
               </span>
               <span className="font-mono text-sm font-semibold" style={{ color: 'var(--th-text-primary)' }}>{stats.icp_hot_count}</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" style={{ background: 'rgba(251,191,36,0.10)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.22)' }}>
-                🟡 Warm
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" style={TIER_STYLE.warm}>
+                {TIER_ICON.warm} Warm
               </span>
               <span className="font-mono text-sm font-semibold" style={{ color: 'var(--th-text-primary)' }}>{stats.icp_warm_count}</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" style={{ background: 'rgba(148,163,184,0.08)', color: 'rgba(148,163,184,0.7)', border: '1px solid rgba(148,163,184,0.15)' }}>
-                ❄️ Cold
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" style={TIER_STYLE.cold}>
+                {TIER_ICON.cold} Cold
               </span>
               <span className="font-mono text-sm font-semibold" style={{ color: 'var(--th-text-primary)' }}>{stats.icp_cold_count}</span>
             </div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" style={TIER_STYLE.disqualified}>
+                {TIER_ICON.disqualified} Disqualifié
+              </span>
+              <span className="font-mono text-sm font-semibold" style={{ color: 'var(--th-text-primary)' }}>{stats.icp_disqualified_count}</span>
+            </div>
           </div>
           {(() => {
-            const total = stats.icp_hot_count + stats.icp_warm_count + stats.icp_cold_count
+            const total = stats.icp_hot_count + stats.icp_warm_count + stats.icp_cold_count + stats.icp_disqualified_count
             if (!total) return null
             const hotPct = (stats.icp_hot_count / total) * 100
             const warmPct = (stats.icp_warm_count / total) * 100
+            const coldPct = (stats.icp_cold_count / total) * 100
+            const disqualifiedPct = (stats.icp_disqualified_count / total) * 100
             return (
               <div className="mt-3 h-1.5 rounded-full overflow-hidden flex" style={{ background: 'var(--th-border-default)' }}>
-                {hotPct > 0 && <div className="h-full" style={{ width: `${hotPct}%`, background: '#fb923c' }} />}
-                {warmPct > 0 && <div className="h-full" style={{ width: `${warmPct}%`, background: '#fbbf24' }} />}
-                <div className="h-full flex-1" style={{ background: 'rgba(148,163,184,0.25)' }} />
+                {hotPct > 0 && <div className="h-full" style={{ width: `${hotPct}%`, background: TIER_STYLE.hot.color }} />}
+                {warmPct > 0 && <div className="h-full" style={{ width: `${warmPct}%`, background: TIER_STYLE.warm.color }} />}
+                {coldPct > 0 && <div className="h-full" style={{ width: `${coldPct}%`, background: TIER_STYLE.cold.color }} />}
+                {disqualifiedPct > 0 && <div className="h-full" style={{ width: `${disqualifiedPct}%`, background: TIER_STYLE.disqualified.color }} />}
               </div>
             )
           })()}

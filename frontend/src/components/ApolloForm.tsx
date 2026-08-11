@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
 import { Rocket, AlertCircle, Settings, ChevronDown, ChevronUp, Database } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { getHealth, startScrapeJob, type HealthCheck, type RunRequest, type RerunParams, type ConfigStatus } from '@/lib/api'
+import { getHealth, startScrapeJob, type HealthCheck, type RunRequest, type RerunParams } from '@/lib/api'
 
 interface Props {
   onSubmit: (req: RunRequest) => void
@@ -73,11 +73,12 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
 
   const pipelineSteps = [
     { icon: '🔍', name: 'Scraping Apollo', tool: 'Playwright' },
-    { icon: '🔗', name: 'LinkedIn URL', tool: 'Google CSE' },
-    { icon: '📧', name: 'Email + Tel', tool: 'Dropcontact' },
-    { icon: '📊', name: 'Score & Filtre', tool: 'Hit Score 0-100' },
-    { icon: '🎯', name: 'Scoring ICP', tool: 'Claude AI' },
-    { icon: '🤖', name: 'Enrichissement', tool: 'Claude + Perplexity' },
+    { icon: '📧', name: 'Enrichissement contacts', tool: 'Google + Dropcontact + Hunter' },
+    { icon: '📊', name: 'Calcul du taux de hit', tool: 'Hit Score 0-100' },
+    { icon: '🕵️', name: 'Collecte de preuves', tool: 'Site web + Perplexity' },
+    { icon: '📄', name: 'Extraction de faits', tool: 'Claude AI' },
+    { icon: '🎯', name: 'Scoring ICP', tool: 'Scoring déterministe' },
+    { icon: '🤖', name: 'Angles commerciaux', tool: 'Claude AI' },
   ]
 
   return (
@@ -95,7 +96,7 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
           Lead Generation Pipeline
         </h1>
         <p className="text-sm font-light" style={{ color: 'var(--th-text-tertiary)', lineHeight: 1.6 }}>
-          Extrayez, enrichissez et qualifiez vos leads B2B en 6 étapes automatisées.
+          Extrayez, enrichissez et qualifiez vos leads B2B en 7 étapes automatisées.
         </p>
       </div>
 
@@ -257,7 +258,7 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
           {/* Pipeline steps (vertical) */}
           <div className="glass-card-sm p-4">
             <p className="text-xs font-semibold mb-3" style={{ color: 'var(--th-text-faint)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-              Pipeline · 6 étapes
+              Pipeline · 7 étapes
             </p>
             <div className="space-y-2">
               {pipelineSteps.map((step, i) => (

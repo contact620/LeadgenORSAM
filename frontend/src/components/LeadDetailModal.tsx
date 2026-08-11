@@ -1,5 +1,6 @@
-import { X, Briefcase, MapPin, Mail, Phone, Linkedin, Globe, Target, TrendingUp, DollarSign, Activity, Zap, Copy, ExternalLink, AlertTriangle } from 'lucide-react'
+import { X, Briefcase, MapPin, Mail, Phone, Linkedin, Globe, Target, TrendingUp, DollarSign, Activity, Zap, Copy, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
+import { EVIDENCE_LEVEL_STYLE, TIER_ICON, TIER_STYLE, evidenceLabel, tierOf } from '@/lib/tiers'
 
 function copyToClipboard(text: string, label: string) {
   navigator.clipboard.writeText(text).then(() => toast.success(`${label} copié`))
@@ -26,8 +27,11 @@ interface LeadData {
   digital_maturity?: string
   estimated_budget?: string
   business_signals?: string
-  inconsistency_detected?: boolean
-  inconsistency_reason?: string
+  disqualification_reason?: string
+  evidence_level?: 'none' | 'weak' | 'sufficient'
+  evidence_verified?: boolean
+  website_rejected?: string
+  website_check_reason?: string
   enriched?: boolean
 }
 
@@ -65,15 +69,6 @@ export function LeadDetailModal({ lead, onClose }: Props) {
           <div>
             <h2 className="text-xl font-bold inline-flex items-center gap-2" style={{ color: 'var(--th-text-primary)' }}>
               {fullName || 'Lead'}
-              {lead.inconsistency_detected && (
-                <span
-                  title={lead.inconsistency_reason || 'Incohérence détectée entre Apollo et la source scrapée'}
-                  className="inline-flex items-center"
-                  style={{ color: '#fb923c' }}
-                >
-                  <AlertTriangle className="w-4 h-4" />
-                </span>
-              )}
             </h2>
             {lead.job_title && (
               <div className="flex items-center gap-1.5 mt-1">
@@ -101,6 +96,29 @@ export function LeadDetailModal({ lead, onClose }: Props) {
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Disqualification / evidence warnings */}
+        {(lead.disqualification_reason || lead.evidence_verified === false) && (
+          <div className="px-6 pt-4">
+            {lead.disqualification_reason && (
+              <div className="text-sm rounded-lg px-3 py-2 mb-2"
+                   style={{ background: 'rgba(148,163,184,0.12)', color: '#94a3b8' }}>
+                ⛔ Disqualifié — {lead.disqualification_reason}
+              </div>
+            )}
+            {lead.evidence_verified === false && (
+              <div className="text-sm rounded-lg px-3 py-2 mb-2"
+                   style={{ background: 'var(--th-warning-soft)', color: 'var(--th-warning-text)' }}>
+                Preuves insuffisantes — qualification manuelle nécessaire
+                {lead.evidence_level && (
+                  <span className="block text-xs mt-0.5" style={{ opacity: 0.85 }}>
+                    {evidenceLabel(lead.evidence_level)}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Contact info */}
         <div className="p-6 grid grid-cols-2 gap-3" style={{ borderBottom: '1px solid var(--th-border-default)' }}>
@@ -147,17 +165,33 @@ export function LeadDetailModal({ lead, onClose }: Props) {
               <span className="text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>ICP</span>
               <span
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold"
-                style={
-                  lead.icp_tier === 'hot' ? { background: 'rgba(249,115,22,0.12)', color: '#fb923c' }
-                  : lead.icp_tier === 'warm' ? { background: 'rgba(251,191,36,0.10)', color: '#fbbf24' }
-                  : { background: 'rgba(148,163,184,0.08)', color: 'rgba(148,163,184,0.7)' }
-                }
+                style={TIER_STYLE[tierOf(lead.icp_tier)]}
               >
-                {lead.icp_tier === 'hot' ? '🔥' : lead.icp_tier === 'warm' ? '🟡' : '❄️'} {lead.icp_score}
+                {TIER_ICON[tierOf(lead.icp_tier)]} {lead.icp_score}
+              </span>
+            </div>
+          )}
+          {lead.evidence_level && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Niveau de preuve
+              </span>
+              <span
+                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+                style={EVIDENCE_LEVEL_STYLE[lead.evidence_level] ?? { background: 'var(--th-glass-inset)', color: 'var(--th-text-muted)' }}
+              >
+                {evidenceLabel(lead.evidence_level)}
               </span>
             </div>
           )}
         </div>
+
+        {lead.website_rejected && (
+          <p className="text-xs mt-2 px-6" style={{ color: 'var(--th-text-faint)' }}>
+            Site écarté (incohérent) : {lead.website_rejected}
+            {lead.website_check_reason ? ` — ${lead.website_check_reason}` : ''}
+          </p>
+        )}
 
         {/* AI Enrichment Data */}
         {hasEnrichment ? (

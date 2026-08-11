@@ -1,0 +1,115 @@
+{
+  "weights": { "secteur": 0.20, "taille": 0.20, "localisation": 0.20, "signaux": 0.40 },
+
+  "high_value_sectors": [
+    "e-commerce", "saas", "services b2b", "immobilier",
+    "education", "sante", "tourisme"
+  ],
+  "excluded_sectors": [
+    "industrie lourde", "agriculture", "extraction miniere", "siderurgie"
+  ],
+  "sector_points": { "high_value": 100, "other": 50, "unknown": 0 },
+
+  "sector_aliases": {
+    "tourisme": ["hôtellerie restauration", "hôtellerie", "restauration"],
+    "sante": ["recherche clinique", "santé", "pharmaceutique", "biotechnologie"],
+    "services b2b": ["conseil qualité", "conseil digital", "conseil"],
+    "saas": ["logiciel"],
+    "immobilier": ["immobilier résidentiel", "promotion immobilière"],
+    "education": ["formation", "enseignement"]
+  },
+
+  "country_aliases": {
+    "Maroc": ["morocco", "royaume du maroc", "kingdom of morocco", "casablanca", "rabat", "marrakech", "tanger", "tangier", "fes", "agadir"],
+    "Algérie": ["algeria", "alger", "algiers", "oran"],
+    "Tunisie": ["tunisia", "tunis", "sfax"],
+    "Sénégal": ["senegal", "dakar"],
+    "Côte d'Ivoire": ["cote d ivoire", "ivory coast", "abidjan", "yamoussoukro"],
+    "Cameroun": ["cameroon", "douala", "yaounde"],
+    "Gabon": ["gabon", "libreville"],
+    "Bénin": ["benin", "cotonou"],
+    "Burkina Faso": ["burkina faso", "burkina", "ouagadougou"],
+    "Mali": ["mali", "bamako"],
+    "Niger": ["niger", "niamey"],
+    "Togo": ["togo", "lome"],
+    "Guinée": ["guinee", "guinea", "conakry"],
+    "Congo": ["congo brazzaville", "republique du congo", "republic of the congo", "brazzaville"],
+    "RDC": ["rdc", "drc", "republique democratique du congo", "democratic republic of the congo", "congo kinshasa", "kinshasa"],
+    "Madagascar": ["madagascar", "antananarivo"],
+    "Mauritanie": ["mauritania", "nouakchott"],
+    "Tchad": ["chad", "ndjamena"],
+    "France": ["france", "paris", "lyon", "marseille", "bordeaux", "lille", "toulouse", "nantes"],
+    "Belgique": ["belgium", "bruxelles", "brussels", "anvers", "antwerp"],
+    "Suisse": ["switzerland", "geneve", "geneva", "zurich", "lausanne"],
+    "Luxembourg": ["luxembourg"],
+    "Canada": ["canada", "quebec", "montreal", "toronto", "ottawa"],
+
+    "Espagne": ["spain", "madrid", "barcelone", "barcelona", "valence"],
+    "Portugal": ["portugal", "lisbonne", "lisbon", "porto"],
+    "Italie": ["italy", "italia", "rome", "milan", "milano"],
+    "Allemagne": ["germany", "deutschland", "berlin", "munich", "hambourg"],
+    "Royaume-Uni": ["royaume uni", "united kingdom", "angleterre", "england", "london", "londres", "manchester"],
+    "Irlande": ["ireland", "dublin"],
+    "Pays-Bas": ["pays bas", "netherlands", "holland", "amsterdam", "rotterdam"],
+    "Pologne": ["poland", "polska", "varsovie", "warsaw"],
+    "Roumanie": ["romania", "bucarest", "bucharest"],
+    "États-Unis": ["etats unis", "united states", "usa", "u s a", "new york", "california", "californie", "texas", "chicago", "san francisco"],
+    "Mexique": ["mexico", "mexique"],
+    "Brésil": ["brazil", "bresil", "sao paulo", "rio de janeiro"],
+    "Nigeria": ["nigeria", "lagos", "abuja"],
+    "Ghana": ["ghana", "accra"],
+    "Kenya": ["kenya", "nairobi"],
+    "Égypte": ["egypt", "egypte", "le caire", "cairo"],
+    "Afrique du Sud": ["afrique du sud", "south africa", "johannesburg", "le cap", "cape town"],
+    "Émirats arabes unis": ["emirats arabes unis", "united arab emirates", "uae", "dubai", "abu dhabi"],
+    "Arabie saoudite": ["arabie saoudite", "saudi arabia", "riyad", "riyadh", "djeddah", "jeddah"],
+    "Qatar": ["qatar", "doha"],
+    "Turquie": ["turkey", "turquie", "turkiye", "istanbul", "ankara"],
+    "Inde": ["india", "inde", "mumbai", "bangalore", "new delhi"],
+    "Chine": ["china", "chine", "pekin", "beijing", "shanghai", "shenzhen"],
+    "Japon": ["japan", "japon", "tokyo"],
+    "Australie": ["australia", "australie", "sydney", "melbourne"],
+    "Russie": ["russia", "russie", "moscou", "moscow"]
+  },
+
+  "zone_countries": {
+    "maroc": ["Maroc"],
+    "afrique_francophone": [
+      "Algérie", "Tunisie", "Sénégal", "Côte d'Ivoire", "Cameroun", "Gabon",
+      "Bénin", "Burkina Faso", "Mali", "Niger", "Togo", "Guinée", "Congo",
+      "RDC", "Madagascar", "Mauritanie", "Tchad"
+    ],
+    "france": ["France"],
+    "francophonie_elargie": ["Belgique", "Suisse", "Luxembourg", "Canada"]
+  },
+  "zone_points": {
+    "maroc": 100,
+    "afrique_francophone": 90,
+    "france": 80,
+    "francophonie_elargie": 50
+  },
+
+  "size_bands": [
+    { "min": 10,  "max": 500,  "points": 100 },
+    { "min": 5,   "max": 9,    "points": 60 },
+    { "min": 501, "max": 1000, "points": 40 }
+  ],
+  "size_disqualify_below": 5,
+  "size_disqualify_above": 1000,
+
+  "signal_points": {
+    "three_or_more_recent": 100,
+    "three_or_more": 80,
+    "two": 70,
+    "one": 40,
+    "none": 0
+  },
+  "signal_recency_months": 6,
+
+  "maturity_low_max": 4,
+  "maturity_bonus": 20,
+
+  "tier_hot_min": 70,
+  "tier_warm_min": 40,
+  "unverified_score_cap": 39
+}

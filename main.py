@@ -1,12 +1,15 @@
 """
 ORSAM — B2B Lead Generation Pipeline
 ======================================
-Pipeline en 5 étapes :
+Pipeline en 8 étapes :
   1. Input Apollo URL          (CLI arg)
   2. Scraping Apollo            (Playwright headless)
-  3. Enrichissement multi-sources  (Google Search + Dropcontact)
+  3. Enrichissement multi-sources  (Google Search + Dropcontact + Hunter.io)
   4. Calcul du taux de hit     (score 0-100, seuil 50)
-  5. Enrichissement IA          (web scraping + GPT-4o-mini)
+  5. Collecte de preuves        (site web + Perplexity, hit leads uniquement)
+  6. Extraction de faits sourcés (Claude, à partir des preuves collectées)
+  7. Scoring ICP déterministe   (règles versionnées appliquées aux faits)
+  8. Rédaction des angles commerciaux (Claude, leads retenus uniquement)
 
 Usage:
   python main.py --url "https://app.apollo.io/#/people?..." [options]
@@ -29,44 +32,24 @@ from datetime import datetime
 import pandas as pd
 
 import config
+from api.provider_status import ProviderFailure, ProviderRegistry
 from scrapers.apollo_scraper import scrape_apollo
 from enrichers.google_search import enrich_leads_google
 from enrichers.dropcontact import enrich_leads_dropcontact
 from enrichers.hunter_verifier import enrich_leads_hunter
 from processors.hit_calculator import score_all_leads
-from scrapers.website_scraper import scrape_hit_leads
-from enrichers.gpt_enricher import enrich_leads_gpt
-from enrichers.perplexity_enricher import enrich_leads_perplexity
-from processors.icp_scorer import score_leads_icp
+from lead_schema import CSV_COLUMNS
 
-# ── CSV column order (matches PRD schema) ─────────────────────────────────────
-CSV_COLUMNS = [
-    "first_name",
-    "last_name",
-    "company",
-    "job_title",
-    "location",
-    "email",
-    "email_status",
-    "email_confidence",
-    "phone",
-    "linkedin_url",
-    "website",
-    "hit_score",
-    "is_hit",
-    "icp_score",
-    "icp_tier",
-    "icp_rationale",
-    "icp_scores_detail",
-    "activity_summary",
-    "conversion_angle",
-    "inconsistency_detected",
-    "inconsistency_reason",
-    "llm_confidence",
-    "digital_maturity",
-    "estimated_budget",
-    "business_signals",
-]
+# How each provider is named to the operator in the CLI summary.
+PROVIDER_LABELS = {
+    "dropcontact": "Dropcontact (emails/téléphones)",
+    "hunter": "Hunter.io (vérification des emails)",
+    "serper": "Serper (recherche LinkedIn)",
+    "website": "Scraping des sites web",
+    "perplexity": "Perplexity (signaux business)",
+    "anthropic_facts": "Extraction de faits",
+    "anthropic_angles": "Rédaction des angles",
+}
 
 
 def setup_logging(level: str):
@@ -97,7 +80,41 @@ def export_csv(leads: list[dict], output_path: str):
     return full_path
 
 
-def print_summary(all_leads: list[dict], hit_leads: list[dict], nohit_leads: list[dict], path: str):
+def print_provider_health(registry: ProviderRegistry):
+    """Print one line per provider that did not deliver.
+
+    Without this, a run where Serper's key expired mid-way ends on an
+    impeccable-looking summary: the missing 30 points per lead show up only as
+    a low LinkedIn rate, indistinguishable from a hard search batch.
+    """
+    outcomes = registry.to_dict()
+    impaired = {
+        name: entry for name, entry in outcomes.items()
+        if entry["status"] in ("failed", "degraded")
+    }
+    skipped = {
+        name: entry for name, entry in outcomes.items()
+        if entry["status"] == "skipped"
+    }
+    if not impaired and not skipped:
+        return
+
+    print("  " + "-" * 56)
+    print("  Santé des fournisseurs :")
+    for name, entry in impaired.items():
+        label = PROVIDER_LABELS.get(name, name)
+        state = "EN ÉCHEC" if entry["status"] == "failed" else "DÉGRADÉ"
+        detail = f" — {entry['reason']}" if entry["reason"] else ""
+        affected = f" ({entry['leads_affected']} lead(s) concerné(s))" if entry["leads_affected"] else ""
+        print(f"    [{state}] {label}{detail}{affected}")
+    for name, entry in skipped.items():
+        label = PROVIDER_LABELS.get(name, name)
+        detail = f" — {entry['reason']}" if entry["reason"] else ""
+        print(f"    [IGNORÉ] {label}{detail}")
+
+
+def print_summary(all_leads: list[dict], hit_leads: list[dict], nohit_leads: list[dict],
+                  path: str, registry: ProviderRegistry | None = None):
     total = len(all_leads)
     print("\n" + "=" * 60)
     print("  ORSAM — PIPELINE SUMMARY")
@@ -119,12 +136,18 @@ def print_summary(all_leads: list[dict], hit_leads: list[dict], nohit_leads: lis
         icp_cold = sum(1 for l in all_leads if l.get("icp_tier") == "cold")
         if icp_hot or icp_warm or icp_cold:
             print(f"  ICP Hot / Warm / Cold   : {icp_hot} / {icp_warm} / {icp_cold}")
+        icp_disq = sum(1 for l in all_leads if l.get("icp_tier") == "disqualified")
+        if icp_disq:
+            print(f"  ICP disqualifiés        : {icp_disq}")
+    if registry is not None:
+        print_provider_health(registry)
     print(f"\n  Output file: {path}")
     print("=" * 60 + "\n")
 
 
 async def run_pipeline(args):
     logger = logging.getLogger("main")
+    registry = ProviderRegistry()
 
     # ── Validate config ───────────────────────────────────────────────────────
     missing = config.validate_config()
@@ -148,74 +171,54 @@ async def run_pipeline(args):
 
     # ── Step 3a: Google enrichment ────────────────────────────────────────────
     logger.info("Step 3a — Google enrichment (LinkedIn + website)...")
-    leads = enrich_leads_google(leads)
+    leads = enrich_leads_google(leads, registry=registry)
 
     # ── Step 3b: Dropcontact enrichment ───────────────────────────────────────
     logger.info("Step 3b — Dropcontact enrichment (email + phone)...")
-    leads = enrich_leads_dropcontact(leads)
+    leads = enrich_leads_dropcontact(leads, registry=registry)
 
     # ── Step 3c: Hunter.io email verification ─────────────────────────────────
     logger.info("Step 3c — Hunter.io email verification...")
-    leads = enrich_leads_hunter(leads)
+    leads = enrich_leads_hunter(leads, registry=registry)
 
     # ── Step 4: Hit score ─────────────────────────────────────────────────────
     logger.info("Step 4 — Calculating hit scores...")
     hit_leads, nohit_leads = score_all_leads(leads)
 
-    # ── Step 5: ICP scoring (hit leads only) ───────────────────────────────────
-    if not args.skip_gpt and hit_leads:
-        logger.info(f"Step 5 — ICP scoring on {len(hit_leads)} hit leads...")
-        hit_leads = score_leads_icp(hit_leads)
-        icp_hot = sum(1 for l in hit_leads if l.get("icp_tier") == "hot")
-        icp_warm = sum(1 for l in hit_leads if l.get("icp_tier") == "warm")
-        icp_cold = sum(1 for l in hit_leads if l.get("icp_tier") == "cold")
-        logger.info(f"Step 5 complete: {icp_hot} hot, {icp_warm} warm, {icp_cold} cold")
-    else:
-        if args.skip_gpt:
-            logger.info("Step 5 — Skipped (--skip-gpt flag set)")
-        else:
-            logger.info("Step 5 — Skipped (no hit leads)")
-        for lead in hit_leads:
-            lead.setdefault("icp_score", None)
-            lead.setdefault("icp_tier", None)
-            lead.setdefault("icp_rationale", None)
-            lead.setdefault("icp_scores_detail", None)
-
-    # ── Save intermediate CSV (all leads, before AI enrichment) ───────────────
+    # ── Save intermediate CSV (all leads, before evidence collection) ─────────
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     intermediate_filename = f"leads_intermediate_{ts}.csv"
     intermediate_path = export_csv(leads, intermediate_filename)
     logger.info(f"Intermediate CSV saved: {intermediate_path}")
 
-    # ── Step 6: AI enrichment (hit leads only) ────────────────────────────────
+    # ── Step 5: Evidence collection (hit leads only) ──────────────────────────
     if not args.skip_gpt and hit_leads:
-        logger.info(f"Step 5 — AI enrichment on {len(hit_leads)} hit leads...")
+        logger.info(f"Step 5 — Evidence collection on {len(hit_leads)} hit leads...")
+        from enrichers.evidence_collector import collect_evidence_async
+        hit_leads, active_providers = await collect_evidence_async(
+            hit_leads, registry=registry
+        )
 
-        # 5a: Scrape company websites
-        logger.info("Step 5a — Scraping company websites...")
-        hit_leads = await scrape_hit_leads(hit_leads)
+        logger.info("Step 6 — Fact extraction...")
+        from enrichers.fact_extractor import extract_leads_facts
+        hit_leads = extract_leads_facts(hit_leads, active_providers, registry=registry)
 
-        # 5b: GPT-4o-mini
-        logger.info("Step 5b — GPT-4o-mini enrichment...")
-        hit_leads = enrich_leads_gpt(hit_leads)
+        logger.info("Step 7 — ICP scoring...")
+        from processors.icp_scorer import apply_scores
+        hit_leads = apply_scores(hit_leads)
 
-        # 5c: Perplexity Sonar (digital maturity, budget, signals)
-        logger.info("Step 5c — Perplexity enrichment (maturité digitale, budget, signaux)...")
-        hit_leads = enrich_leads_perplexity(hit_leads)
+        logger.info("Step 8 — Angle writing...")
+        from enrichers.angle_writer import write_leads_angles
+        hit_leads = write_leads_angles(hit_leads, registry=registry)
     else:
-        if args.skip_gpt:
-            logger.info("Step 5 — Skipped (--skip-gpt flag set)")
-        else:
-            logger.info("Step 5 — Skipped (no hit leads)")
-
+        reason = "--skip-gpt flag set" if args.skip_gpt else "no hit leads"
+        logger.info(f"Steps 5-8 — Skipped ({reason})")
         for lead in hit_leads:
-            lead.setdefault("linkedin_text", "")
-            lead.setdefault("website_text", "")
-            lead.setdefault("activity_summary", None)
-            lead.setdefault("conversion_angle", None)
-            lead.setdefault("digital_maturity", None)
-            lead.setdefault("estimated_budget", None)
-            lead.setdefault("business_signals", None)
+            for field in ("icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
+                          "disqualification_reason", "evidence_level", "evidence_verified",
+                          "facts_json", "activity_summary", "conversion_angle",
+                          "digital_maturity", "estimated_budget", "business_signals"):
+                lead.setdefault(field, None)
 
     # ── Final CSV export ──────────────────────────────────────────────────────
     output_filename = args.output or f"leads_final_{ts}.csv"
@@ -227,7 +230,7 @@ async def run_pipeline(args):
         nohit_path = export_csv(nohit_leads, nohit_filename)
         logger.info(f"No-hit CSV saved: {nohit_path}")
 
-    print_summary(leads, hit_leads, nohit_leads, final_path)
+    print_summary(leads, hit_leads, nohit_leads, final_path, registry)
 
 
 def parse_args():
@@ -255,7 +258,7 @@ def parse_args():
     parser.add_argument(
         "--skip-gpt",
         action="store_true",
-        help="Skip GPT-4o-mini enrichment (Step 6)",
+        help="Skip evidence collection and AI enrichment (Steps 5-8)",
     )
     parser.add_argument(
         "--log-level",
@@ -269,4 +272,18 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     setup_logging(args.log_level)
-    asyncio.run(run_pipeline(args))
+    try:
+        asyncio.run(run_pipeline(args))
+    except ProviderFailure as exc:
+        # A critical provider gave up. Say so plainly and exit non-zero rather
+        # than dumping a traceback the operator has to decode.
+        print("\n" + "=" * 60)
+        print("  RUN INTERROMPU — fournisseur critique indisponible")
+        print("=" * 60)
+        print(f"  Fournisseur : {PROVIDER_LABELS.get(exc.provider, exc.provider)}")
+        print(f"  Motif       : {exc.reason}")
+        print("\n  Aucun fichier final n'a été produit : le run s'arrête plutôt")
+        print("  que de livrer un CSV sans données de contact.")
+        print("  Vérifiez la clé API et les crédits du fournisseur, puis relancez.")
+        print("=" * 60 + "\n")
+        sys.exit(1)

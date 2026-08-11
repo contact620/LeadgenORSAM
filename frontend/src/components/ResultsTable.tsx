@@ -1,8 +1,9 @@
 import { useState, useMemo } from 'react'
-import { Download, Search, ExternalLink, ChevronLeft, ChevronRight, SearchX, ArrowUpDown, ArrowUp, ArrowDown, Copy, AlertTriangle, CheckCircle2, XCircle, HelpCircle } from 'lucide-react'
+import { Download, Search, ExternalLink, ChevronLeft, ChevronRight, SearchX, ArrowUpDown, ArrowUp, ArrowDown, Copy, CheckCircle2, XCircle, HelpCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { getDownloadUrl, type Lead } from '@/lib/api'
+import { TIER_ICON, TIER_STYLE, evidenceLabel, tierOf } from '@/lib/tiers'
 import { LeadDetailModal } from './LeadDetailModal'
 
 // Visual style for each Hunter.io email_status value
@@ -46,11 +47,10 @@ export function ResultsTable({ leads, jobId }: Props) {
   const [tab, setTab] = useState<Tab>('all')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
-  const [expandedRow, setExpandedRow] = useState<number | null>(null)
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
   const [sortBy, setSortBy] = useState<SortKey>(null)
   const [sortDir, setSortDir] = useState<SortDir>('desc')
-  const [icpFilter, setIcpFilter] = useState<'all' | 'hot' | 'warm' | 'cold'>('all')
+  const [icpFilter, setIcpFilter] = useState<'all' | 'hot' | 'warm' | 'cold' | 'disqualified'>('all')
 
   const handleSort = (key: SortKey) => {
     if (sortBy === key) {
@@ -75,6 +75,16 @@ export function ResultsTable({ leads, jobId }: Props) {
     }
     if (sortBy) {
       list = [...list].sort((a, b) => {
+        if (sortBy === 'icp') {
+          // A disqualified lead keeps its raw (uncapped) icp_score when evidence was
+          // sufficient — a rejected competitor can still score 90+. Sorting by score
+          // alone would put it above genuinely qualified leads. Tier is the primary
+          // sort key so disqualified leads always sink to the bottom, independent of
+          // sort direction; score only breaks ties within the same tier.
+          const aDisq = tierOf(a.icp_tier) === 'disqualified'
+          const bDisq = tierOf(b.icp_tier) === 'disqualified'
+          if (aDisq !== bDisq) return aDisq ? 1 : -1
+        }
         const va = getSortValue(a, sortBy)
         const vb = getSortValue(b, sortBy)
         const cmp = va < vb ? -1 : va > vb ? 1 : 0
@@ -171,6 +181,7 @@ export function ResultsTable({ leads, jobId }: Props) {
             { key: 'hot', label: '🔥 Hot' },
             { key: 'warm', label: '🟡 Warm' },
             { key: 'cold', label: '❄️ Cold' },
+            { key: 'disqualified', label: '⛔ Disqualifié' },
           ] as { key: typeof icpFilter; label: string }[]).map(f => (
             <button
               key={f.key}
@@ -250,26 +261,32 @@ export function ResultsTable({ leads, jobId }: Props) {
               )}
               {pageLeads.map((lead, i) => {
                 const globalIdx = page * PAGE_SIZE + i
-                const isExpanded = expandedRow === globalIdx
                 const fullName = [lead.first_name, lead.last_name].filter(Boolean).join(' ')
                 return (
-                  <>
                     <tr
                       key={globalIdx}
                       onClick={() => setSelectedLead(lead)}
-                      className={cn('cursor-pointer transition-colors', !isExpanded && 'row-hoverable')}
-                      style={{ borderBottom: '1px solid var(--th-border-subtle)', background: isExpanded ? 'var(--th-primary-soft)' : 'transparent' }}
+                      className="cursor-pointer transition-colors row-hoverable"
+                      style={{ borderBottom: '1px solid var(--th-border-subtle)' }}
                     >
                       <td className="px-4 py-3 whitespace-nowrap">
                         <span className="inline-flex items-center gap-1.5">
                           <span className="font-medium" style={{ color: 'var(--th-text-primary)' }}>{fullName || '—'}</span>
-                          {lead.inconsistency_detected && (
+                          {lead.evidence_verified === false && (
                             <span
-                              title={lead.inconsistency_reason || 'Incohérence détectée entre Apollo et la source scrapée'}
-                              className="inline-flex items-center"
-                              style={{ color: '#fb923c' }}
+                              // The tooltip names the evidence level: "none" and
+                              // "weak" both land here, but only one of them means
+                              // nothing at all was found.
+                              title={[
+                                lead.evidence_level
+                                  ? `Niveau de preuve : ${evidenceLabel(lead.evidence_level)}`
+                                  : null,
+                                lead.icp_rationale || 'Preuves insuffisantes',
+                              ].filter(Boolean).join('\n')}
+                              className="text-xs px-1.5 py-0.5 rounded"
+                              style={{ background: 'rgba(148,163,184,0.12)', color: '#94a3b8' }}
                             >
-                              <AlertTriangle className="w-3.5 h-3.5" />
+                              non vérifié
                             </span>
                           )}
                         </span>
@@ -348,18 +365,26 @@ export function ResultsTable({ leads, jobId }: Props) {
                           {lead.is_hit ? '✓ Hit' : 'No-hit'}
                         </span>
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
+                      <td className="px-4 py-3">
                         {lead.icp_score != null ? (
-                          <span
-                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium"
-                            style={
-                              lead.icp_tier === 'hot' ? { background: 'rgba(249,115,22,0.12)', color: '#fb923c', border: '1px solid rgba(249,115,22,0.25)' }
-                              : lead.icp_tier === 'warm' ? { background: 'rgba(251,191,36,0.10)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.22)' }
-                              : { background: 'rgba(148,163,184,0.08)', color: 'rgba(148,163,184,0.7)', border: '1px solid rgba(148,163,184,0.15)' }
-                            }
-                          >
-                            {lead.icp_tier === 'hot' ? '🔥' : lead.icp_tier === 'warm' ? '🟡' : '❄️'} {lead.icp_score}
-                          </span>
+                          <div className="max-w-[160px]">
+                            <span
+                              title={lead.disqualification_reason || undefined}
+                              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap"
+                              style={TIER_STYLE[tierOf(lead.icp_tier)]}
+                            >
+                              {TIER_ICON[tierOf(lead.icp_tier)]} {lead.icp_score}
+                            </span>
+                            {lead.disqualification_reason && (
+                              <p
+                                title={lead.disqualification_reason}
+                                className="text-xs mt-0.5 truncate"
+                                style={{ color: 'var(--th-text-faint)' }}
+                              >
+                                {lead.disqualification_reason}
+                              </p>
+                            )}
+                          </div>
                         ) : <span style={{ color: 'var(--th-text-ghost)' }}>—</span>}
                       </td>
                       <td className="px-4 py-3 max-w-[200px]">
@@ -368,78 +393,6 @@ export function ResultsTable({ leads, jobId }: Props) {
                           : <span className="text-xs" style={{ color: 'var(--th-text-ghost)' }}>—</span>}
                       </td>
                     </tr>
-
-                    {isExpanded && (lead.activity_summary || lead.conversion_angle || lead.digital_maturity || lead.estimated_budget || lead.business_signals || lead.icp_rationale) && (
-                      <tr key={`${globalIdx}-expanded`} style={{ background: 'var(--th-primary-soft)', borderBottom: '1px solid var(--th-border-subtle)' }}>
-                        <td colSpan={10} className="px-5 py-4">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                            {lead.icp_rationale && (
-                              <div className="sm:col-span-2">
-                                <p className="font-medium mb-1.5" style={{ color: 'var(--th-text-tertiary)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                                  Scoring ICP — {lead.icp_tier?.toUpperCase()} ({lead.icp_score}/100)
-                                </p>
-                                <p className="mb-2" style={{ color: 'var(--th-text-secondary)', lineHeight: 1.6 }}>{lead.icp_rationale}</p>
-                                {lead.icp_scores_detail && (() => {
-                                  try {
-                                    const detail = JSON.parse(lead.icp_scores_detail)
-                                    const axes = [
-                                      { key: 'secteur', label: 'Secteur', weight: '20%' },
-                                      { key: 'taille', label: 'Taille', weight: '20%' },
-                                      { key: 'localisation', label: 'Localisation', weight: '20%' },
-                                      { key: 'signaux', label: 'Signaux', weight: '40%' },
-                                    ]
-                                    return (
-                                      <div className="flex gap-4 flex-wrap">
-                                        {axes.map(a => (
-                                          <div key={a.key} className="flex items-center gap-2">
-                                            <span className="text-xs" style={{ color: 'var(--th-text-muted)', minWidth: 80 }}>{a.label} ({a.weight})</span>
-                                            <div className="w-16 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--th-border-default)' }}>
-                                              <div className="h-full rounded-full" style={{ width: `${detail[a.key] ?? 0}%`, background: (detail[a.key] ?? 0) > 70 ? 'var(--th-success)' : (detail[a.key] ?? 0) >= 40 ? '#fbbf24' : 'var(--th-text-ghost)' }} />
-                                            </div>
-                                            <span className="font-mono text-xs" style={{ color: 'var(--th-text-quaternary)' }}>{detail[a.key] ?? 0}</span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )
-                                  } catch { return null }
-                                })()}
-                              </div>
-                            )}
-                            {lead.activity_summary && (
-                              <div>
-                                <p className="font-medium mb-1.5" style={{ color: 'var(--th-text-tertiary)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Résumé activité</p>
-                                <p style={{ color: 'var(--th-text-secondary)', lineHeight: 1.6 }}>{lead.activity_summary}</p>
-                              </div>
-                            )}
-                            {lead.conversion_angle && (
-                              <div>
-                                <p className="font-medium mb-1.5" style={{ color: 'var(--th-text-tertiary)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Angle de conversion</p>
-                                <p style={{ color: 'var(--th-text-secondary)', lineHeight: 1.6 }}>{lead.conversion_angle}</p>
-                              </div>
-                            )}
-                            {lead.digital_maturity && (
-                              <div>
-                                <p className="font-medium mb-1.5" style={{ color: 'var(--th-text-tertiary)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Maturité digitale</p>
-                                <p style={{ color: 'var(--th-text-secondary)', lineHeight: 1.6 }}>{lead.digital_maturity}</p>
-                              </div>
-                            )}
-                            {lead.estimated_budget && (
-                              <div>
-                                <p className="font-medium mb-1.5" style={{ color: 'var(--th-text-tertiary)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Budget estimé</p>
-                                <p style={{ color: 'var(--th-text-secondary)', lineHeight: 1.6 }}>{lead.estimated_budget}</p>
-                              </div>
-                            )}
-                            {lead.business_signals && (
-                              <div className="sm:col-span-2">
-                                <p className="font-medium mb-1.5" style={{ color: 'var(--th-text-tertiary)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Signaux business</p>
-                                <p style={{ color: 'var(--th-text-secondary)', lineHeight: 1.6 }}>{lead.business_signals}</p>
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </>
                 )
               })}
             </tbody>

@@ -8,3 +8,4 @@ python-multipart>=0.0.9
 uvicorn[standard]>=0.29.0
 ddgs>=0.1.0
 curl-cffi>=0.7.0
+pytest>=8.0.0
