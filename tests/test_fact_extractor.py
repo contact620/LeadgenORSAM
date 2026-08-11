@@ -5,10 +5,12 @@ from api.provider_status import ProviderRegistry
 from enrichers.fact_extractor import (
     VALID_SOURCES,
     _EMPTY_FACTS,
+    build_system_prompt,
     extract_leads_facts,
     sanitize_facts,
 )
 from enrichers.retry import AuthError
+from processors.icp_rules import load_rules
 
 
 def test_unsourced_scalar_fact_is_dropped():
@@ -198,6 +200,29 @@ def test_auth_failure_stops_calling_the_api_after_the_first_lead():
             fx._reset_state()
 
     assert len(calls) == 1
+
+
+# ── Closed sector vocabulary (built from config/icp_rules.json) ─────────────
+# Pilot run: the model's free-text sector labels never matched
+# high_value_sectors, so 9 leads out of 10 fell back to the "other" score.
+# The prompt must offer a closed list built from the same file the scorer
+# reads, so the two never drift apart.
+
+def test_system_prompt_includes_every_sector_label_from_the_rules_file():
+    rules = load_rules()
+    prompt = build_system_prompt(rules)
+    for label in rules.high_value_sectors + rules.excluded_sectors:
+        assert label in prompt, label
+    assert "autre" in prompt
+
+
+def test_system_prompt_has_no_leftover_placeholder_token():
+    # The vocabulary is injected via a literal-token replace() rather than
+    # str.format(), because the prompt's JSON example contains literal
+    # braces that format() would otherwise choke on. Guard the substitution
+    # itself: a missed replace would ship the raw token to the model.
+    prompt = build_system_prompt(load_rules())
+    assert "__SECTEUR_VALEURS__" not in prompt
 
 
 def test_missing_api_key_is_recorded_as_skipped():

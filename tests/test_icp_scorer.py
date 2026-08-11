@@ -125,10 +125,28 @@ def test_more_evidence_never_lowers_the_score(rules):
     assert rich.icp_score > poor.icp_score
 
 
-def test_sourced_competitor_disqualifies_even_without_evidence(rules):
-    """The spec's one exception to the evidence gate — but only when sourced."""
+def test_competitor_without_sufficient_evidence_is_cold_not_disqualified(rules):
+    """Regression: Astrak France, a construction-equipment parts distributor,
+    was disqualified as a "concurrent direct" of a communications agency on
+    evidence_level="weak" during the pilot run — a false positive, because
+    the competitor rule used to be the one disqualification that bypassed
+    the evidence gate. It no longer does: "sourced" is not "sufficiently
+    evidenced", and this rule now respects the same bar as every other hard
+    rule. An unverified competitor claim falls into cold, capped, exactly
+    like any other unverified lead — no disqualification is asserted.
+    """
     facts = _facts(est_concurrent=_COMPETITOR, identite_confirmee=False)
     result = score_lead(facts, "none", rules, RUN_DATE)
+    assert result.icp_tier == "cold"
+    assert result.icp_score <= rules.unverified_score_cap
+    assert result.evidence_verified is False
+    assert result.disqualification_reason is None
+
+
+def test_competitor_with_sufficient_evidence_is_disqualified(rules):
+    """The other half of the Astrak fix: sufficient evidence still disqualifies."""
+    facts = _facts(est_concurrent=_COMPETITOR)
+    result = score_lead(facts, "sufficient", rules, RUN_DATE)
     assert result.icp_tier == "disqualified"
 
 
@@ -308,10 +326,47 @@ def test_accented_sector_scores_as_high_value(rules):
     assert detail["secteur"] == rules.sector_points["high_value"]
 
 
-# ── Evidence gates the competitor score too ──────────────────────────────────
+# ── Sector vocabulary: synonyms and exact matching ───────────────────────────
+# Pilot run: the model returned free-text labels ("hôtellerie restauration",
+# "recherche clinique", "datacenters"...) that matched nothing in
+# high_value_sectors, so 9 leads out of 10 fell back to the "other" score on
+# this axis. sector_aliases (config/icp_rules.json) bridges the gap, and
+# matching is exact on the canonicalized label, never substring.
 
-def test_unverified_competitor_score_is_also_capped(rules):
+def test_hospitality_synonym_scores_as_high_value_sector(rules):
+    facts = _facts(secteur={"value": "hôtellerie restauration", "source": "perplexity"})
+    result = score_lead(facts, "sufficient", rules, RUN_DATE)
+    detail = __import__("json").loads(result.icp_scores_detail)
+    assert detail["secteur"] == rules.sector_points["high_value"]
+
+
+def test_substring_no_longer_falsely_matches_an_unrelated_sector(rules):
+    # Regression: a substring test previously matched "sante" inside
+    # "industrie croissante" ("crois-*sante*"), scoring an unrelated,
+    # non-high-value sector as if it were "santé".
+    facts = _facts(secteur={"value": "industrie croissante", "source": "website"})
+    result = score_lead(facts, "sufficient", rules, RUN_DATE)
+    detail = __import__("json").loads(result.icp_scores_detail)
+    assert detail["secteur"] == rules.sector_points["other"]
+
+
+def test_unrecognised_but_present_sector_scores_other_not_zero(rules):
+    """A sourced sector we cannot map is still informative — it is present,
+    simply not prioritised — so it must score "other", never "unknown"."""
+    facts = _facts(secteur={"value": "vente de mobilier de jardin", "source": "website"})
+    result = score_lead(facts, "sufficient", rules, RUN_DATE)
+    detail = __import__("json").loads(result.icp_scores_detail)
+    assert detail["secteur"] == rules.sector_points["other"]
+
+
+# ── Evidence gates the competitor verdict too ────────────────────────────────
+
+def test_unverified_competitor_falls_into_cold_capped_not_disqualified(rules):
+    """"weak" evidence is not "sufficient": the competitor claim is present
+    but cannot be asserted as a verdict, so the lead lands in cold, capped,
+    like any other unverified lead — see the Astrak regression test above."""
     facts = _facts(est_concurrent=_COMPETITOR, effectif={"value": 45, "source": "perplexity"})
     result = score_lead(facts, "weak", rules, RUN_DATE)
-    assert result.icp_tier == "disqualified"
+    assert result.icp_tier == "cold"
     assert result.icp_score <= rules.unverified_score_cap
+    assert result.disqualification_reason is None

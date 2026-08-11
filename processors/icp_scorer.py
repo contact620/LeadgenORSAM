@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
-from processors.icp_rules import IcpRules, load_rules, normalize_label
+from processors.icp_rules import IcpRules, load_rules
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +66,13 @@ def _score_sector(facts: dict, rules: IcpRules) -> int:
     sector = _value(facts.get("secteur"))
     if not sector:
         return rules.sector_points.get("unknown", 0)
-    # Accent/case-insensitive: a sourced "santé" must match "sante" in the
-    # rule table just as reliably as an exact-cased "sante" would.
-    normalized = normalize_label(sector)
-    if any(normalize_label(h) in normalized for h in rules.high_value_sectors):
+    # Exact match on the canonicalized label, not substring: a substring test
+    # here previously matched "sante" inside "industrie croissante". A
+    # sourced-but-unrecognised label ("nom mal orthographié", a synonym not
+    # yet in sector_aliases) is present, just not prioritised, so it lands on
+    # "other" rather than "unknown" — the sourcing itself is worth something.
+    canonical = rules.canonical_sector(sector)
+    if canonical is not None and canonical in rules.high_value_sectors:
         return rules.sector_points.get("high_value", 100)
     return rules.sector_points.get("other", 50)
 
@@ -152,10 +155,9 @@ def _disqualification_reason(facts: dict, rules: IcpRules) -> Optional[str]:
 
     sector = _value(facts.get("secteur"))
     if sector:
-        normalized = normalize_label(sector)
-        for excluded in rules.excluded_sectors:
-            if normalize_label(excluded) in normalized:
-                return f"secteur exclu — {sector}"
+        canonical = rules.canonical_sector(sector)
+        if canonical is not None and canonical in rules.excluded_sectors:
+            return f"secteur exclu — {sector}"
 
     # Geography disqualifies only a country we actually recognise. An
     # unrecognised label ("Zzz", a corrupted extraction) tells us nothing
@@ -199,24 +201,14 @@ def score_lead(
     detail_json = json.dumps(detail)
     verified = evidence_level == "sufficient"
 
-    # 1. A sourced competitor is disqualified whatever the evidence level:
-    #    the fact alone settles it. "Sourced" is load-bearing — an unsourced
-    #    est_concurrent is dropped by sanitize_facts, so a model cannot
-    #    disqualify a prospect on the strength of its company name alone.
-    #    Evidence still gates the *score* though: an unverified competitor
-    #    must respect the same cap as any other unverified lead.
-    if _value(facts.get("est_concurrent")) is True:
-        competitor_score = raw_score if verified else min(raw_score, rules.unverified_score_cap)
-        return IcpResult(
-            icp_score=competitor_score, icp_tier="disqualified",
-            icp_rationale="Concurrent direct de BoxCom — ne peut pas être client.",
-            icp_scores_detail=detail_json,
-            disqualification_reason="concurrent direct",
-            evidence_verified=verified,
-        )
-
-    # 2. Insufficient evidence: cap and fall into cold. No disqualification
-    #    claim is made — we lack the facts to assert one.
+    # 1. Insufficient evidence: cap and fall into cold immediately. No rule
+    #    below this point — including the competitor check — may override
+    #    it, "sourced" competitor claim or not: every verdict must rest on
+    #    evidence we can point to. This used to be checked second, behind an
+    #    unconditional competitor exception; the pilot run disqualified
+    #    Astrak France (a construction-equipment parts distributor) as a
+    #    "concurrent direct" on evidence_level="weak" — exactly the false
+    #    positive this ordering now prevents.
     if not verified:
         return IcpResult(
             icp_score=min(raw_score, rules.unverified_score_cap),
@@ -231,7 +223,22 @@ def score_lead(
             evidence_verified=False,
         )
 
-    # 3. Hard rules, only on properly evidenced leads
+    # 2. Hard rules, only on properly evidenced leads. The competitor check
+    #    now sits here, alongside every other hard rule, instead of ahead of
+    #    the evidence gate above: "sourced" is still load-bearing (an
+    #    unsourced est_concurrent is dropped by sanitize_facts, so a model
+    #    cannot disqualify a prospect on the strength of its company name
+    #    alone), but a source is no longer sufficient by itself — the
+    #    evidence level must also clear the same bar as any other verdict.
+    if _value(facts.get("est_concurrent")) is True:
+        return IcpResult(
+            icp_score=raw_score, icp_tier="disqualified",
+            icp_rationale="Concurrent direct de BoxCom — ne peut pas être client.",
+            icp_scores_detail=detail_json,
+            disqualification_reason="concurrent direct",
+            evidence_verified=True,
+        )
+
     reason = _disqualification_reason(facts, rules)
     if reason:
         return IcpResult(
@@ -242,7 +249,7 @@ def score_lead(
             evidence_verified=True,
         )
 
-    # 4. Normal tiers
+    # 3. Normal tiers
     if raw_score >= rules.tier_hot_min:
         tier = "hot"
     elif raw_score >= rules.tier_warm_min:

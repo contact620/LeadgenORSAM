@@ -73,6 +73,7 @@ class IcpRules:
     high_value_sectors: list[str]
     excluded_sectors: list[str]
     sector_points: dict[str, int]
+    sector_aliases: dict[str, list[str]]
     country_aliases: dict[str, list[str]]
     zone_countries: dict[str, list[str]]
     zone_points: dict[str, int]
@@ -86,6 +87,44 @@ class IcpRules:
     tier_hot_min: int
     tier_warm_min: int
     unverified_score_cap: int
+
+    def canonical_sector(self, sector: str) -> str | None:
+        """Resolve a free-text sector label to a canonical entry, or None.
+
+        The model's vocabulary is now closed at the prompt (see
+        enrichers/fact_extractor.py), but a synonym table is still needed:
+        the model may still land on a label ("hôtellerie restauration") that
+        is not itself one of the seven high-value canonical labels but
+        clearly designates one of them ("tourisme"). ``sector_aliases`` maps
+        each synonym to its canonical label, on the same model as
+        ``country_aliases`` / ``canonical_country`` above.
+
+        Matching is exact on the normalized label, never substring: a
+        substring test here previously matched "sante" inside "industrie
+        croissante" ("crois-*sante*"), scoring an unrelated sector as
+        high-value. None means *unrecognised* — read as "unknown", never as
+        "excluded" or "high value": a verdict we cannot substantiate is not
+        a verdict, the same principle as canonical_country below.
+        """
+        if not sector:
+            return None
+        normalized = normalize_label(sector)
+        if not normalized:
+            return None
+
+        # 1. Exact match against a canonical label itself (high-value or
+        #    excluded) — the authoritative spelling.
+        for canonical in (*self.high_value_sectors, *self.excluded_sectors):
+            if normalize_label(canonical) == normalized:
+                return canonical
+
+        # 2. Exact match against a known alias of a canonical label.
+        for canonical, aliases in self.sector_aliases.items():
+            for alias in aliases:
+                if normalize_label(alias) == normalized:
+                    return canonical
+
+        return None
 
     def canonical_country(self, country: str) -> str | None:
         """Return the canonical French label for a country string, or None.
@@ -184,6 +223,7 @@ def load_rules(path: str | None = None) -> IcpRules:
         high_value_sectors=raw.get("high_value_sectors", []),
         excluded_sectors=raw.get("excluded_sectors", []),
         sector_points=raw.get("sector_points", {"high_value": 100, "other": 50, "unknown": 0}),
+        sector_aliases=raw.get("sector_aliases", {}),
         country_aliases=raw.get("country_aliases", {}),
         zone_countries=raw.get("zone_countries", {}),
         zone_points=raw.get("zone_points", {}),

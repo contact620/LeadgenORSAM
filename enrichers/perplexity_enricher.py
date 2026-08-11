@@ -36,7 +36,7 @@ Recherche et retourne un JSON avec exactement ces 3 clés :
 
 2. "estimated_budget" : Estime la taille/budget de l'entreprise. Cherche : chiffre d'affaires, nombre d'employés, levées de fonds, taille de l'équipe. Si les données exactes ne sont pas trouvées, donne une estimation basée sur les indices disponibles. Format: "[effectif estimé] employés — [CA ou fourchette si disponible] — [autres indices financiers]"
 
-3. "business_signals" : Liste les signaux business récents (6 derniers mois). Cherche : recrutements en cours, levées de fonds, lancements de produits, nouveaux partenariats, expansion géographique, changements de direction, actualités. Format: liste à puces des signaux trouvés, ou "Aucun signal récent identifié" si rien trouvé.
+3. "business_signals" : Liste les signaux business récents (6 derniers mois). Cherche : recrutements en cours, levées de fonds, lancements de produits, nouveaux partenariats, expansion géographique, changements de direction, actualités. Pour CHAQUE signal trouvé, indique sa date au format ISO "AAAA-MM" (année-mois) entre crochets en début de puce, par exemple "- [2026-05] Levée de fonds de 2M€". Si tu ne connais que le mois approximatif, donne ta meilleure estimation plutôt que d'omettre la date — un signal sans date ne peut pas être évalué comme récent en aval. Format: liste à puces datées, ou "Aucun signal récent identifié" si rien trouvé.
 
 Réponds UNIQUEMENT en JSON brut avec ces 3 clés. Pas de markdown, pas d'explication."""
 
@@ -81,7 +81,15 @@ def _call_perplexity(lead: dict, enrich_instructions: str = "") -> tuple[Optiona
         "messages": [
             {"role": "user", "content": prompt}
         ],
-        "search_recency_filter": "month",
+        # "year", not "month": the prompt above asks for signals from the
+        # last 6 months, and a 1-month recency filter silently cut off
+        # everything older than that — the actual cause of "Aucun signal
+        # récent identifié" on 9 pilot leads out of 10. Freshness is then
+        # arbitrated downstream by icp_rules.signal_recency_months, not by
+        # this filter; a wider filter here is safe because it only widens
+        # what Perplexity is allowed to search, not what the scorer counts
+        # as recent.
+        "search_recency_filter": "year",
     }
 
     def _do_request():

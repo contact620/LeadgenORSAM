@@ -18,13 +18,14 @@ import config
 from api.provider_status import StepOutcome
 from enrichers.retry import retry_api_call, AuthError
 from processors.evidence import Evidence, compute_evidence_level
+from processors.icp_rules import IcpRules, load_rules
 
 logger = logging.getLogger(__name__)
 
 MODEL = "claude-haiku-4-5-20251001"
 VALID_SOURCES = frozenset({"website", "linkedin", "perplexity"})
 
-SYSTEM_PROMPT = """Tu es un analyste qui extrait des faits vérifiables sur une entreprise.
+SYSTEM_PROMPT_TEMPLATE = """Tu es un analyste qui extrait des faits vérifiables sur une entreprise.
 
 Tu ne notes pas. Tu ne vends pas. Tu ne rédiges pas d'argumentaire.
 Tu lis les sources fournies et tu rapportes ce qu'elles disent.
@@ -56,14 +57,23 @@ En cas de doute : true.
 ═══ CHAMPS ═══
 
 - "pays" : pays d'opération principal, en français ("Maroc", "France", "Sénégal"...)
-- "secteur" : secteur d'activité en français, en deux mots maximum
-- "effectif" : nombre d'employés, entier strictement positif. null si aucune
-  source ne le donne — n'écris jamais 0 pour dire « non communiqué ».
+- "secteur" : choisis EXACTEMENT un des libellés suivants, celui qui décrit le
+  mieux l'activité principale de l'entreprise : __SECTEUR_VALEURS__.
+  Aucun de ces libellés ne convient ? Mets "autre" — n'invente pas un libellé
+  hors de cette liste.
+- "effectif" : nombre d'employés, entier strictement positif. Cette
+  information se trouve typiquement dans la ligne "Taille / budget" de la
+  source perplexity. Une fourchette ("11-50 employés", "50-200 employés") est
+  une donnée valide, pas une absence de donnée : convertis-la en son milieu
+  arrondi à l'entier inférieur (ex. "11-50 employés" → 30, "50-200 employés"
+  → 125). null uniquement si aucune source ne donne la moindre indication
+  d'effectif — n'écris jamais 0 pour dire « non communiqué ».
 - "est_concurrent" : fait sourcé comme les autres. Mets
-  {"value": true, "source": "..."} uniquement si une source décrit l'entreprise
-  comme une agence de communication, de marketing digital, de création ou de
-  développement web. Le nom de l'entreprise n'est pas une source. Si aucune
-  source ne le dit, mets null.
+  {"value": true, "source": "..."} uniquement si une source décrit l'agence de
+  communication, de marketing digital, de création ou de développement web
+  comme le MÉTIER PRINCIPAL de l'entreprise — pas une activité connexe, pas un
+  service parmi d'autres dans une offre plus large. Le nom de l'entreprise
+  n'est pas une source. En cas de doute, ne mets pas true : laisse null.
 - "maturite_digitale" : entier de 1 à 10 si une source l'évalue, sinon null
 - "signaux" : événements datés des 12 derniers mois (recrutement, levée de fonds,
   lancement, expansion, refonte). Liste vide si aucune source n'en mentionne.
@@ -83,6 +93,30 @@ Réponds UNIQUEMENT par ce JSON, sans markdown ni commentaire :
      "source": "perplexity", "citation": "extrait littéral de la source"}
   ]
 }"""
+
+
+def _sector_vocabulary(rules: IcpRules) -> str:
+    """Build the closed sector vocabulary for the prompt from icp_rules.json.
+
+    config/icp_rules.json is the source of truth for which sector labels the
+    scorer recognises (high-value and excluded). Hardcoding a duplicate list
+    in the prompt would silently drift the day an operator edits the JSON —
+    exactly the mismatch that left 9 leads out of 10 landing on the "other"
+    score in the pilot run, because the model's free-text labels never lined
+    up with the table. "autre" is the fixed fallback for anything genuinely
+    outside both lists.
+    """
+    labels = list(rules.high_value_sectors) + list(rules.excluded_sectors) + ["autre"]
+    return ", ".join(labels)
+
+
+def build_system_prompt(rules: Optional[IcpRules] = None) -> str:
+    """Render the system prompt with the closed sector vocabulary injected."""
+    active_rules = rules or load_rules()
+    return SYSTEM_PROMPT_TEMPLATE.replace(
+        "__SECTEUR_VALEURS__", _sector_vocabulary(active_rules)
+    )
+
 
 USER_PROMPT_TEMPLATE = """Prospect (données Apollo, non vérifiées) :
 Nom : {first_name} {last_name}
@@ -213,13 +247,19 @@ def _parse_json(content: str) -> dict:
     return json.loads(cleaned)
 
 
-def extract_facts(lead: dict, ev: Evidence) -> dict:
-    """Call the model for one lead and return sanitized facts."""
+def extract_facts(lead: dict, ev: Evidence, rules: Optional[IcpRules] = None) -> dict:
+    """Call the model for one lead and return sanitized facts.
+
+    ``rules`` supplies the closed sector vocabulary injected into the system
+    prompt (see build_system_prompt); the caller loads it once per run rather
+    than once per lead.
+    """
     global _extractor_disabled
     if _extractor_disabled:
         return dict(_EMPTY_FACTS)
 
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    system_prompt = build_system_prompt(rules)
     perplexity = ev.perplexity_fields or {}
     user_prompt = USER_PROMPT_TEMPLATE.format(
         first_name=lead.get("first_name", ""),
@@ -239,7 +279,7 @@ def extract_facts(lead: dict, ev: Evidence) -> dict:
             model=MODEL,
             max_tokens=1000,
             temperature=0,
-            system=SYSTEM_PROMPT,
+            system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )
         return sanitize_facts(_parse_json(message.content[0].text.strip()))
@@ -277,6 +317,7 @@ def extract_leads_facts(
             registry.record(StepOutcome("anthropic_facts", "skipped", "clé API absente", 0))
         return leads
 
+    rules = load_rules()  # loaded once per run, not once per lead
     total = len(leads)
     extracted = 0
     for i, lead in enumerate(leads, 1):
@@ -294,7 +335,7 @@ def extract_leads_facts(
             enabled_providers=enabled_providers,
         )
 
-        facts = extract_facts(lead, ev)
+        facts = extract_facts(lead, ev, rules)
         lead["facts"] = facts
         lead["facts_json"] = json.dumps(facts, ensure_ascii=False)
         lead["evidence_level"] = compute_evidence_level(ev, facts["identite_confirmee"])

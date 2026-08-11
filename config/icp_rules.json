@@ -10,6 +10,15 @@
   ],
   "sector_points": { "high_value": 100, "other": 50, "unknown": 0 },
 
+  "sector_aliases": {
+    "tourisme": ["hôtellerie restauration", "hôtellerie", "restauration"],
+    "sante": ["recherche clinique", "santé", "pharmaceutique", "biotechnologie"],
+    "services b2b": ["conseil qualité", "conseil digital", "conseil", "ingénierie"],
+    "saas": ["datacenters", "infrastructure informatique", "logiciel", "informatique"],
+    "immobilier": ["logement social", "immobilier résidentiel", "promotion immobilière"],
+    "education": ["formation", "enseignement"]
+  },
+
   "country_aliases": {
     "Maroc": ["morocco", "royaume du maroc", "kingdom of morocco", "casablanca", "rabat", "marrakech", "tanger", "tangier", "fes", "agadir"],
     "Algérie": ["algeria", "alger", "algiers", "oran"],

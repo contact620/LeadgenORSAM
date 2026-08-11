@@ -140,3 +140,54 @@ def test_competitor_keywords_no_longer_exist():
     """Dead config invites the belief that something reads it. Nothing did."""
     rules = load_rules()
     assert not hasattr(rules, "competitor_keywords")
+
+
+# ── Sector canonicalization ──────────────────────────────────────────────────
+
+@pytest.mark.parametrize("label,canonical", [
+    ("hôtellerie restauration", "tourisme"),
+    ("hôtellerie", "tourisme"),
+    ("restauration", "tourisme"),
+    ("recherche clinique", "sante"),
+    ("santé", "sante"),
+    ("pharmaceutique", "sante"),
+    ("biotechnologie", "sante"),
+    ("conseil qualité", "services b2b"),
+    ("conseil digital", "services b2b"),
+    ("conseil", "services b2b"),
+    ("ingénierie", "services b2b"),
+    ("datacenters", "saas"),
+    ("infrastructure informatique", "saas"),
+    ("logiciel", "saas"),
+    ("informatique", "saas"),
+    ("logement social", "immobilier"),
+    ("immobilier résidentiel", "immobilier"),
+    ("promotion immobilière", "immobilier"),
+    ("formation", "education"),
+    ("enseignement", "education"),
+    ("immobilier", "immobilier"),  # canonical label itself still resolves
+    ("SANTE", "sante"),            # case-insensitive
+])
+def test_canonical_sector_resolves_pilot_run_labels(label, canonical):
+    assert load_rules().canonical_sector(label) == canonical
+
+
+def test_canonical_sector_returns_none_for_an_unknown_label():
+    """None must read as "unknown", never as "excluded" or "high value"."""
+    rules = load_rules()
+    assert rules.canonical_sector("vente de mobilier de jardin") is None
+    assert rules.canonical_sector("") is None
+    assert rules.canonical_sector(None) is None
+
+
+def test_canonical_sector_matches_exactly_not_by_substring():
+    # Regression: a substring test previously matched "sante" inside
+    # "industrie croissante" ("crois-*sante*").
+    rules = load_rules()
+    assert rules.canonical_sector("industrie croissante") is None
+
+
+def test_canonical_sector_resolves_excluded_labels_too():
+    rules = load_rules()
+    assert rules.canonical_sector("agriculture") == "agriculture"
+    assert rules.canonical_sector("Agriculture") == "agriculture"
