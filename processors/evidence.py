@@ -32,6 +32,7 @@ class Evidence:
     """
     website_text: str = ""
     website_coherent: bool = False
+    website_unreachable: bool = False
     perplexity_fields: dict[str, str | None] = field(default_factory=dict)
     enabled_providers: frozenset[str] = frozenset()
 
@@ -60,8 +61,19 @@ def usable_sources(ev: Evidence) -> set[str]:
 
 
 def expected_sources(ev: Evidence) -> set[str]:
-    """Sources we are entitled to expect, given the providers enabled this run."""
-    return set(SOURCE_PROVIDERS & ev.enabled_providers)
+    """Sources we are entitled to expect, given the providers enabled this run.
+
+    An unreachable website is a provider outage for this lead, not a source
+    that produced nothing despite being available — the same distinction the
+    run makes for a provider the operator disabled entirely. It is therefore
+    dropped from what we expect, not counted as a silent source. This does
+    not apply to a website that answered but had thin or no content: that
+    site stays expected, and its silence is what makes the lead "weak".
+    """
+    expected = set(SOURCE_PROVIDERS & ev.enabled_providers)
+    if ev.website_unreachable:
+        expected.discard("website")
+    return expected
 
 
 def compute_evidence_level(ev: Evidence, identity_confirmed: bool) -> str:

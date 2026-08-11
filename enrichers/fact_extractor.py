@@ -201,6 +201,33 @@ def _as_competitor(fact) -> Optional[dict]:
     return {"value": True, "source": sourced["source"]}
 
 
+def _dedupe_signals(signals: list[dict]) -> list[dict]:
+    """Drop signals reporting the same event twice, keeping the first occurrence.
+
+    Two signals collide when their (type, date) pair matches once both are
+    lowercased and stripped of surrounding whitespace. Perplexity has been
+    observed reporting one real event twice verbatim (the Astrak pilot case:
+    "expansion" dated 2026-05, twice) — each duplicate is an unearned +signal
+    for a scorer that counts sourced signals directly, worth up to a full
+    scoring tier on the "signaux" axis (40% of the score) for zero new
+    information. Two signals of the same type on different dates, or
+    different types on the same date, are genuinely distinct events and both
+    survive.
+    """
+    seen = set()
+    deduped = []
+    for signal in signals:
+        key = (
+            str(signal.get("type") or "").strip().lower(),
+            str(signal.get("date") or "").strip().lower(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(signal)
+    return deduped
+
+
 def sanitize_facts(raw: dict) -> dict:
     """Drop every unsourced or malformed fact. Always returns a complete shape.
 
@@ -235,7 +262,7 @@ def sanitize_facts(raw: dict) -> dict:
         "effectif": _as_int(_sourced(raw.get("effectif"))),
         "est_concurrent": _as_competitor(raw.get("est_concurrent")),
         "maturite_digitale": _as_int(_sourced(raw.get("maturite_digitale"))),
-        "signaux": signals,
+        "signaux": _dedupe_signals(signals),
     }
 
 
@@ -327,6 +354,7 @@ def extract_leads_facts(
         ev = Evidence(
             website_text=lead.get("website_text", "") or "",
             website_coherent=lead.get("website_coherent") is not False,
+            website_unreachable=lead.get("website_unreachable", False) is True,
             perplexity_fields={
                 "digital_maturity": lead.get("digital_maturity"),
                 "estimated_budget": lead.get("estimated_budget"),

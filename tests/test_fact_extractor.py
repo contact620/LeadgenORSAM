@@ -225,6 +225,72 @@ def test_system_prompt_has_no_leftover_placeholder_token():
     assert "__SECTEUR_VALEURS__" not in prompt
 
 
+# ── Signal deduplication (Astrak pilot case, 2026-08-11) ────────────────────
+# Perplexity reported "expansion" dated 2026-05 twice; the scorer counted 3
+# signals (100 points) instead of 2 (70 points) — a 12-point score inflation
+# from one duplicate. Dedup runs on (type, date) after the source filter.
+
+def test_astrak_duplicate_expansion_signal_is_collapsed_to_two():
+    raw = {"signaux": [
+        {"type": "expansion", "date": "2026-05", "source": "perplexity", "citation": "a"},
+        {"type": "expansion", "date": "2026-05", "source": "perplexity", "citation": "a (bis)"},
+        {"type": "lancement", "date": "2025-06", "source": "perplexity", "citation": "b"},
+    ]}
+    signals = sanitize_facts(raw)["signaux"]
+    assert len(signals) == 2
+    assert [s["type"] for s in signals] == ["expansion", "lancement"]
+
+
+def test_signal_dedup_ignores_case_and_surrounding_whitespace():
+    raw = {"signaux": [
+        {"type": "Expansion", "date": " 2026-05 ", "source": "perplexity", "citation": "a"},
+        {"type": " expansion ", "date": "2026-05", "source": "perplexity", "citation": "a (bis)"},
+    ]}
+    signals = sanitize_facts(raw)["signaux"]
+    assert len(signals) == 1
+    assert signals[0]["citation"] == "a"
+
+
+def test_signal_dedup_keeps_the_first_occurrence_in_order():
+    raw = {"signaux": [
+        {"type": "recrutement", "date": "2026-01", "source": "website", "citation": "first"},
+        {"type": "expansion", "date": "2026-05", "source": "perplexity", "citation": "second"},
+        {"type": "recrutement", "date": "2026-01", "source": "perplexity", "citation": "dup"},
+    ]}
+    signals = sanitize_facts(raw)["signaux"]
+    assert len(signals) == 2
+    assert signals[0]["citation"] == "first"
+    assert signals[1]["citation"] == "second"
+
+
+def test_same_type_different_dates_are_not_deduplicated():
+    raw = {"signaux": [
+        {"type": "expansion", "date": "2026-05", "source": "perplexity", "citation": "a"},
+        {"type": "expansion", "date": "2025-11", "source": "perplexity", "citation": "b"},
+    ]}
+    signals = sanitize_facts(raw)["signaux"]
+    assert len(signals) == 2
+
+
+def test_different_types_same_date_are_not_deduplicated():
+    raw = {"signaux": [
+        {"type": "expansion", "date": "2026-05", "source": "perplexity", "citation": "a"},
+        {"type": "lancement", "date": "2026-05", "source": "perplexity", "citation": "b"},
+    ]}
+    signals = sanitize_facts(raw)["signaux"]
+    assert len(signals) == 2
+
+
+def test_nothing_deduplicated_when_all_signals_are_distinct():
+    raw = {"signaux": [
+        {"type": "recrutement", "date": "2026-01", "source": "website", "citation": "a"},
+        {"type": "expansion", "date": "2026-05", "source": "perplexity", "citation": "b"},
+        {"type": "lancement", "date": "2025-06", "source": "perplexity", "citation": "c"},
+    ]}
+    signals = sanitize_facts(raw)["signaux"]
+    assert len(signals) == 3
+
+
 def test_missing_api_key_is_recorded_as_skipped():
     fx._reset_state()
     reg = ProviderRegistry()
