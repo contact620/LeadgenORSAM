@@ -101,7 +101,9 @@ async def download_csv(job_id: str, format: str = "csv"):
     csv_path = None
 
     job = get_job(job_id)
-    if job and job.status == "done" and job.csv_path and os.path.exists(job.csv_path):
+    # A "completed_with_errors" run produced its CSV like any finished run;
+    # only its provider health differs. It must stay downloadable.
+    if job and job.status in ("done", "completed_with_errors") and job.csv_path and os.path.exists(job.csv_path):
         csv_path = job.csv_path
     else:
         from api import history
@@ -161,6 +163,7 @@ class ScrapeRequest(BaseModel):
 class EnrichRequest(BaseModel):
     pool_id: str
     batch_size: int = 10
+    enrich_instructions: str = ""
 
 
 @router.post("/scrape")
@@ -187,7 +190,11 @@ async def enrich_pool(req: EnrichRequest):
     available = get_pool_leads(req.pool_id, only_hit=True, only_unenriched=True, limit=1)
     if not available:
         raise HTTPException(status_code=400, detail="Tous les leads hit de ce pool sont déjà enrichis.")
-    job_id = start_enrich_job(pool_id=req.pool_id, batch_size=req.batch_size)
+    job_id = start_enrich_job(
+        pool_id=req.pool_id,
+        batch_size=req.batch_size,
+        enrich_instructions=req.enrich_instructions,
+    )
     return {"job_id": job_id}
 
 

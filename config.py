@@ -12,7 +12,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
 HUNTER_API_KEY = os.getenv("HUNTER_API_KEY", "")
 
-# ── LLM model used by gpt_enricher (Step 6) ───────────────────────────────────
+# ── LLM model used by enrichers/angle_writer.py (Step 8) ──────────────────────
 # Sonnet 4.6 default — better reasoning than Haiku for B2B context analysis
 LLM_MODEL = os.getenv("LLM_MODEL", "claude-sonnet-4-6")
 
@@ -30,7 +30,6 @@ APOLLO_HEADLESS = os.getenv("APOLLO_HEADLESS", "false").lower() == "true"
 
 # ── ICP Scoring ──────────────────────────────────────────────────────────────
 ICP_BATCH_SIZE = int(os.getenv("ICP_BATCH_SIZE", "5"))
-ICP_PROMPT_PATH = os.getenv("ICP_PROMPT_PATH", "prompts/icp_scoring.txt")
 
 # ── Hit Score Weights ─────────────────────────────────────────────────────────
 SCORE_EMAIL = 40

@@ -23,6 +23,7 @@ export function LeadPools({ onBack, onEnrichStarted }: Props) {
   const [poolLeads, setPoolLeads] = useState<PoolLead[]>([])
   const [leadsLoading, setLeadsLoading] = useState(false)
   const [enrichBatchSize, setEnrichBatchSize] = useState(10)
+  const [enrichInstructions, setEnrichInstructions] = useState('')
   const [enrichingPool, setEnrichingPool] = useState<string | null>(null)
   const [selectedLead, setSelectedLead] = useState<PoolLead | null>(null)
 
@@ -57,7 +58,11 @@ export function LeadPools({ onBack, onEnrichStarted }: Props) {
       const res = await fetch('/api/enrich', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pool_id: poolId, batch_size: enrichBatchSize }),
+        body: JSON.stringify({
+          pool_id: poolId,
+          batch_size: enrichBatchSize,
+          enrich_instructions: enrichInstructions.trim(),
+        }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Erreur inconnue' }))
@@ -176,7 +181,8 @@ export function LeadPools({ onBack, onEnrichStarted }: Props) {
               <div style={{ borderTop: '1px solid var(--th-border-subtle)' }}>
                 {/* Enrich controls */}
                 {unenriched > 0 && (
-                  <div className="p-5 flex items-center gap-4 flex-wrap" style={{ background: 'var(--th-surface-hover)' }}>
+                  <div className="p-5 space-y-3" style={{ background: 'var(--th-surface-hover)' }}>
+                    <div className="flex items-center gap-4 flex-wrap">
                     <span className="text-sm font-medium" style={{ color: 'var(--th-text-secondary)' }}>
                       Enrichir le prochain lot :
                     </span>
@@ -210,6 +216,21 @@ export function LeadPools({ onBack, onEnrichStarted }: Props) {
                       {enrichingPool === pool.pool_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Rocket className="w-3.5 h-3.5" />}
                       Enrichir {Math.min(enrichBatchSize, unenriched)} leads
                     </button>
+                    </div>
+                    <div onClick={e => e.stopPropagation()}>
+                      <label className="block text-xs mb-1" style={{ color: 'var(--th-text-muted)' }}>
+                        Instructions de recherche (optionnel) — orientent la collecte de preuves
+                        et la rédaction des angles
+                      </label>
+                      <textarea
+                        value={enrichInstructions}
+                        onChange={e => setEnrichInstructions(e.target.value)}
+                        rows={2}
+                        placeholder="Ex. : cibler les entreprises qui recrutent au marketing…"
+                        className="surface-input w-full"
+                        style={{ padding: 8, fontSize: 13, borderRadius: 8, resize: 'vertical' }}
+                      />
+                    </div>
                   </div>
                 )}
 

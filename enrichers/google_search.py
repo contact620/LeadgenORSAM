@@ -23,7 +23,9 @@ from urllib.parse import urlparse
 import requests
 
 import config
+from api.provider_status import ProviderRegistry, StepOutcome
 from enrichers.retry import retry_api_call, AuthError
+from processors.coherence import CoherenceResult, check_site_coherence, names_match, strip_www
 
 logger = logging.getLogger(__name__)
 
@@ -101,15 +103,16 @@ def _clearbit_domain(company: str) -> Optional[str]:
         logger.error(f"Clearbit lookup error for '{company}': {e}")
         return None
 
-    if results:
-        hit = results[0]
-        domain = hit.get("domain", "")
-        returned_name = hit.get("name", "").lower()
-        input_words = [w for w in company.lower().split() if len(w) > 3]
-        if domain and input_words and any(w in returned_name for w in input_words):
+    for hit in results or []:
+        domain = (hit.get("domain") or "").strip()
+        returned_name = (hit.get("name") or "").strip()
+        if not domain:
+            continue
+        if names_match(returned_name, company):
             return f"https://{domain}"
-        elif domain:
-            logger.debug(f"Clearbit rejected '{returned_name}' for '{company}' (name mismatch)")
+        logger.debug(
+            f"Clearbit rejected '{returned_name}' ({domain}) for '{company}' (name mismatch)"
+        )
     return None
 
 
@@ -139,7 +142,7 @@ def _pick_website(urls: list[str]) -> Optional[str]:
     """Return the first URL that doesn't belong to a blocked domain."""
     for url in urls:
         try:
-            domain = urlparse(url).netloc.lower().lstrip("www.")
+            domain = strip_www(urlparse(url).netloc)
             if not any(b in domain for b in _BLOCKED_DOMAINS):
                 return url
         except Exception:
@@ -147,25 +150,74 @@ def _pick_website(urls: list[str]) -> Optional[str]:
     return None
 
 
-def _find_company_website(company: str) -> Optional[str]:
-    """Find company website: Clearbit first, DuckDuckGo as fallback."""
+def _find_company_website(company: str, location: str = "") -> Optional[str]:
+    """Find company website: Clearbit first, Serper then DuckDuckGo as fallback."""
     website = _clearbit_domain(company)
     if website:
         logger.debug(f"Clearbit domain found for '{company}': {website}")
         return website
 
-    # Fallback: Serper
+    # Location narrows the search and keeps homonymous foreign companies out.
+    locality = (location or "").strip()
+    query = f"{company} {locality} site officiel".strip() if locality else f"{company} official website"
+
     if not config._is_placeholder(config.SERPER_API_KEY):
         logger.debug(f"Clearbit miss for '{company}', trying Serper...")
-        urls = _serper_search(f"{company} official website")
-        website = _pick_website(urls)
+        website = _pick_website(_serper_search(query))
         if website:
             return website
 
-    # Last resort: DuckDuckGo
     logger.debug(f"Serper miss for '{company}', trying DuckDuckGo...")
-    urls = _ddg_search(f"{company} official website")
-    return _pick_website(urls)
+    return _pick_website(_ddg_search(query))
+
+
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_TAG_RE = re.compile(r"<[^>]+>")
+
+# Upper bound on the text handed to the coherence check. It used to be 1500
+# characters, which stopped short of the footer where a French SME states its
+# legal name — the check then reported the name as absent and rejected a
+# perfectly valid site. The bound now only guards against a pathological
+# page; it is not a sampling window.
+MAX_PAGE_TEXT_CHARS = 200_000
+
+
+def _light_page_text(html: str) -> tuple[str, str]:
+    """Extract (title, full plain text) from raw HTML without a parser dependency."""
+    title_match = _TITLE_RE.search(html)
+    title = _TAG_RE.sub(" ", title_match.group(1)).strip() if title_match else ""
+
+    body = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    body = re.sub(r"<style[^>]*>.*?</style>", " ", body, flags=re.DOTALL | re.IGNORECASE)
+    body = _TAG_RE.sub(" ", body)
+    body = re.sub(r"&[a-zA-Z]+;", " ", body)
+    body = re.sub(r"\s{2,}", " ", body).strip()
+    return title, body[:MAX_PAGE_TEXT_CHARS]
+
+
+def verify_website(url: str, company: str) -> CoherenceResult:
+    """
+    Cheap homepage fetch to confirm the domain belongs to the prospect's company.
+
+    Runs before the hit score so an unrelated site never earns its 10 points.
+    A failed fetch is inconclusive, never a rejection.
+    """
+    if not url:
+        return CoherenceResult(coherent=True, verified=False, reason="aucun site à vérifier")
+    try:
+        resp = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=8,
+            allow_redirects=True,
+        )
+        resp.raise_for_status()
+        title, text = _light_page_text(resp.text)
+    except Exception as e:
+        logger.debug(f"Light website check failed for {url}: {e}")
+        return CoherenceResult(coherent=True, verified=False, reason="site injoignable")
+
+    return check_site_coherence(company, title, text)
 
 
 # ── Main enrichment logic ──────────────────────────────────────────────────────
@@ -210,25 +262,46 @@ def find_linkedin_and_website(lead: dict) -> dict:
 
     time.sleep(config.REQUEST_DELAY / 2)
 
-    # ── Website via Clearbit (+ DuckDuckGo fallback) ─────────────────────────
+    # ── Website via Clearbit (+ Serper / DuckDuckGo fallback) ────────────────
+    lead["website_rejected"] = None
+    lead["website_check_reason"] = None
     if company:
-        lead["website"] = _find_company_website(company)
-        if lead["website"]:
-            logger.debug(f"Website found for {company}: {lead['website']}")
+        candidate = _find_company_website(company, lead.get("location", ""))
+        if candidate:
+            check = verify_website(candidate, company)
+            lead["website_coherent"] = check.coherent
+            lead["website_check_reason"] = check.reason
+            if check.coherent:
+                lead["website"] = candidate
+                logger.debug(f"Website accepted for {company}: {candidate}")
+            else:
+                lead["website"] = None
+                lead["website_rejected"] = candidate
+                logger.info(f"Website rejected for '{company}': {candidate} — {check.reason}")
         else:
+            lead["website"] = None
+            lead["website_coherent"] = False
+            lead["website_check_reason"] = "aucun site candidat trouvé"
             logger.debug(f"No website found for {company}")
     else:
         lead["website"] = None
+        lead["website_coherent"] = False
+        lead["website_check_reason"] = "aucun nom d'entreprise fourni"
 
     time.sleep(config.REQUEST_DELAY / 2)
 
     return lead
 
 
-def enrich_leads_google(leads: list[dict]) -> list[dict]:
+def enrich_leads_google(leads: list[dict], registry: ProviderRegistry | None = None) -> list[dict]:
     """
     Enrich a list of leads with LinkedIn URLs and company websites.
     Runs sequentially with rate limiting to avoid hitting API quotas.
+
+    Records a Serper outcome on `registry`: an expired key disables LinkedIn
+    search for the whole run and costs 30 hit-score points per lead, which
+    used to leave a portfolio just under the threshold with nothing anywhere
+    saying why.
     """
     total = len(leads)
     # Count LinkedIn URLs already present from Apollo before enrichment
@@ -259,7 +332,36 @@ def enrich_leads_google(leads: list[dict]) -> list[dict]:
         suffix = f" (+{len(no_website) - 5} others)" if len(no_website) > 5 else ""
         logger.info(f"No website found for: {names}{suffix}")
 
+    rejected = [l for l in leads if l.get("website_rejected")]
+    if rejected:
+        logger.info(
+            f"Websites rejected for incoherence: {len(rejected)} "
+            f"({', '.join(l.get('company', '?') for l in rejected[:5])})"
+        )
+
+    if registry:
+        registry.record(_serper_outcome(len(no_linkedin), linkedin_found))
+
     return leads
+
+
+def _serper_outcome(missing_linkedin: int, linkedin_found: int) -> StepOutcome:
+    """Turn Serper's end-of-run state into a reportable outcome.
+
+    - skipped  : no key configured; DuckDuckGo carried the searches alone.
+    - degraded : the key was rejected mid-run (see _serper_disabled), so every
+                 remaining LinkedIn lookup fell through to the fallback.
+    - ok       : the provider answered for the whole run.
+    """
+    if config._is_placeholder(config.SERPER_API_KEY):
+        return StepOutcome("serper", "skipped", "clé API absente", 0)
+    if _serper_disabled:
+        return StepOutcome(
+            "serper", "degraded",
+            "clé rejetée en cours de run — recherche LinkedIn repliée sur DuckDuckGo",
+            missing_linkedin,
+        )
+    return StepOutcome("serper", "ok", None, linkedin_found)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from typing import Optional
 import requests
 
 import config
+from api.provider_status import ProviderRegistry, StepOutcome
 from enrichers.retry import retry_api_call, AuthError
 
 logger = logging.getLogger(__name__)
@@ -69,12 +70,17 @@ def _verify_email(email: str) -> tuple[Optional[str], Optional[int]]:
         return None, None
 
 
-def enrich_leads_hunter(leads: list[dict]) -> list[dict]:
+def enrich_leads_hunter(leads: list[dict], registry: ProviderRegistry | None = None) -> list[dict]:
     """
     Verify emails on every lead that has one. Modifies leads in place.
 
     Adds keys: email_status, email_confidence, email_verification_provider.
     Skips silently if HUNTER_API_KEY is absent (sets all three to None).
+
+    Records a Hunter outcome on `registry`. This matters beyond reporting:
+    processors/hit_calculator.py grants an unverified email the full 40
+    points, so a Hunter failure inflates every hit score in the run. The
+    operator has to be able to see that it happened.
     """
     if config._is_placeholder(config.HUNTER_API_KEY):
         logger.info("HUNTER_API_KEY not set. Skipping email verification.")
@@ -82,6 +88,8 @@ def enrich_leads_hunter(leads: list[dict]) -> list[dict]:
             lead.setdefault("email_status", None)
             lead.setdefault("email_confidence", None)
             lead.setdefault("email_verification_provider", None)
+        if registry:
+            registry.record(StepOutcome("hunter", "skipped", "clé API absente", 0))
         return leads
 
     total_with_email = sum(1 for l in leads if l.get("email"))
@@ -91,6 +99,8 @@ def enrich_leads_hunter(leads: list[dict]) -> list[dict]:
             lead.setdefault("email_status", None)
             lead.setdefault("email_confidence", None)
             lead.setdefault("email_verification_provider", None)
+        if registry:
+            registry.record(StepOutcome("hunter", "skipped", "aucun email à vérifier", 0))
         return leads
 
     logger.info(f"Hunter.io: verifying {total_with_email} emails...")
@@ -129,6 +139,16 @@ def enrich_leads_hunter(leads: list[dict]) -> list[dict]:
         f"Hunter.io verification complete: {verified}/{total_with_email} verified, "
         f"{valid} valid."
     )
+    if registry:
+        if _hunter_disabled:
+            registry.record(StepOutcome(
+                "hunter", "degraded",
+                "clé rejetée en cours de run — emails restants non vérifiés "
+                "(hit score potentiellement surévalué)",
+                total_with_email - verified,
+            ))
+        else:
+            registry.record(StepOutcome("hunter", "ok", None, verified))
     return leads
 
 

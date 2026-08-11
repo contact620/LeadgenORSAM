@@ -40,10 +40,24 @@ def _strip_noise(text: str) -> str:
     return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
-async def _scrape_website(url: str) -> str:
-    """Scrape a company website homepage and return visible text."""
+async def _scrape_website(url: str) -> tuple[str, bool]:
+    """Scrape a company website homepage and return (text, unreachable).
+
+    ``unreachable=True`` means the HTTP request itself failed — network
+    error, DNS failure, timeout, connection refused, or an error status via
+    ``raise_for_status`` — which is a provider outage for this lead, not a
+    source that spoke and had nothing to say. A page that answers 200 with
+    little or no usable text is the opposite case: reachable but poor, so it
+    returns ``unreachable=False`` even with empty text. Conflating the two
+    used to make a lead's site an indistinguishable "no evidence" regardless
+    of which one happened (see docs/superpowers/specs/2026-08-10-scoring-icp-et
+    -fiabilite-pipeline-design.md §4.2).
+
+    A lead with no URL at all is neither reachable nor unreachable — it never
+    made a request — so it also returns ``unreachable=False``.
+    """
     if not url:
-        return ""
+        return "", False
     try:
         headers = {
             "User-Agent": (
@@ -55,21 +69,24 @@ async def _scrape_website(url: str) -> str:
         resp = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
         resp.raise_for_status()
         html = resp.text
-
-        # Simple text extraction without BeautifulSoup dependency
-        # Remove scripts, styles, tags
-        text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r"<noscript[^>]*>.*?</noscript>", " ", text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = re.sub(r"&[a-zA-Z]+;", " ", text)
-        text = re.sub(r"\s{2,}", " ", text).strip()
-        text = _strip_noise(text)
-        return text[:MAX_WEBSITE_TEXT]
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Website unreachable for {url}: {e}")
+        return "", True
     except Exception as e:
         logger.error(f"Website scrape error for {url}: {e}")
-        return ""
+        return "", False
+
+    # Simple text extraction without BeautifulSoup dependency
+    # Remove scripts, styles, tags
+    text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<noscript[^>]*>.*?</noscript>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&[a-zA-Z]+;", " ", text)
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    text = _strip_noise(text)
+    return text[:MAX_WEBSITE_TEXT], False
 
 
 async def scrape_hit_leads(hit_leads: list[dict]) -> list[dict]:
@@ -91,7 +108,9 @@ async def scrape_hit_leads(hit_leads: list[dict]) -> list[dict]:
 
         # Company website
         website = lead.get("website")
-        lead["website_text"] = await _scrape_website(website)
+        text, unreachable = await _scrape_website(website)
+        lead["website_text"] = text
+        lead["website_unreachable"] = unreachable
 
         time.sleep(config.REQUEST_DELAY / 2)
 
