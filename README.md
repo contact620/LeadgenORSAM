@@ -125,19 +125,32 @@ Git ne touche jamais aux fichiers ignores (`output/`, `.env`, `apollo_cookies.js
 
 ### Methode B — Nouvelle version complete (zip)
 
-Si on vous envoie un nouveau zip complet :
+Si on vous envoie un nouveau zip :
 
-1. **Avant** d'extraire, deplacez ces fichiers/dossiers sur le Bureau (ou ailleurs) :
-   - `output/` (vos donnees passees)
-   - `.env` (vos cles API)
-   - `apollo_cookies.json` (votre session Apollo)
-2. Supprimez l'ancien dossier du projet (ou renommez-le)
-3. Extrayez le nouveau zip
-4. **Recopiez** `output/`, `.env` et `apollo_cookies.json` a la racine du nouveau dossier
-5. Lancez `setup.bat` (reinstalle `venv` et `node_modules`)
-6. Lancez `start.bat`
+1. Extrayez-le **dans le dossier du projet**, en ecrasant les fichiers existants
+2. Double-cliquez sur `update.bat`
+3. Lancez `start.bat`
 
-> **Attention :** si vous extrayez le nouveau zip **par-dessus** l'ancien dossier sans precaution, vous risquez d'ecraser votre `.env`, vos cookies et votre historique. Toujours sauvegarder ces 3 elements d'abord.
+`update.bat` sauvegarde votre base sous `output\history.db.avant-maj-<date>`, supprime les
+restes de l'ancienne version, puis appelle `setup.bat` pour les dependances. Rien d'autre
+n'est a faire.
+
+> **Vos donnees ne peuvent pas etre ecrasees.** Le zip est genere avec `git archive` : il ne
+> contient que les fichiers versionnes. `output/`, `.env` et `apollo_cookies.json` etant
+> ignores par git, ils en sont structurellement absents. Il n'y a donc rien a deplacer avant
+> d'extraire.
+
+**Pourquoi `update.bat` est necessaire.** Extraire un zip ajoute et remplace des fichiers,
+mais ne supprime jamais ceux qui ont disparu de la nouvelle version. Le cas critique est
+`frontend/dist` : ce dossier est ignore par git, donc absent du zip, donc jamais mis a jour —
+et le serveur le sert tel quel sur le port 8000. Sans nettoyage, vous verriez l'ancienne
+interface par-dessus le nouveau moteur.
+
+**Pour generer le zip** (cote prestataire, depuis un tag) :
+
+```bash
+git archive --format=zip -o leadgen-<date>.zip <tag>
+```
 
 ---
 
