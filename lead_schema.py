@@ -14,6 +14,13 @@ CSV_COLUMNS: list[str] = [
     # Why a candidate site was kept or dropped — auditable in the export,
     # not only in the UI modal.
     "website_check_reason",
+    # True when the step-5/6a scrape itself failed (network/DNS/timeout/error
+    # status) rather than the page answering thin or empty. This is what
+    # lets a lead like Astrak reach evidence_level="sufficient" on Perplexity
+    # alone — without this column in the export, that outcome is invisible
+    # to an operator comparing two otherwise-similar leads. None means the
+    # lead never reached the scraping step (no-hit lead, never enriched).
+    "website_unreachable",
     # Hit scoring
     "hit_score", "is_hit",
     # ICP scoring

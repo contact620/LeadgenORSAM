@@ -26,6 +26,47 @@ def test_website_check_reason_is_exported():
     assert "website_check_reason" in CSV_COLUMNS
 
 
+def test_website_unreachable_is_exported():
+    """website_unreachable decides evidence_level (Astrak: cold -> hot on this
+    flag alone) but was invisible in the export — the exact failure mode this
+    chantier exists to eliminate. It must sit alongside the other three
+    site-verification columns.
+    """
+    assert "website_unreachable" in CSV_COLUMNS
+    site_cols = {"website_coherent", "website_rejected", "website_check_reason",
+                 "website_unreachable"}
+    positions = [CSV_COLUMNS.index(c) for c in site_cols]
+    assert max(positions) - min(positions) == len(site_cols) - 1, (
+        "site-verification columns must stay contiguous in the export"
+    )
+
+
+def test_website_unreachable_round_trips_through_export_csv(tmp_path, monkeypatch):
+    """An enriched lead keeps its real flag; a never-scraped lead reads back
+    as missing (None/NaN), not as a stray False that would misreport it as
+    'checked and reachable'.
+    """
+    import pandas as pd
+
+    import config
+    import main
+
+    monkeypatch.setattr(config, "OUTPUT_DIR", str(tmp_path))
+    leads = [
+        {"first_name": "A", "last_name": "B", "company": "Astrak",
+         "website": "https://astrakgroup.fr", "website_unreachable": True},
+        {"first_name": "C", "last_name": "D", "company": "Acme",
+         "website": "https://acme.example", "website_unreachable": False},
+        {"first_name": "E", "last_name": "F", "company": "NoHit"},
+    ]
+    path = main.export_csv(leads, "roundtrip.csv")
+    df = pd.read_csv(path)
+
+    assert df.loc[0, "website_unreachable"] == True  # noqa: E712
+    assert df.loc[1, "website_unreachable"] == False  # noqa: E712
+    assert pd.isna(df.loc[2, "website_unreachable"])
+
+
 def test_pool_round_trip_keeps_the_scoring_inputs(tmp_path, monkeypatch):
     """create_pool used to drop these, leaving the enrich-only export blank.
 
