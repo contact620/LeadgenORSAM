@@ -28,17 +28,32 @@ MAX_POLL_ATTEMPTS = 40  # 10 min max wait
 
 
 _dropcontact_disabled = False
+_last_error: Optional[str] = None  # what Dropcontact answered on the last failed POST
 
 
 def _reset_state():
     """Reset module state between pipeline runs."""
-    global _dropcontact_disabled
+    global _dropcontact_disabled, _last_error
     _dropcontact_disabled = False
+    _last_error = None
+
+
+def _describe_error(exc: BaseException) -> str:
+    """Turn a request failure into 'HTTP <code> — <Dropcontact reason>' when possible."""
+    http_exc = exc if isinstance(exc, requests.exceptions.HTTPError) else exc.__cause__
+    resp = getattr(http_exc, "response", None)
+    if resp is None:
+        return str(exc)
+    try:
+        reason = resp.json().get("reason")
+    except Exception:
+        reason = None
+    return f"HTTP {resp.status_code} — {reason}" if reason else f"HTTP {resp.status_code}"
 
 
 def _post_batch(leads_batch: list[dict]) -> Optional[str]:
     """Submit a batch to Dropcontact with retry. Returns request_id."""
-    global _dropcontact_disabled
+    global _dropcontact_disabled, _last_error
     if _dropcontact_disabled:
         return None
 
@@ -65,17 +80,19 @@ def _post_batch(leads_batch: list[dict]) -> Optional[str]:
         data = resp.json()
         request_id = data.get("request_id")
         if not request_id:
-            raise ValueError(f"Dropcontact returned no request_id: {data}")
+            raise ValueError(data.get("reason") or f"Dropcontact returned no request_id: {data}")
         return request_id
 
     try:
         return retry_api_call(_do_request, max_retries=3, operation_name="Dropcontact POST /batch")
     except AuthError as e:
         _dropcontact_disabled = True
-        logger.error(f"Dropcontact auth failed — disabled for this run: {e}")
+        _last_error = _describe_error(e)
+        logger.error(f"Dropcontact auth failed — disabled for this run: {_last_error}")
         return None
     except Exception as e:
-        logger.error(f"Dropcontact POST /batch failed after retries: {e}")
+        _last_error = _describe_error(e)
+        logger.error(f"Dropcontact POST /batch failed after retries: {_last_error}")
         return None
 
 
@@ -172,7 +189,8 @@ def enrich_leads_dropcontact(leads: list[dict], registry: ProviderRegistry | Non
             if batch_num == 1:
                 raise ProviderFailure(
                     "dropcontact",
-                    "le premier lot a échoué — clé invalide ou crédits épuisés. "
+                    f"le premier lot a été refusé par Dropcontact ({_last_error or 'raison inconnue'}). "
+                    "Vérifiez la clé API et les crédits du compte. "
                     "Run interrompu pour ne pas produire un fichier sans contacts.",
                 )
             failed_batches += 1
