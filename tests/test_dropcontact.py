@@ -40,3 +40,42 @@ def test_non_first_batch_failure_degrades_without_aborting():
     assert len(result) == 4
     assert reg.to_dict()["dropcontact"]["status"] == "degraded"
     assert reg.has_critical_failure() is True
+
+
+class _FakeResponse:
+    def __init__(self, status_code, body):
+        self.status_code = status_code
+        self._body = body
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import requests
+            raise requests.exceptions.HTTPError(f"{self.status_code} Error", response=self)
+
+
+@pytest.mark.parametrize("status", [401, 402, 400])
+def test_first_batch_failure_reports_dropcontact_reason(status):
+    """The UI must show what Dropcontact actually answered, not a guess."""
+    _reset_state()
+    resp = _FakeResponse(status, {"error": True, "success": False, "reason": "Not enough credits"})
+    with patch("enrichers.dropcontact.config.DROPCONTACT_API_KEY", "key"), \
+         patch("enrichers.dropcontact.requests.post", return_value=resp), \
+         patch("enrichers.retry.time.sleep"):
+        with pytest.raises(ProviderFailure) as exc:
+            enrich_leads_dropcontact(_leads(3), registry=ProviderRegistry())
+    assert f"HTTP {status}" in str(exc.value)
+    assert "Not enough credits" in str(exc.value)
+
+
+def test_first_batch_failure_reports_reason_when_no_request_id():
+    _reset_state()
+    resp = _FakeResponse(200, {"error": True, "success": False, "reason": "Invalid data"})
+    with patch("enrichers.dropcontact.config.DROPCONTACT_API_KEY", "key"), \
+         patch("enrichers.dropcontact.requests.post", return_value=resp), \
+         patch("enrichers.retry.time.sleep"):
+        with pytest.raises(ProviderFailure) as exc:
+            enrich_leads_dropcontact(_leads(3), registry=ProviderRegistry())
+    assert "Invalid data" in str(exc.value)
