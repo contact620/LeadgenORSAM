@@ -1,6 +1,8 @@
 # Boxcom Lead Generation Pipeline
 
-Outil de generation de leads B2B. Scrape des prospects depuis Apollo.io, les enrichit via Google Search, Dropcontact, IA (Claude), scoring ICP et intelligence business (Perplexity Sonar), puis exporte en CSV. Pipeline en 2 phases : scraping rapide dans des pools, puis enrichissement par batch.
+Outil de generation de leads B2B. Scrape des prospects depuis Apollo.io, trouve leurs coordonnees **sans rien payer quand c'est possible** (contacts publies sur le site de l'entreprise, puis adresses reconstruites et verifiees), et ne sollicite les fournisseurs payants qu'en dernier recours et sous quota. Chaque lead est ensuite note sur son adequation avec votre cible, enrichi par IA (Claude) et par Perplexity Sonar, puis exporte en CSV.
+
+Pipeline en 2 phases : une phase **gratuite** qui scrape et prepare les leads dans un pool, puis une phase **payante** lancee par lots, qui depense les credits sur les leads les mieux notes en premier.
 
 **Deux interfaces disponibles :**
 - **Interface web** (recommandee) : formulaire avec barre de progression en temps reel, pools de leads, templates de recherche et theme clair/sombre
@@ -44,16 +46,17 @@ Le fichier `.env` est cree automatiquement par `setup.bat`. Vous pouvez le rempl
 # Serper.dev API (recherche LinkedIn via Google)
 SERPER_API_KEY=votre_cle_serper_ici
 
-# Dropcontact API (optionnel - enrichissement email/telephone)
-DROPCONTACT_API_KEY=votre_cle_dropcontact_ici
-
-# Anthropic API (enrichissement IA + scoring ICP)
+# Anthropic API (enrichissement IA + extraction de faits)
 ANTHROPIC_API_KEY=sk-ant-votre_cle_ici
 
-# Perplexity API (optionnel - enrichissement maturite digitale, budget, signaux business)
+# Perplexity API (optionnel - maturite digitale, budget, signaux business)
 PERPLEXITY_API_KEY=votre_cle_perplexity_ici
 
-# Hunter.io (optionnel - verification des emails retournes par Dropcontact)
+# --- Fournisseurs d'email (tous optionnels, tous en offre gratuite) ---
+# Le pipeline fonctionne sans aucun d'eux : il se limite alors aux adresses
+# publiees sur les sites et aux patterns non verifies.
+PROSPEO_API_KEY=votre_cle_prospeo_ici
+GETPROSPECT_API_KEY=votre_cle_getprospect_ici
 HUNTER_API_KEY=votre_cle_hunter_ici
 
 # Modele LLM utilise pour l'enrichissement IA (defaut: claude-sonnet-4-6)
@@ -66,12 +69,15 @@ LLM_MODEL=claude-sonnet-4-6
 | Service | Utilite | Lien |
 |---------|---------|------|
 | **Serper.dev** | Trouver les profils LinkedIn (2500 requetes/mois gratuites) | [serper.dev](https://serper.dev) |
-| **Dropcontact** | Trouver emails et telephones | [dropcontact.com](https://www.dropcontact.com/) |
-| **Hunter.io** | Verification des emails retournes par Dropcontact (~$0.01 / verif) | [hunter.io/api-keys](https://hunter.io/api-keys) |
-| **Anthropic** | Enrichissement IA + scoring ICP des leads | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| **Anthropic** | Extraction de faits + redaction des angles commerciaux | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
 | **Perplexity** | Maturite digitale, budget estime, signaux business | [perplexity.ai](https://www.perplexity.ai/settings/api) |
+| **Prospeo** | Recherche d'email (compte gratuit) | [prospeo.io](https://prospeo.io) |
+| **GetProspect** | Recherche et verification d'email (compte gratuit) | [getprospect.com](https://getprospect.com) |
+| **Hunter.io** | Recherche et verification d'email (compte gratuit) | [hunter.io/api-keys](https://hunter.io/api-keys) |
 
-> **Cout Hunter.io :** environ **$0.01 par email verifie**. Pour un run de 500 leads avec ~250 emails Dropcontact, compter ~**$2.50** de verification.
+> **Aucun abonnement n'est necessaire.** Les trois fournisseurs d'email fonctionnent sur leur offre gratuite : Prospeo 100 recherches/mois, GetProspect 50 emails + 100 verifications/mois, Hunter 50 credits/mois. Le pipeline tient un compteur par fournisseur, verifie le solde avant chaque appel, et ne decompte que ce qui a reellement ete facture. Un lead qu'aucun fournisseur n'a pu traiter faute de credit n'est pas perdu : il ressort en `pending_quota` et repasse en priorite au prochain reset mensuel.
+
+> **Ces trois cles sont optionnelles.** Sans elles, la cascade s'arrete aux etapes gratuites : adresses publiees sur le site de l'entreprise, puis adresses reconstruites a partir du format maison mais non verifiees. C'est deja la source de la majorite des contacts.
 
 > **Modele LLM :** L'enrichissement IA utilise **Claude Sonnet 4.6** par defaut (meilleur raisonnement que Haiku pour l'analyse B2B). Vous pouvez basculer sur Haiku (moins cher) ou Opus (qualite max) en changeant la variable `LLM_MODEL` dans `.env`.
 
@@ -251,7 +257,7 @@ Accessible via le bouton **Parametres** dans la barre de navigation. Permet de t
 
 **Cles API** — saisir ou modifier les cles directement depuis l'interface :
 - `SERPER_API_KEY` (obligatoire) — recherche LinkedIn via Google
-- `DROPCONTACT_API_KEY` (optionnel) — enrichissement email/telephone ignore si absent
+- `PROSPEO_API_KEY`, `GETPROSPECT_API_KEY`, `HUNTER_API_KEY` (optionnels) — fournisseurs d'email ; chacun est simplement saute si sa cle est absente
 - `ANTHROPIC_API_KEY` (obligatoire) — enrichissement IA + scoring ICP
 - `PERPLEXITY_API_KEY` (optionnel) — enrichissement Perplexity Sonar ignore si absent
 - Chaque cle affiche un badge de statut (vert "Configure" / rouge "Manquant")
@@ -268,7 +274,8 @@ Accessible via le bouton **Parametres** dans la barre de navigation. Permet de t
 - Ces services apparaissent comme checkboxes dans le formulaire de lancement pour orienter l'enrichissement IA
 
 **Parametres du pipeline** :
-- Seuil de hit score (0-100, defaut 50) — score minimum pour qu'un lead soit considere comme "hit"
+- Panneau **Quotas** — solde restant sur allocation pour chaque fournisseur d'email, avec la date de reset mensuel
+- **Liste de suppression** — import CSV des clients existants, contacts deja approches et opt-out ; ils sont ecartes avant toute depense
 
 #### Theme clair / sombre
 
@@ -308,23 +315,34 @@ Les resultats sont sauvegardes dans le dossier **`output/`** au format CSV.
 | `company` | Entreprise |
 | `job_title` | Poste |
 | `location` | Localisation |
-| `email` | Email (via Dropcontact) |
-| `email_status` | Statut de verification Hunter.io : `valid`, `invalid`, `accept_all`, `webmail`, `disposable`, `unknown` |
-| `email_confidence` | Score de confiance Hunter.io (0-100) |
-| `phone` | Telephone (via Dropcontact) |
+| `email` | Email retenu |
+| `email_status` | `valid_nominatif`, `valid_generique`, `catch_all`, `not_found`, `pending_quota`, `provider_failure` |
+| `email_source` | D'ou vient l'adresse : `website`, `pattern_verified`, `prospeo`, `getprospect`, `hunter` |
+| `email_type` | `nominatif_lead`, `nominatif_autre`, `generique`, `webmail` |
+| `contact_source_url` | Page exacte ou l'adresse a ete trouvee, quand elle vient du site |
+| `domain_mismatch` | `True` si un fournisseur a renvoye une adresse sur un autre domaine que celui de l'entreprise |
+| `domain_catch_all` | `True` si le domaine accepte n'importe quelle adresse |
+| `domain_mx_provider` | Hebergeur mail detecte : `google`, `microsoft`, `autre` |
+| `phone` | Telephone, au format international |
+| `phone_type` | `mobile` ou `fixe` |
+| `whatsapp` | `True` si l'entreprise publie elle-meme un lien WhatsApp |
 | `linkedin_url` | URL du profil LinkedIn |
 | `website` | Site web de l'entreprise |
-| `hit_score` | Score de qualite 0-100 (email valide = +40, autres statuts = +20 ou 0) |
-| `is_hit` | `True` si score >= 50 |
+| `reachable` | `True` joignable, `False` non joignable, vide si en attente de quota |
+| `contact_level` | Meilleure route disponible : `direct`, `indirect`, `aucun`, `indetermine` |
+| `prescore` | Note de tri 0-60 calculee avant toute depense. **Sert a prioriser, pas a juger** |
 | `icp_score` | Score ICP 0-100 (adequation profil client ideal) |
 | `icp_tier` | Classification : `hot` (>70), `warm` (40-70), `cold` (<40) |
 | `icp_rationale` | Justification du score ICP par l'IA |
 | `icp_scores_detail` | Detail des scores par axe (JSON) |
 | `activity_summary` | Resume d'activite genere par IA |
 | `conversion_angle` | Angle d'approche suggere par IA |
-| `inconsistency_detected` | `True` si l'IA detecte une incoherence Apollo <-> source scrapee (cas d'homonymie d'entreprise) |
-| `inconsistency_reason` | Explication courte de l'incoherence detectee |
-| `llm_confidence` | Confiance du modele IA : `high`, `medium`, `low` |
+| `evidence_level` | Qualite des sources reunies : `sufficient`, `weak`, `none` |
+| `evidence_verified` | `True` si le score ICP repose sur des preuves suffisantes |
+| `facts_json` | Les faits extraits, chacun avec sa source |
+| `disqualification_reason` | Motif si le lead est disqualifie (taille, secteur exclu, hors zone, concurrent) |
+| `website_rejected` | Site candidat ecarte parce qu'il appartenait manifestement a une autre societe |
+| `website_check_reason` | Pourquoi le site a ete retenu ou ecarte |
 | `digital_maturity` | Maturite digitale : score /10 + justification (Perplexity) |
 | `estimated_budget` | Budget estime : taille, CA, financements (Perplexity) |
 | `business_signals` | Signaux business recents de l'entreprise (Perplexity) |
@@ -362,22 +380,32 @@ Supprimez les dossiers `venv` et `frontend\node_modules`, puis relancez `setup.b
 
 Scrape les leads Apollo sans enrichissement et les stocke dans un **pool**. Permet d'accumuler des leads et de les enrichir plus tard par batch (10, 25, 50 ou 100 leads a la fois).
 
-### Phase 2 — Pipeline complet (7 etapes)
+### Les 9 etapes du pipeline
 
-Le pipeline execute les etapes suivantes de maniere sequentielle :
+La frontiere entre gratuit et payant est nette, et c'est elle qui structure tout.
+
+**Phase gratuite** — tout le monde y passe, aucun credit n'est consomme.
 
 | Etape | Nom | Description |
 |-------|-----|-------------|
-| 1 | **Scraping Apollo** | Extraction des leads depuis une recherche Apollo.io (Playwright + cookies) |
-| 2 | **Recherche LinkedIn** | Recherche des profils LinkedIn via Serper.dev + site web via DuckDuckGo |
-| 3a | **Email + Telephone** | Enrichissement via Dropcontact (batches de 50, polling asynchrone) |
-| 3b | **Verification email** | Verification Hunter.io de chaque email Dropcontact : statut + score de confiance. Pondere le hit score selon validite |
-| 4 | **Score & Filtre** | Calcul du hit score (email valide +40, statut incertain +20, invalide 0 ; linkedin +30, phone +20, web +10). Leads >= seuil = "hit" |
-| 5 | **Scoring ICP** | Evaluation par IA (Claude) de l'adequation au profil client ideal sur 4 axes : secteur (20%), taille (20%), localisation (20%), signaux business (40%). Classification en tiers : hot (>70), warm (40-70), cold (<40) |
-| 6 | **Enrichissement IA** | Scraping du site web puis appel **Claude Sonnet 4.6** (modele configurable) : resume d'activite, angle de conversion, et **detection d'incoherence** entre Apollo et la source scrapee (cas d'homonymie d'entreprise) |
-| 7 | **Enrichissement Perplexity** | Recherche Perplexity Sonar sur les leads hit : maturite digitale (score /10), budget estime, signaux business recents |
+| 1 | **Entree Apollo** | Validation de l'URL de recherche |
+| 2 | **Scraping Apollo** | Extraction des leads (Playwright, navigateur visible) |
+| 3 | **LinkedIn et site web** | Profil via Serper.dev, site de l'entreprise via Clearbit puis Serper ou DuckDuckGo. Le site candidat est **verifie** : s'il appartient manifestement a une autre societe, il est rejete |
+| 4 | **Contacts du site** | Crawl de la page d'accueil et de 5 pages contact au maximum (FR, EN, arabe translittere). Extraction des emails, y compris masques (`[at]`) ou proteges par Cloudflare, des telephones avec distinction mobile/fixe, et des liens WhatsApp et reseaux sociaux |
+| 5 | **Pre-score** | Note de 0 a 60 sur le secteur, la taille et la localisation, a partir des seules donnees gratuites. Elle **ordonne la file de depense** : les credits iront aux mieux notes d'abord |
 
-Les etapes 5 a 7 ne s'executent que sur les leads "hit" pour optimiser les couts API. Si une cle API est absente, l'etape correspondante est ignoree.
+**Phase payante** — reservee aux leads en tete de file, sous quota.
+
+| Etape | Nom | Description |
+|-------|-----|-------------|
+| 6 | **Cascade email** | Dans l'ordre, en s'arretant au premier succes : l'adresse nominative publiee sur le site, puis une adresse reconstruite au format maison et verifiee, puis les trois finders. Un domaine sans enregistrement MX est saute ; un domaine catch-all n'est pas verifie, ca n'apprendrait rien |
+| 7 | **Collecte de preuves** | Texte du site deja telecharge + recherche Perplexity Sonar : maturite digitale, budget estime, signaux business recents |
+| 8 | **Faits et scoring ICP** | Claude extrait des faits **obligatoirement sourcés**, puis un moteur deterministe calcule le score sur 4 axes : signaux (40%), secteur (20%), taille (20%), localisation (20%). Tiers : hot (>=70), warm (>=40), cold |
+| 9 | **Angles commerciaux** | Claude redige un resume d'activite et une accroche reliant un fait precis a un service nomme. Uniquement sur les leads dont les preuves sont suffisantes |
+
+Si une cle API est absente, l'etape correspondante est simplement sautee.
+
+> **Pourquoi le pre-score et le score ICP sont deux choses differentes.** Le pre-score est calcule sur ce qu'Apollo affiche, donc sur des donnees non verifiees : il sert uniquement a decider ou depenser, ne disqualifie jamais personne, et n'apparait pas comme un verdict. Le score ICP, lui, ne repose que sur des faits sourcés, et c'est le seul a lire comme un jugement. Un lead dont les preuves sont insuffisantes est plafonne a 39 et marque pour qualification manuelle, plutot que note genereusement par defaut.
 
 L'enrichissement IA (etapes 5-7) prend en compte les **enrich_instructions** : services cibles et signaux personnalises configures au lancement pour orienter les analyses.
 
@@ -405,8 +433,9 @@ LeadgenORSAM/
 │   ├── templates.py       <- Gestion templates de recherche
 │   └── routes/            <- Endpoints API (pipeline, templates, config, health)
 ├── scrapers/              <- Scraping Apollo + websites
-├── enrichers/             <- Google, Dropcontact, IA, Perplexity Sonar
-├── processors/            <- Calcul hit score + scoring ICP
+├── enrichers/             <- Recherche, contacts du site, cascade email, IA
+│   └── providers/         <- Clients Prospeo, GetProspect, Hunter + quotas
+├── processors/            <- Pre-score, joignabilite, scoring ICP
 ├── prompts/               <- Prompts personnalisables (scoring ICP)
 ├── frontend/
 │   └── src/
