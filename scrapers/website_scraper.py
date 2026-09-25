@@ -19,19 +19,21 @@ MAX_WEBSITE_TEXT = 4000
 # Phrases that bloat the scraped text without providing business signal.
 # Filtering them lets the LLM focus on the actual company description.
 _NOISE_PATTERNS = [
-    r"(?i)accept(er|ing)? (all )?cookies?",
-    r"(?i)nous (et nos partenaires )?utilisons des cookies",
-    r"(?i)this (web)?site uses cookies",
-    r"(?i)privacy policy",
-    r"(?i)politique de confidentialit[eé]",
-    r"(?i)mentions? l[eé]gales?",
-    r"(?i)conditions g[eé]n[eé]rales",
-    r"(?i)tous droits r[eé]serv[eé]s?",
-    r"(?i)all rights reserved",
-    r"(?i)© ?\d{4}",
-    r"(?i)gdpr|rgpd",
+    r"accept(er|ing)? (all )?cookies?",
+    r"nous (et nos partenaires )?utilisons des cookies",
+    r"this (web)?site uses cookies",
+    r"privacy policy",
+    r"politique de confidentialit[eé]",
+    r"mentions? l[eé]gales?",
+    r"conditions g[eé]n[eé]rales",
+    r"tous droits r[eé]serv[eé]s?",
+    r"all rights reserved",
+    r"© ?\d{4}",
+    r"gdpr|rgpd",
 ]
-_NOISE_RE = re.compile("|".join(_NOISE_PATTERNS))
+# Global flags like IGNORECASE must be passed to compile(), not inline in patterns.
+# Python 3.14+ rejects inline (?i) when patterns are joined with |.
+_NOISE_RE = re.compile("|".join(_NOISE_PATTERNS), re.IGNORECASE)
 
 
 def _strip_noise(text: str) -> str:
