@@ -17,6 +17,7 @@ import requests
 
 import config
 from api.quota_db import normalize_name
+from enrichers.phone_extractor import ExtractedPhone, extract_phones
 
 logger = logging.getLogger(__name__)
 
@@ -293,9 +294,9 @@ def _robots_allows(base_url: str, path: str) -> bool:
 def harvest_contacts(lead: dict, page) -> dict:
     """Walk the homepage plus up to MAX_PAGES contact pages and collect everything.
 
-    Returns emails already classified, social handles and the source URL of
-    each find. Never raises: a site that blocks us costs the lead its free
-    contact route, not the run.
+    Returns emails already classified, phone numbers, social handles and the
+    source URL of each find. Never raises: a site that blocks us costs the
+    lead its free contact route, not the run.
 
     `website` gates the whole function: Task 7 established that `_page_fetch`
     stays populated even when the coherence check rejects the site as
@@ -305,16 +306,21 @@ def harvest_contacts(lead: dict, page) -> dict:
     """
     website = lead.get("website") or ""
     if not website or page is None or not getattr(page, "html", ""):
-        return {"emails": [], "social": extract_social(""), "pages_crawled": 0}
+        return {"emails": [], "phones": [], "social": extract_social(""), "pages_crawled": 0}
 
     domain = urlparse(website).netloc.lower().removeprefix("www.")
     first = (lead.get("first_name") or "")
     last = (lead.get("last_name") or "")
+    location = lead.get("location") or ""
 
     collected: dict[str, ExtractedEmail] = {}
+    collected_phones: dict[str, ExtractedPhone] = {}
     social = extract_social(page.html)
-    for found in extract_emails(page.html, page.url or website, company_domain=domain):
+    home_url = page.url or website
+    for found in extract_emails(page.html, home_url, company_domain=domain):
         collected[found.value] = found
+    for found in extract_phones(page.html, location, source_url=home_url):
+        collected_phones[found.e164] = found
 
     pages = 0
     for url in internal_contact_links(page.html, website):
@@ -331,6 +337,8 @@ def harvest_contacts(lead: dict, page) -> dict:
         pages += 1
         for found in extract_emails(resp.text, url, company_domain=domain):
             collected.setdefault(found.value, found)
+        for found in extract_phones(resp.text, location, source_url=url):
+            collected_phones.setdefault(found.e164, found)
         for key, value in extract_social(resp.text).items():
             if key == "whatsapp":
                 social[key] = social[key] or value
@@ -344,4 +352,9 @@ def harvest_contacts(lead: dict, page) -> dict:
                        source_url=e.source_url)
         for e in collected.values()
     ]
-    return {"emails": classified, "social": social, "pages_crawled": pages}
+    return {
+        "emails": classified,
+        "phones": list(collected_phones.values()),
+        "social": social,
+        "pages_crawled": pages,
+    }
