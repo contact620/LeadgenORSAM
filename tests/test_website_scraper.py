@@ -16,7 +16,7 @@ import requests
 from unittest.mock import patch
 
 from enrichers.google_search import PageFetch
-from scrapers.website_scraper import _scrape_website, scrape_hit_leads
+from scrapers.website_scraper import _html_to_text, _scrape_website, scrape_hit_leads
 
 
 def _run(coro):
@@ -120,10 +120,18 @@ def test_scrape_hit_leads_sets_website_unreachable_flag_per_lead():
 
 def test_scrape_hit_leads_reuses_cached_page_fetch_without_a_new_request():
     """A lead already carrying `_page_fetch` from verify_website must not
-    trigger a second download of the same homepage."""
+    trigger a second download of the same homepage.
+
+    The `html` field, not `text`, is what the short-circuit re-derives
+    `website_text` from (see `_html_to_text`), so it must carry the content
+    the assertion below looks for. This is an adaptation of the original
+    test, which asserted on a `text` field the implementation no longer
+    reads for this path — the fix here makes the cached page's `text` and
+    `html` agree, matching what a real `verify_website()` call produces.
+    """
     page = PageFetch(
         url="https://acme.example",
-        html="<html><body>content</body></html>",
+        html="<html><body>" + "Acme " * 100 + "</body></html>",
         text="Acme " * 100,
         title="Acme",
         unreachable=False,
@@ -170,3 +178,53 @@ def test_scrape_hit_leads_fetches_normally_when_no_cached_fetch_present():
     mock_scrape.assert_called_once_with("https://acme.example")
     assert result[0]["website_unreachable"] is False
     assert "Fresh text" in result[0]["website_text"]
+
+
+# ── Text-extraction parity between the live fetch and the cached path ───────
+
+def test_html_to_text_strips_noscript_and_comments():
+    html = (
+        "<html><head><title>Acme</title></head><body>"
+        "<noscript>Veuillez activer JavaScript pour consulter ce site.</noscript>"
+        "<!-- internal note: do not ship -->"
+        "<p>Acme est une agence e-commerce a Casablanca.</p>"
+        "</body></html>"
+    )
+    text = _html_to_text(html)
+    assert "JavaScript" not in text
+    assert "internal note" not in text
+    assert "Acme est une agence e-commerce a Casablanca" in text
+
+
+def test_html_to_text_on_empty_string_returns_empty_string():
+    assert _html_to_text("") == ""
+
+
+def test_cached_and_direct_paths_produce_identical_text_for_the_same_html():
+    """Regression: the short-circuit used to reuse `cached.text`, which came
+    from enrichers/google_search.py's lighter extraction (no noscript/comment
+    stripping). Two leads scraped through different paths could then be
+    scored from different text for the same page. Both paths must now go
+    through `_html_to_text` and agree byte for byte."""
+    html = (
+        "<html><head><title>Acme</title></head><body>"
+        "<noscript>Veuillez activer JavaScript pour consulter ce site.</noscript>"
+        "<!-- internal note: do not ship -->"
+        "<p>Acme est une agence e-commerce a Casablanca.</p>"
+        "</body></html>"
+    )
+
+    direct_text = _html_to_text(html)[:4000]
+
+    page = PageFetch(url="https://acme.example", html=html, text="irrelevant, must be ignored",
+                      title="Acme", unreachable=False)
+    leads = [{"first_name": "A", "last_name": "B", "website": "https://acme.example",
+              "_page_fetch": page}]
+    with patch("scrapers.website_scraper._scrape_website") as mock_scrape:
+        result = _run(scrape_hit_leads(leads))
+    mock_scrape.assert_not_called()
+    cached_text = result[0]["website_text"]
+
+    assert cached_text == direct_text
+    assert "JavaScript" not in cached_text
+    assert "internal note" not in cached_text

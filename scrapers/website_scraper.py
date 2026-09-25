@@ -42,6 +42,27 @@ def _strip_noise(text: str) -> str:
     return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
+def _html_to_text(html: str) -> str:
+    """Reduce raw HTML to the plain text the evidence step consumes.
+
+    Shared by the live fetch and the cached-page short-circuit so both
+    produce identical text for identical HTML. The coherence check in
+    enrichers/google_search.py deliberately uses its own, lighter
+    extraction: its job is to recognise a company name, not to feed a
+    fact extractor, and changing it would change which sites are accepted.
+    """
+    # Simple text extraction without BeautifulSoup dependency
+    # Remove scripts, styles, tags
+    text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<noscript[^>]*>.*?</noscript>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&[a-zA-Z]+;", " ", text)
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    return _strip_noise(text)
+
+
 async def _scrape_website(url: str) -> tuple[str, bool]:
     """Scrape a company website homepage and return (text, unreachable).
 
@@ -78,16 +99,7 @@ async def _scrape_website(url: str) -> tuple[str, bool]:
         logger.error(f"Website scrape error for {url}: {e}")
         return "", False
 
-    # Simple text extraction without BeautifulSoup dependency
-    # Remove scripts, styles, tags
-    text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"<noscript[^>]*>.*?</noscript>", " ", text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = re.sub(r"&[a-zA-Z]+;", " ", text)
-    text = re.sub(r"\s{2,}", " ", text).strip()
-    text = _strip_noise(text)
+    text = _html_to_text(html)
     return text[:MAX_WEBSITE_TEXT], False
 
 
@@ -108,8 +120,11 @@ async def scrape_hit_leads(hit_leads: list[dict]) -> list[dict]:
         cached = lead.get("_page_fetch")
         if cached is not None and (cached.html or cached.unreachable):
             # Reuse the page fetched during the coherence check rather than
-            # asking the site for the same document a second time.
-            lead["website_text"] = _strip_noise(cached.text)[:MAX_WEBSITE_TEXT]
+            # asking the site for the same document a second time. Re-derive
+            # the text from the cached HTML with this module's own extraction
+            # rules (not the coherence check's lighter one) so the evidence
+            # text is identical regardless of which path produced it.
+            lead["website_text"] = _html_to_text(cached.html)[:MAX_WEBSITE_TEXT]
             lead["website_unreachable"] = cached.unreachable
             lead["linkedin_text"] = ""
             continue
