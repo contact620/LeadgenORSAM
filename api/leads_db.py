@@ -8,8 +8,10 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import urlparse
 
 import config as pipeline_config
+from api.quota_db import normalize_name
 from lead_schema import ENRICH_FIELDS
 
 _DB_PATH = os.path.join(pipeline_config.OUTPUT_DIR, "history.db")
@@ -93,6 +95,19 @@ def init_leads_table() -> None:
         con.execute(_CREATE_LEAD_POOL)
         con.execute(_CREATE_POOL_META)
         _migrate_lead_pool(con)
+        _migrate_known_leads(con)
+
+
+def _migrate_known_leads(con: sqlite3.Connection) -> None:
+    """Add the dedupe_kind/dedupe_value columns introduced by the 2026-09-25
+    free cascade. Most leads it produces have no email at all, so email alone
+    can no longer be the dedup key — see dedupe_key()."""
+    existing = {row["name"] for row in con.execute("PRAGMA table_info(known_leads)")}
+    if not existing:
+        return  # table not created yet — init_leads_table() will create it complete
+    for column in ("dedupe_kind", "dedupe_value"):
+        if column not in existing:
+            con.execute(f"ALTER TABLE known_leads ADD COLUMN {column} TEXT")
 
 
 def _migrate_lead_pool(con: sqlite3.Connection) -> None:
@@ -110,21 +125,55 @@ def _migrate_lead_pool(con: sqlite3.Connection) -> None:
             con.execute(f"ALTER TABLE lead_pool ADD COLUMN {column} {sql_type}")
 
 
-# ── Deduplication (existing) ─────────────────────────────────────────────────
+# ── Deduplication ─────────────────────────────────────────────────────────────
 
-def check_duplicates(leads: list[dict]) -> dict[str, dict]:
-    emails = [l.get("email", "").strip().lower() for l in leads if l.get("email")]
-    if not emails:
+def dedupe_key(lead: dict) -> tuple[str, str]:
+    """Identify a lead across runs, degrading through three fallbacks.
+
+    Email first, as before. But the free cascade leaves many leads without one,
+    and a key that is absent for most rows identifies nothing: every run would
+    re-report the same people as new. LinkedIn comes next, then the weakest but
+    always-available pair of name and company domain.
+    """
+    email = normalize_name(lead.get("email") or "").replace(" ", "")
+    if email:
+        return ("email", email)
+
+    linkedin = (lead.get("linkedin_url") or "").strip().lower().split("?")[0].rstrip("/")
+    if linkedin:
+        return ("linkedin", linkedin)
+
+    first = normalize_name(lead.get("first_name") or "").replace(" ", "")
+    last = normalize_name(lead.get("last_name") or "").replace(" ", "")
+    domain = urlparse(lead.get("website") or "").netloc.lower().removeprefix("www.")
+    if first and last and domain:
+        return ("name_domain", f"{first}.{last}@{domain}")
+
+    return ("", "")
+
+
+def check_duplicates(leads: list[dict]) -> dict[tuple, dict]:
+    """Look up each lead's dedupe_key() in known_leads. Keyed by (kind, value)
+    rather than by email, since most leads coming out of the free cascade
+    never had one (see dedupe_key)."""
+    keys = [dedupe_key(lead) for lead in leads]
+    keys = [k for k in keys if k != ("", "")]
+    if not keys:
         return {}
-    result = {}
+    result: dict[tuple, dict] = {}
     with _conn() as con:
-        placeholders = ",".join("?" for _ in emails)
+        _migrate_known_leads(con)
+        placeholders = " OR ".join("(dedupe_kind = ? AND dedupe_value = ?)" for _ in keys)
+        params = [value for key in keys for value in key]
         rows = con.execute(
-            f"SELECT email, first_seen_at, seen_count FROM known_leads WHERE email IN ({placeholders})",
-            emails,
+            f"""SELECT dedupe_kind, dedupe_value, first_seen_at, seen_count
+                FROM known_leads WHERE {placeholders}""",
+            params,
         ).fetchall()
         for row in rows:
-            result[row["email"]] = {"first_seen_at": row["first_seen_at"], "seen_count": row["seen_count"]}
+            result[(row["dedupe_kind"], row["dedupe_value"])] = {
+                "first_seen_at": row["first_seen_at"], "seen_count": row["seen_count"],
+            }
     return result
 
 
@@ -133,18 +182,31 @@ def register_leads(job_id: str, leads: list[dict]) -> tuple[int, int]:
     new_count = 0
     dup_count = 0
     with _conn() as con:
+        _migrate_known_leads(con)
         for lead in leads:
-            email = (lead.get("email") or "").strip().lower()
-            if not email:
+            kind, value = dedupe_key(lead)
+            if not kind:
                 continue
-            existing = con.execute("SELECT seen_count FROM known_leads WHERE email = ?", (email,)).fetchone()
+            existing = con.execute(
+                "SELECT seen_count FROM known_leads WHERE dedupe_kind = ? AND dedupe_value = ?",
+                (kind, value),
+            ).fetchone()
             if existing:
-                con.execute("UPDATE known_leads SET seen_count = seen_count + 1 WHERE email = ?", (email,))
+                con.execute(
+                    "UPDATE known_leads SET seen_count = seen_count + 1 "
+                    "WHERE dedupe_kind = ? AND dedupe_value = ?",
+                    (kind, value),
+                )
                 dup_count += 1
             else:
                 con.execute(
-                    "INSERT INTO known_leads (email, first_name, last_name, company, first_seen_job_id, first_seen_at) VALUES (?,?,?,?,?,?)",
-                    (email, lead.get("first_name"), lead.get("last_name"), lead.get("company"), job_id, now),
+                    """INSERT INTO known_leads
+                       (email, first_name, last_name, company, first_seen_job_id,
+                        first_seen_at, dedupe_kind, dedupe_value)
+                       VALUES (?,?,?,?,?,?,?,?)""",
+                    ((lead.get("email") or "").strip().lower() or None,
+                     lead.get("first_name"), lead.get("last_name"), lead.get("company"),
+                     job_id, now, kind, value),
                 )
                 new_count += 1
     return new_count, dup_count

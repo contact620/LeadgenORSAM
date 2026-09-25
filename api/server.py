@@ -17,10 +17,12 @@ from api.routes.health import router as health_router
 from api.routes.config import router as config_router
 from api.routes.history import router as history_router
 from api.routes.templates import router as templates_router
+from api.routes.suppression import router as suppression_router
 from api import history
 from api import templates
 from api import leads_db
 from api import quota_db
+from api import suppression_db
 
 app = FastAPI(title="ORSAM Lead Gen API", version="1.0.0")
 
@@ -29,6 +31,7 @@ history.init_db()
 templates.init_templates_table()
 leads_db.init_leads_table()
 quota_db.init_quota_tables()
+suppression_db.init_suppression_table()
 
 # ── CORS (allow Vite dev server) ───────────────────────────────────────────────
 app.add_middleware(
@@ -44,6 +47,7 @@ app.include_router(pipeline_router, prefix="/api")
 app.include_router(config_router, prefix="/api")
 app.include_router(history_router, prefix="/api")
 app.include_router(templates_router, prefix="/api")
+app.include_router(suppression_router, prefix="/api")
 
 # ── Serve built frontend (production) ─────────────────────────────────────────
 _dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
