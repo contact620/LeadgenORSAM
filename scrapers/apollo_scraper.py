@@ -8,12 +8,53 @@ No cookie injection issues — the browser behaves like a real user session.
 import asyncio
 import logging
 import os
+import re
 
 from playwright.async_api import async_playwright, Page, BrowserContext
 
 import config
 
 logger = logging.getLogger(__name__)
+
+_RANGE_RE = re.compile(r"^\s*(\d[\d\s,]*)\s*-\s*(\d[\d\s,]*)\s*$")
+_PLUS_RE = re.compile(r"^\s*(\d[\d\s,]*)\s*\+\s*$")
+_PLAIN_RE = re.compile(r"^\s*(\d[\d\s,]*)\s*$")
+
+
+def _digits(value: str) -> int:
+    return int(re.sub(r"[^\d]", "", value))
+
+
+def parse_employee_count(raw) -> int | None:
+    """Normalise Apollo's headcount cell to a single integer, or None.
+
+    Ranges fold to their rounded-down midpoint, matching the convention the
+    fact extractor already applies to Perplexity's "11-50 employees", so a
+    lead prescored from Apollo and later scored from sourced facts sit on the
+    same scale. None means the column was absent or unreadable — never 0,
+    which would read as a micro-company and push the lead down the queue for
+    a value we never had.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+
+    match = _RANGE_RE.match(text)
+    if match:
+        low, high = _digits(match.group(1)), _digits(match.group(2))
+        return (low + high) // 2
+
+    match = _PLUS_RE.match(text)
+    if match:
+        return _digits(match.group(1))
+
+    match = _PLAIN_RE.match(text)
+    if match:
+        return _digits(match.group(1))
+
+    return None
 
 _STEALTH_JS = """() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -78,7 +119,9 @@ _JS_EXTRACT = """() => {
             job_title:    '',
             company:      '',
             location:     '',
-            linkedin_url: ''
+            linkedin_url: '',
+            employee_count_raw: '',
+            apollo_industry: ''
         };
 
         // Junk values that Apollo renders as cell text but are NOT real data
@@ -114,6 +157,8 @@ _JS_EXTRACT = """() => {
             if (headers.length > 0) {
                 lead.location  = findByHeader('location', 'city', 'country');
                 lead.job_title = findByHeader('title', 'role', 'position');
+                lead.employee_count_raw = findByHeader('employee', 'employees', 'size', 'headcount', 'effectif');
+                lead.apollo_industry    = findByHeader('industry', 'sector', 'secteur');
                 // Company: prefer the cell with an account link; fallback to header match.
                 const compCell = cells.find(c => c.querySelector(COMPANY_LINK_SEL));
                 if (compCell) {
@@ -332,6 +377,9 @@ async def _scrape_page(page: Page) -> list[dict]:
 
     try:
         leads = await page.evaluate(_JS_EXTRACT)
+        for lead in leads:
+            lead["employee_count"] = parse_employee_count(lead.pop("employee_count_raw", None))
+            lead["apollo_industry"] = (lead.get("apollo_industry") or "").strip() or None
         if leads:
             logger.info(f"JS extraction found {len(leads)} leads on this page")
             # Log first lead details for debugging
