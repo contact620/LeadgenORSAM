@@ -1,0 +1,6 @@
+# Scripts shell : LF obligatoire (un  casse le shebang sous macOS/Linux/Docker)
+*.sh      text eol=lf
+*.command text eol=lf
+Dockerfile text eol=lf
+# Scripts Windows : CRLF
+*.bat     text eol=crlf

@@ -42,11 +42,15 @@ L'interface web s'ouvre sur : **http://localhost:5173**
 
 Seul prerequis : **[Docker Desktop](https://www.docker.com/products/docker-desktop/)**, lance.
 
-1. Double-cliquer sur **`lancer-docker.bat`** (le premier lancement prend ~5 minutes), ou depuis un terminal :
+1. Double-cliquer sur **`lancer-docker.bat`** (Windows) ou **`lancer-docker.command`** (Mac) — le premier lancement prend ~5 minutes. Ou depuis un terminal :
    ```bash
    docker compose up -d --build
    ```
-2. Pour arreter : **`arreter-docker.bat`** (ou `docker compose down`)
+2. Pour arreter : **`arreter-docker.bat`** / **`arreter-docker.command`** (ou `docker compose down`)
+
+> **Mac :** au premier double-clic, macOS peut bloquer le script (« developpeur non identifie »). Faire *clic droit → Ouvrir → Ouvrir*, une seule fois.
+>
+> **Deja utilisateur de la version sans Docker ?** Au premier lancement, le script copie automatiquement `.env`, `apollo_cookies.json` et `output/` dans `data/` : cles, historique et CSV sont repris, les originaux restent en place.
 3. Ouvrir **http://localhost:8000** (ouvert automatiquement par le script) et renseigner les cles API et le fichier cookies Apollo depuis la page **Parametres**
 4. Pendant un run, le navigateur Apollo est visible sur **http://localhost:6080/vnc.html** (bouton *Connect*). C'est la que vous vous connectez a Apollo si les cookies ont expire.
 
