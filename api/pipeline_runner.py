@@ -309,12 +309,10 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
 
         # Reset enricher state from any previous run
         from enrichers.google_search import _reset_state as _reset_google
-        from enrichers.hunter_verifier import _reset_state as _reset_hunter
         from enrichers.perplexity_enricher import _reset_state as _reset_perplexity
         from enrichers.fact_extractor import _reset_state as _reset_facts
         from enrichers.angle_writer import _reset_state as _reset_angles
         _reset_google()
-        _reset_hunter()
         _reset_perplexity()
         _reset_facts()
         _reset_angles()
@@ -342,19 +340,9 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
         website_count = sum(1 for l in leads if l.get("website"))
         email_count = sum(1 for l in leads if l.get("email"))
         handler.set_explicit_progress(
-            3, 0.5,
-            f"Google terminé — {linkedin_count}/{len(leads)} LinkedIn, "
-            f"{website_count}/{len(leads)} sites web. Vérification Hunter.io..."
-        )
-
-        # ── Step 3c: Hunter.io email verification ─────────────────────────────
-        from enrichers.hunter_verifier import enrich_leads_hunter
-        leads = enrich_leads_hunter(leads, registry=registry)
-
-        valid_emails = sum(1 for l in leads if l.get("email_status") == "valid")
-        handler.set_explicit_progress(
             3, 1.0,
-            f"Vérification email terminée — {valid_emails}/{email_count} valides (Hunter.io)"
+            f"Google terminé — {linkedin_count}/{len(leads)} LinkedIn, "
+            f"{website_count}/{len(leads)} sites web, {email_count} emails"
         )
 
         # ── Step 4: Hit score ─────────────────────────────────────────────────
@@ -681,9 +669,7 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
         registry = ProviderRegistry()
 
         from enrichers.google_search import _reset_state as _reset_google
-        from enrichers.hunter_verifier import _reset_state as _reset_hunter
         _reset_google()
-        _reset_hunter()
 
         new_loop = _asyncio.new_event_loop()
         _asyncio.set_event_loop(new_loop)
@@ -701,12 +687,7 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
         handler.set_explicit_progress(3, 0.0, "Enrichissement Google...")
         from enrichers.google_search import enrich_leads_google
         leads = enrich_leads_google(leads, registry=registry)
-        handler.set_explicit_progress(3, 0.4, "Google terminé. Vérification Hunter.io...")
-
-        # Step 3c: Hunter.io email verification
-        from enrichers.hunter_verifier import enrich_leads_hunter
-        leads = enrich_leads_hunter(leads, registry=registry)
-        handler.set_explicit_progress(3, 1.0, "Vérification email terminée")
+        handler.set_explicit_progress(3, 1.0, "Google terminé.")
         _check_cancelled(job_id)
 
         # Step 4: Hit score
