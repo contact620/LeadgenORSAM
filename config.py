@@ -29,10 +29,10 @@ APOLLO_HEADLESS = os.getenv("APOLLO_HEADLESS", "false").lower() == "true"
 # ── ICP Scoring ──────────────────────────────────────────────────────────────
 ICP_BATCH_SIZE = int(os.getenv("ICP_BATCH_SIZE", "5"))
 
-# ── Quotas fournisseurs ───────────────────────────────────────────────────────
-# Valeurs par défaut du plan gratuit de chaque fournisseur, corrigées au
-# démarrage de chaque run par enrichers/providers/quota_sync.py quand le
-# fournisseur expose son solde. Jamais codées en dur ailleurs.
+# ── Provider quotas ───────────────────────────────────────────────────────────
+# Free-tier defaults per provider, corrected at the start of every run by
+# enrichers/providers/quota_sync.py wherever the provider exposes its balance.
+# Never hardcoded anywhere else.
 PROVIDER_ALLOCATIONS: dict[str, float] = {
     "prospeo": float(os.getenv("PROSPEO_MONTHLY_ALLOCATION", "100")),
     "hunter": float(os.getenv("HUNTER_MONTHLY_ALLOCATION", "50")),
@@ -40,8 +40,8 @@ PROVIDER_ALLOCATIONS: dict[str, float] = {
     "getprospect_verify": float(os.getenv("GETPROSPECT_VERIFY_ALLOCATION", "100")),
 }
 
-# Report des crédits non consommés, exprimé en multiples de l'allocation.
-# 0.0 = aucun report. GetProspect reporte jusqu'à un mois d'allocation.
+# Carry-over of unspent credits, expressed as a multiple of the allowance.
+# 0.0 = no carry-over. GetProspect carries up to one month's allowance.
 PROVIDER_ROLLOVER_CAP: dict[str, float] = {
     "prospeo": float(os.getenv("PROSPEO_ROLLOVER_CAP", "0")),
     "hunter": float(os.getenv("HUNTER_ROLLOVER_CAP", "0")),

@@ -61,6 +61,7 @@ def get_quota(provider: str) -> dict:
             "provider": provider, "allocation": allocation, "consumed": 0.0,
             "remaining": allocation, "reset_date": None,
             "rollover_cap": pipeline_config.PROVIDER_ROLLOVER_CAP.get(provider, 0.0),
+            "synced_at": None,
         }
     return dict(row)
 
