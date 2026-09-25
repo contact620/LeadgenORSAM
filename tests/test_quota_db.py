@@ -56,15 +56,15 @@ def test_reset_restores_the_allocation_plus_capped_rollover(monkeypatch):
     The allocation/cap are pinned here rather than read off whatever an
     operator's .env happens to set, because the autouse fixture already
     seeded provider_quota with the ambient config default before this test
-    body runs. sync_remaining's ON CONFLICT branch never rewrites the
-    allocation/rollover_cap columns of an existing row, so patching the
-    config dict alone would not reach them — the row is deleted first so
-    the next sync_remaining call re-inserts it under the patched values.
+    body runs. Re-running init_quota_tables() after the monkeypatch lands
+    the pinned values onto that existing row: init_quota_tables() re-asserts
+    allocation/rollover_cap on conflict (that is the very fix under test),
+    so this is the same mechanism a real restart uses, not a test-only
+    workaround.
     """
     monkeypatch.setitem(config.PROVIDER_ALLOCATIONS, "getprospect", 50.0)
     monkeypatch.setitem(config.PROVIDER_ROLLOVER_CAP, "getprospect", 1.0)
-    with quota_db._conn() as con:
-        con.execute("DELETE FROM provider_quota WHERE provider = ?", ("getprospect",))
+    quota_db.init_quota_tables()
     quota_db.sync_remaining("getprospect", 30.0, "2026-09-01")
     quota_db.apply_monthly_reset("getprospect", today=date(2026, 10, 1))
     quota = quota_db.get_quota("getprospect")
@@ -75,8 +75,7 @@ def test_reset_restores_the_allocation_plus_capped_rollover(monkeypatch):
 def test_rollover_is_capped_at_one_allowance(monkeypatch):
     monkeypatch.setitem(config.PROVIDER_ALLOCATIONS, "getprospect", 50.0)
     monkeypatch.setitem(config.PROVIDER_ROLLOVER_CAP, "getprospect", 1.0)
-    with quota_db._conn() as con:
-        con.execute("DELETE FROM provider_quota WHERE provider = ?", ("getprospect",))
+    quota_db.init_quota_tables()
     quota_db.sync_remaining("getprospect", 90.0, "2026-09-01")
     quota_db.apply_monthly_reset("getprospect", today=date(2026, 10, 1))
     assert quota_db.get_quota("getprospect")["remaining"] == 100.0  # 50 allowance + 50 max carried
@@ -86,8 +85,7 @@ def test_provider_without_rollover_starts_from_scratch(monkeypatch):
     """Prospeo credits do not carry over."""
     monkeypatch.setitem(config.PROVIDER_ALLOCATIONS, "prospeo", 100.0)
     monkeypatch.setitem(config.PROVIDER_ROLLOVER_CAP, "prospeo", 0.0)
-    with quota_db._conn() as con:
-        con.execute("DELETE FROM provider_quota WHERE provider = ?", ("prospeo",))
+    quota_db.init_quota_tables()
     quota_db.sync_remaining("prospeo", 40.0, "2026-09-01")
     quota_db.apply_monthly_reset("prospeo", today=date(2026, 10, 1))
     assert quota_db.get_quota("prospeo")["remaining"] == 100.0
@@ -117,3 +115,67 @@ def test_get_quota_for_a_provider_absent_from_the_table_does_not_raise():
         "rollover_cap": 0.0,
         "synced_at": None,
     }
+
+
+def test_reinit_after_env_edit_updates_allocation_on_existing_row(monkeypatch):
+    """Editing .env and restarting must actually change the stored
+    allocation. Before the fix, init_quota_tables() used INSERT OR IGNORE,
+    so a row created on the very first start kept its original allocation
+    forever — Prospeo publishes no documented free-tier number at all, so
+    the operator correcting the guessed default is expected, not an edge
+    case."""
+    monkeypatch.setitem(config.PROVIDER_ALLOCATIONS, "prospeo", 100.0)
+    quota_db.init_quota_tables()
+    assert quota_db.get_quota("prospeo")["allocation"] == 100.0
+
+    monkeypatch.setitem(config.PROVIDER_ALLOCATIONS, "prospeo", 5000.0)
+    quota_db.init_quota_tables()
+    assert quota_db.get_quota("prospeo")["allocation"] == 5000.0
+
+
+def test_reinit_leaves_remaining_and_consumed_untouched(monkeypatch):
+    """allocation and rollover_cap are config-owned and re-asserted on every
+    start; remaining and consumed are runtime state and must survive a
+    restart untouched, spent credits included."""
+    monkeypatch.setitem(config.PROVIDER_ALLOCATIONS, "prospeo", 100.0)
+    quota_db.init_quota_tables()
+    quota_db.record_spend("prospeo", cost=1.0, billed=True)
+    before = quota_db.get_quota("prospeo")
+
+    monkeypatch.setitem(config.PROVIDER_ALLOCATIONS, "prospeo", 5000.0)
+    quota_db.init_quota_tables()
+    after = quota_db.get_quota("prospeo")
+
+    assert after["remaining"] == before["remaining"]
+    assert after["consumed"] == before["consumed"]
+    assert after["allocation"] == 5000.0
+
+
+def test_reinit_updates_rollover_cap_on_existing_row(monkeypatch):
+    """rollover_cap is config-owned exactly like allocation, and must follow
+    the same re-assert-on-start rule."""
+    monkeypatch.setitem(config.PROVIDER_ROLLOVER_CAP, "getprospect", 1.0)
+    quota_db.init_quota_tables()
+    assert quota_db.get_quota("getprospect")["rollover_cap"] == 1.0
+
+    monkeypatch.setitem(config.PROVIDER_ROLLOVER_CAP, "getprospect", 0.5)
+    quota_db.init_quota_tables()
+    assert quota_db.get_quota("getprospect")["rollover_cap"] == 0.5
+
+
+def test_apply_monthly_reset_uses_the_updated_allocation(monkeypatch):
+    """The whole point of the fix: apply_monthly_reset must restore to
+    whatever allocation is configured now, not whatever it was when the row
+    was first created. Raising the allowance must not itself hand out
+    credits — remaining stays put until the reset actually fires."""
+    monkeypatch.setitem(config.PROVIDER_ALLOCATIONS, "prospeo", 100.0)
+    monkeypatch.setitem(config.PROVIDER_ROLLOVER_CAP, "prospeo", 0.0)
+    quota_db.init_quota_tables()
+    quota_db.sync_remaining("prospeo", 10.0, "2026-09-01")
+
+    monkeypatch.setitem(config.PROVIDER_ALLOCATIONS, "prospeo", 5000.0)
+    quota_db.init_quota_tables()
+    assert quota_db.get_quota("prospeo")["remaining"] == 10.0  # raising the cap grants nothing yet
+
+    quota_db.apply_monthly_reset("prospeo", today=date(2026, 10, 1))
+    assert quota_db.get_quota("prospeo")["remaining"] == 5000.0

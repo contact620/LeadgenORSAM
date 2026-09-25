@@ -42,10 +42,20 @@ def init_quota_tables() -> None:
         con.execute(_CREATE_PROVIDER_QUOTA)
         for provider, allocation in pipeline_config.PROVIDER_ALLOCATIONS.items():
             cap = pipeline_config.PROVIDER_ROLLOVER_CAP.get(provider, 0.0)
+            # allocation and rollover_cap belong to config, so they are
+            # re-asserted on every start: editing .env has to actually take
+            # effect, and the free-tier numbers this pipeline runs on are not
+            # all documented (Prospeo publishes none), so the operator will
+            # correct them. remaining, consumed and reset_date are runtime
+            # state and are left alone — raising an allowance must never hand
+            # out credits, it only changes what the next reset restores to.
             con.execute(
-                """INSERT OR IGNORE INTO provider_quota
+                """INSERT INTO provider_quota
                    (provider, allocation, consumed, remaining, rollover_cap)
-                   VALUES (?, ?, 0, ?, ?)""",
+                   VALUES (?, ?, 0, ?, ?)
+                   ON CONFLICT(provider) DO UPDATE SET
+                     allocation = excluded.allocation,
+                     rollover_cap = excluded.rollover_cap""",
                 (provider, allocation, allocation, cap),
             )
 
