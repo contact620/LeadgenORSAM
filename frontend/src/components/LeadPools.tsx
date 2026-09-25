@@ -138,8 +138,8 @@ export function LeadPools({ onBack, onEnrichStarted }: Props) {
 
       {!loading && pools.map(pool => {
         const isExpanded = expandedPool === pool.pool_id
-        const unenriched = pool.hit_leads - pool.enriched_leads
-        const progressPct = pool.hit_leads > 0 ? Math.round((pool.enriched_leads / pool.hit_leads) * 100) : 0
+        const unenriched = pool.total_leads - pool.enriched_leads
+        const progressPct = pool.total_leads > 0 ? Math.round((pool.enriched_leads / pool.total_leads) * 100) : 0
 
         return (
           <div key={pool.pool_id} className="glass-card overflow-hidden">
@@ -253,7 +253,7 @@ export function LeadPools({ onBack, onEnrichStarted }: Props) {
                     <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
                       <thead>
                         <tr style={{ borderBottom: '1px solid var(--th-border-default)', background: 'var(--th-surface-hover)' }}>
-                          {['Nom', 'Entreprise', 'Email', 'Score', 'Hit', 'Enrichi'].map(h => (
+                          {['Nom', 'Entreprise', 'Email', 'Enrichi'].map(h => (
                             <th key={h} className="text-left px-4 py-2 text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
                           ))}
                         </tr>
@@ -271,13 +271,6 @@ export function LeadPools({ onBack, onEnrichStarted }: Props) {
                             </td>
                             <td className="px-4 py-2" style={{ color: 'var(--th-text-tertiary)' }}>{lead.company || '—'}</td>
                             <td className="px-4 py-2 font-mono text-xs" style={{ color: 'var(--th-primary)' }}>{lead.email || '—'}</td>
-                            <td className="px-4 py-2 font-mono text-xs" style={{ color: 'var(--th-text-tertiary)' }}>{lead.hit_score ?? 0}</td>
-                            <td className="px-4 py-2">
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                                style={lead.is_hit ? { background: 'var(--th-success-soft)', color: 'var(--th-success)' } : { background: 'var(--th-glass-inset)', color: 'var(--th-text-muted)' }}>
-                                {lead.is_hit ? '✓' : '—'}
-                              </span>
-                            </td>
                             <td className="px-4 py-2">
                               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
                                 style={lead.enriched ? { background: 'var(--th-primary-soft)', color: 'var(--th-primary)' } : { background: 'var(--th-glass-inset)', color: 'var(--th-text-ghost)' }}>

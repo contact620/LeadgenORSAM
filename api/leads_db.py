@@ -244,7 +244,11 @@ def create_pool(name: str, apollo_url: str, scrape_job_id: str, leads: list[dict
     pool_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     total = len(leads)
-    hit_count = sum(1 for l in leads if l.get("is_hit"))
+    # is_hit no longer exists (reachability replaced the hit score on
+    # 2026-09-25) — nothing sets it any more, so summing it always produced 0
+    # and made the paid-enrich panel in LeadPools.tsx believe every pool was
+    # already fully enriched. hit_leads now just mirrors total_leads.
+    hit_count = total
 
     with _conn() as con:
         _migrate_lead_pool(con)

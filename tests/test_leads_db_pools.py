@@ -19,6 +19,16 @@ def _lead(**over):
     return base
 
 
+def test_hit_leads_mirrors_total_leads():
+    """is_hit no longer exists (the hit score was replaced by reachability),
+    so nothing sets it any more — summing it always gave 0 and made the
+    frontend's paid-enrich panel believe every pool was already enriched.
+    hit_leads must track total_leads instead."""
+    pool_id = leads_db.create_pool("P", "url", "job-1", [_lead(), _lead(company="Autre")])
+    pool = leads_db.get_pool(pool_id)
+    assert pool["hit_leads"] == pool["total_leads"] == 2
+
+
 def test_new_columns_survive_a_round_trip():
     pool_id = leads_db.create_pool("P", "url", "job-1", [_lead(
         email_source="prospeo", email_type="nominatif_lead", phone_type="mobile",
