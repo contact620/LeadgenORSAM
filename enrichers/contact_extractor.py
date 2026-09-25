@@ -7,10 +7,15 @@ so the quality of this module decides how much of a 50-credit month survives.
 """
 import logging
 import re
+import time
 import unicodedata
+import urllib.robotparser
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
+import requests
+
+import config
 from api.quota_db import normalize_name
 
 logger = logging.getLogger(__name__)
@@ -31,6 +36,15 @@ PAGE_TIMEOUT = 8
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 _MAILTO_RE = re.compile(r'mailto:([^"\'?>\s]+)', re.IGNORECASE)
 _CF_RE = re.compile(r'data-cfemail="([0-9a-fA-F]+)"')
+
+_HREF_RE = re.compile(r'href=["\']([^"\']+)["\']', re.IGNORECASE)
+_WHATSAPP_RE = re.compile(r"https?://(?:wa\.me|api\.whatsapp\.com|web\.whatsapp\.com)/", re.I)
+_FACEBOOK_RE = re.compile(r"https?://(?:www\.)?facebook\.com/(?!sharer|share\.php)[A-Za-z0-9._\-]+/?", re.I)
+_INSTAGRAM_RE = re.compile(r"https?://(?:www\.)?instagram\.com/(?!p/|explore/)[A-Za-z0-9._\-]+/?", re.I)
+_LINKEDIN_COMPANY_RE = re.compile(r"https?://(?:[a-z]{2,3}\.)?linkedin\.com/company/[A-Za-z0-9._\-]+/?", re.I)
+
+_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
 # Image assets whose "@2x" suffix parses as an email local part.
 _IMAGE_EXT = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".bmp")
@@ -211,3 +225,123 @@ def classify_email(email: str, first_name: str, last_name: str, domain: str) -> 
         or (last and first and stripped == f"{last}{first[0]}")
     )
     return "nominatif_lead" if matches else "nominatif_autre"
+
+
+def internal_contact_links(html: str, base_url: str) -> list[str]:
+    """Same-host links whose path matches a contact-page slug, capped at MAX_PAGES."""
+    if not html:
+        return []
+    base_host = urlparse(base_url).netloc.lower().removeprefix("www.")
+    seen: set[str] = set()
+    links: list[str] = []
+    for href in _HREF_RE.findall(html):
+        absolute = urljoin(base_url, href.strip())
+        parsed = urlparse(absolute)
+        if parsed.scheme not in ("http", "https"):
+            continue
+        if parsed.netloc.lower().removeprefix("www.") != base_host:
+            continue
+        path = parsed.path.rstrip("/").lower()
+        slug = path.rsplit("/", 1)[-1]
+        if not slug or not any(slug.startswith(s) for s in EXTRACTION_SLUGS):
+            continue
+        canonical = f"{parsed.scheme}://{parsed.netloc}{path}"
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        links.append(canonical)
+        if len(links) >= MAX_PAGES:
+            break
+    return links
+
+
+def _first(pattern: re.Pattern, html: str):
+    match = pattern.search(html or "")
+    return match.group(0).rstrip("/") if match else None
+
+
+def extract_social(html: str) -> dict:
+    """Social handles and, crucially, whether the company publishes a WhatsApp link.
+
+    whatsapp is true only when the company put the link on its own site. We
+    never probe whether a number is registered on WhatsApp: that queries a
+    third party's account without their knowledge, for a signal the company
+    would have advertised if it wanted to be reached that way.
+    """
+    return {
+        "whatsapp": bool(_WHATSAPP_RE.search(html or "")),
+        "facebook_url": _first(_FACEBOOK_RE, html),
+        "instagram_url": _first(_INSTAGRAM_RE, html),
+        "linkedin_company_url": _first(_LINKEDIN_COMPANY_RE, html),
+    }
+
+
+def _robots_allows(base_url: str, path: str) -> bool:
+    """Honour robots.txt. A site that cannot be reached for its robots file is
+    treated as permissive — the same default a browser applies."""
+    parsed = urlparse(base_url)
+    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+    try:
+        parser = urllib.robotparser.RobotFileParser()
+        parser.set_url(robots_url)
+        parser.read()
+        return parser.can_fetch(_UA, path)
+    except Exception:
+        return True
+
+
+def harvest_contacts(lead: dict, page) -> dict:
+    """Walk the homepage plus up to MAX_PAGES contact pages and collect everything.
+
+    Returns emails already classified, social handles and the source URL of
+    each find. Never raises: a site that blocks us costs the lead its free
+    contact route, not the run.
+
+    `website` gates the whole function: Task 7 established that `_page_fetch`
+    stays populated even when the coherence check rejects the site as
+    belonging to a different company, in which case `lead["website"]` is
+    None. Without this gate we would crawl and harvest another company's
+    contact pages.
+    """
+    website = lead.get("website") or ""
+    if not website or page is None or not getattr(page, "html", ""):
+        return {"emails": [], "social": extract_social(""), "pages_crawled": 0}
+
+    domain = urlparse(website).netloc.lower().removeprefix("www.")
+    first = (lead.get("first_name") or "")
+    last = (lead.get("last_name") or "")
+
+    collected: dict[str, ExtractedEmail] = {}
+    social = extract_social(page.html)
+    for found in extract_emails(page.html, page.url or website, company_domain=domain):
+        collected[found.value] = found
+
+    pages = 0
+    for url in internal_contact_links(page.html, website):
+        if not _robots_allows(website, urlparse(url).path):
+            logger.debug(f"robots.txt disallows {url}")
+            continue
+        try:
+            resp = requests.get(url, headers={"User-Agent": _UA},
+                                timeout=PAGE_TIMEOUT, allow_redirects=True)
+            resp.raise_for_status()
+        except Exception as exc:
+            logger.debug(f"Contact page unreachable {url}: {exc}")
+            continue
+        pages += 1
+        for found in extract_emails(resp.text, url, company_domain=domain):
+            collected.setdefault(found.value, found)
+        for key, value in extract_social(resp.text).items():
+            if key == "whatsapp":
+                social[key] = social[key] or value
+            elif not social.get(key):
+                social[key] = value
+        time.sleep(config.REQUEST_DELAY / 2)
+
+    classified = [
+        ExtractedEmail(value=e.value,
+                       kind=classify_email(e.value, first, last, domain),
+                       source_url=e.source_url)
+        for e in collected.values()
+    ]
+    return {"emails": classified, "social": social, "pages_crawled": pages}

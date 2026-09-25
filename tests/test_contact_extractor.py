@@ -5,6 +5,9 @@ from enrichers.contact_extractor import (
     decode_cloudflare,
     extract_emails,
 )
+from enrichers.contact_extractor import (
+    MAX_PAGES, extract_social, internal_contact_links,
+)
 
 
 def _values(html, url="https://acme.ma/contact"):
@@ -175,3 +178,80 @@ def test_bare_at_does_not_fabricate_from_french_imperative():
 def test_bare_at_still_recovers_a_real_masked_address():
     """The existing, legitimate use case must keep working."""
     assert "karim@acme.ma" in _values("<p>Contact : karim at acme.ma</p>")
+
+
+# ── Crawl des pages contact ──────────────────────────────────────────────────
+
+def test_contact_pages_are_followed():
+    html = """
+      <a href="/contact">Contact</a>
+      <a href="/a-propos">À propos</a>
+      <a href="/notre-equipe">Équipe</a>
+      <a href="/blog/article-42">Blog</a>
+      <a href="/produits">Produits</a>
+    """
+    links = internal_contact_links(html, "https://acme.ma/")
+    assert "https://acme.ma/contact" in links
+    assert "https://acme.ma/a-propos" in links
+    assert "https://acme.ma/notre-equipe" in links
+    assert not any("blog" in l or "produits" in l for l in links)
+
+
+def test_transliterated_arabic_slugs_are_followed():
+    links = internal_contact_links('<a href="/ittasal-bina">اتصل بنا</a>', "https://acme.ma/")
+    assert "https://acme.ma/ittasal-bina" in links
+
+
+def test_external_links_are_never_followed():
+    html = '<a href="https://autre-site.ma/contact">Contact</a>'
+    assert internal_contact_links(html, "https://acme.ma/") == []
+
+
+def test_at_most_five_pages_are_followed():
+    html = "".join(f'<a href="/contact-{i}">c</a>' for i in range(30))
+    assert len(internal_contact_links(html, "https://acme.ma/")) <= MAX_PAGES
+
+
+def test_the_same_page_is_not_queued_twice():
+    html = '<a href="/contact">A</a><a href="/contact">B</a><a href="/contact/">C</a>'
+    assert len(internal_contact_links(html, "https://acme.ma/")) == 1
+
+
+# ── WhatsApp et réseaux ───────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("href", [
+    "https://wa.me/212600000000",
+    "https://api.whatsapp.com/send?phone=212600000000",
+    "https://web.whatsapp.com/send?phone=212600000000",
+])
+def test_whatsapp_link_published_by_the_company_is_detected(href):
+    assert extract_social(f'<a href="{href}">WhatsApp</a>')["whatsapp"] is True
+
+
+def test_no_whatsapp_link_means_false_not_a_probe():
+    """We never test whether a number is registered on WhatsApp: that probes a
+    third party's account. Only a link the company published itself counts."""
+    assert extract_social("<p>+212 6 00 00 00 00</p>")["whatsapp"] is False
+
+
+def test_social_profiles_are_extracted():
+    html = """
+      <a href="https://www.facebook.com/acme.maroc">FB</a>
+      <a href="https://instagram.com/acme_maroc">IG</a>
+      <a href="https://www.linkedin.com/company/acme-maroc">LI</a>
+    """
+    social = extract_social(html)
+    assert social["facebook_url"] == "https://www.facebook.com/acme.maroc"
+    assert social["instagram_url"] == "https://instagram.com/acme_maroc"
+    assert social["linkedin_company_url"] == "https://www.linkedin.com/company/acme-maroc"
+
+
+def test_a_personal_linkedin_profile_is_not_the_company_page():
+    html = '<a href="https://www.linkedin.com/in/karim-elamrani">Karim</a>'
+    assert extract_social(html)["linkedin_company_url"] is None
+
+
+def test_share_widgets_are_not_company_profiles():
+    """Share buttons point at facebook.com/sharer, not at a page we can use."""
+    html = '<a href="https://www.facebook.com/sharer/sharer.php?u=https://acme.ma">Partager</a>'
+    assert extract_social(html)["facebook_url"] is None
