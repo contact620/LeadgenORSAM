@@ -14,6 +14,32 @@ def test_identity_columns_come_first():
     assert CSV_COLUMNS[:5] == ["first_name", "last_name", "company", "job_title", "location"]
 
 
+# ── Reachability replaces the hit score (2026-09-25) ─────────────────────────
+
+def test_hit_score_and_is_hit_are_gone():
+    """The hit score it replaced is deleted, not adjusted (see
+    processors/reachability.py's module docstring)."""
+    assert "hit_score" not in CSV_COLUMNS
+    assert "is_hit" not in CSV_COLUMNS
+
+
+def test_reachability_columns_are_exported():
+    for column in ("reachable", "contact_level"):
+        assert column in CSV_COLUMNS
+
+
+def test_email_cascade_columns_are_exported():
+    for column in ("email_source", "email_type", "contact_source_url",
+                   "domain_catch_all", "domain_mx_provider", "domain_mismatch"):
+        assert column in CSV_COLUMNS
+
+
+def test_prescore_column_is_exported():
+    """Pass-1 spending prioritisation — never a verdict, see
+    processors/prescore.py."""
+    assert "prescore" in CSV_COLUMNS
+
+
 def test_single_source_of_truth_is_used_everywhere():
     import api.pipeline_runner as runner
     import main

@@ -24,8 +24,17 @@ CSV_COLUMNS: list[str] = [
     # leads once the evidence scrape runs. None means no candidate website
     # was ever fetched for this lead (no company name, or none found).
     "website_unreachable",
-    # Hit scoring
-    "hit_score", "is_hit",
+    # Reachability — a boolean and its best route, never a score (2026-09-25).
+    "reachable", "contact_level",
+    # Email acquisition — which branch of the cascade produced this address.
+    "email_source", "email_type", "contact_source_url",
+    # Domain-level facts, shared by every lead on the same domain.
+    "domain_catch_all", "domain_mx_provider", "domain_mismatch",
+    # Phones and social, all extracted from the company's own site.
+    "phone_type", "phone_source", "whatsapp",
+    "facebook_url", "instagram_url", "linkedin_company_url",
+    # Pass-1 spending prioritisation. NEVER a verdict — see processors/prescore.py.
+    "prescore",
     # ICP scoring
     "icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
     "disqualification_reason", "evidence_level", "evidence_verified",

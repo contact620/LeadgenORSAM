@@ -41,8 +41,26 @@ class LeadRecord(BaseModel):
     phone: Optional[str] = None
     linkedin_url: Optional[str] = None
     website: Optional[str] = None
-    hit_score: Optional[int] = None
-    is_hit: Optional[bool] = None
+    # Reachability — a boolean and its best route, never a score (2026-09-25).
+    reachable: Optional[bool] = None
+    contact_level: Optional[str] = None
+    # Email acquisition — which branch of the cascade produced this address.
+    email_source: Optional[str] = None
+    email_type: Optional[str] = None
+    contact_source_url: Optional[str] = None
+    # Domain-level facts, shared by every lead on the same domain.
+    domain_catch_all: Optional[bool] = None
+    domain_mx_provider: Optional[str] = None
+    domain_mismatch: Optional[bool] = None
+    # Phones and social, all extracted from the company's own site.
+    phone_type: Optional[str] = None
+    phone_source: Optional[str] = None
+    whatsapp: Optional[bool] = None
+    facebook_url: Optional[str] = None
+    instagram_url: Optional[str] = None
+    linkedin_company_url: Optional[str] = None
+    # Pass-1 spending prioritisation. NEVER a verdict — see processors/prescore.py.
+    prescore: Optional[int] = None
     activity_summary: Optional[str] = None
     conversion_angle: Optional[str] = None
     digital_maturity: Optional[str] = None
