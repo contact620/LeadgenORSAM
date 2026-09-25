@@ -20,6 +20,7 @@ from api.routes.templates import router as templates_router
 from api import history
 from api import templates
 from api import leads_db
+from api import quota_db
 
 app = FastAPI(title="ORSAM Lead Gen API", version="1.0.0")
 
@@ -27,6 +28,7 @@ app = FastAPI(title="ORSAM Lead Gen API", version="1.0.0")
 history.init_db()
 templates.init_templates_table()
 leads_db.init_leads_table()
+quota_db.init_quota_tables()
 
 # ── CORS (allow Vite dev server) ───────────────────────────────────────────────
 app.add_middleware(
