@@ -81,6 +81,15 @@ def test_country_hint_resolves_locations(location, code):
     assert country_hint(location) == code
 
 
+def test_country_hint_resolves_ivory_coast_with_no_city():
+    """normalize_label keeps the apostrophe ("cote d'ivoire"), so a
+    COUNTRY_HINTS key spelled with a plain space ("cote d ivoire") can never
+    match. Regression test for a lead whose Apollo location is exactly
+    "Côte d'Ivoire" with no city: without the "abidjan" key to mask the bug,
+    this used to return None and drop the lead's phone numbers."""
+    assert country_hint("Côte d'Ivoire") == "CI"
+
+
 # ── Meilleur numéro ───────────────────────────────────────────────────────────
 
 def test_mobile_beats_landline():
