@@ -179,7 +179,11 @@ def _probe_verifier() -> Callable[[str], str]:
 def _finders(lead: dict, first: str, last: str, domain: str,
              is_priority: bool, registry=None) -> dict:
     """Step d, then e. Finder credits are reserved for priority leads (§7)."""
-    if not is_priority or not domain:
+    if not is_priority:
+        if domain and not lead.get("email"):
+            _set(lead, status="pending_quota")   # credit withheld, not a negative answer
+        return lead
+    if not domain:
         return lead
 
     quota_seen = False

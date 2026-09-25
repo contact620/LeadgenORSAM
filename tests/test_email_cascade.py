@@ -213,7 +213,11 @@ def test_finders_run_in_order_and_stop_at_the_first_hit(monkeypatch):
 
 
 def test_a_non_priority_lead_never_reaches_the_finders(monkeypatch):
-    """Finder credits go to the top of the prescore queue (§7)."""
+    """Finder credits go to the top of the prescore queue (§7). The lead was
+    verified (its candidates came back not_found) but never got a finder's
+    credit spent on it, so it is pending_quota — withheld, not a negative
+    answer — never disappears silently into the same bucket as a lead that
+    was actually checked and came back empty."""
     monkeypatch.setattr(email_cascade.getprospect, "verify_email",
                         lambda e: EmailResult(email=e, status=NOT_FOUND,
                                               provider="getprospect", billed=True, cost=1.0))
@@ -222,6 +226,15 @@ def test_a_non_priority_lead_never_reaches_the_finders(monkeypatch):
     monkeypatch.setattr(email_cascade.prospeo, "find_email", _never)
 
     lead = _lead()
+    email_cascade.resolve_email(lead, is_priority=False)
+    assert lead["email_status"] == "pending_quota"
+    assert lead.get("email") is None
+
+
+def test_a_non_priority_lead_with_no_domain_at_all_stays_not_found(monkeypatch):
+    """Genuinely no route to check — no website, no MX — is a real negative,
+    unlike a non-priority lead on a real domain (see test above)."""
+    lead = _lead(website="")
     email_cascade.resolve_email(lead, is_priority=False)
     assert lead["email_status"] == "not_found"
 
