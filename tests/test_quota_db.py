@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -179,3 +179,59 @@ def test_apply_monthly_reset_uses_the_updated_allocation(monkeypatch):
 
     quota_db.apply_monthly_reset("prospeo", today=date(2026, 10, 1))
     assert quota_db.get_quota("prospeo")["remaining"] == 5000.0
+
+
+def test_a_found_email_is_cached_and_read_back():
+    quota_db.cache_store("Karim", "El Amrani", "acme.ma", "prospeo",
+                         {"email": "k.elamrani@acme.ma", "status": "valid"})
+    hit = quota_db.cache_lookup("Karim", "El Amrani", "acme.ma", "prospeo")
+    assert hit["result"]["email"] == "k.elamrani@acme.ma"
+
+
+def test_a_miss_is_cached_too():
+    """A lookup that found nothing cost a call. Repeating it costs another."""
+    quota_db.cache_store("Karim", "El Amrani", "acme.ma", "hunter", None)
+    hit = quota_db.cache_lookup("Karim", "El Amrani", "acme.ma", "hunter")
+    assert hit is not None
+    assert hit["result"] is None
+
+
+def test_names_are_normalized_before_matching():
+    quota_db.cache_store("Karim", "El Amrani", "acme.ma", "prospeo",
+                         {"email": "k@acme.ma"})
+    assert quota_db.cache_lookup("  KARIM ", "el amrani", "ACME.MA", "prospeo") is not None
+
+
+def test_accents_are_folded():
+    quota_db.cache_store("Aïcha", "Benîtez", "acme.ma", "prospeo", {"email": "a@acme.ma"})
+    assert quota_db.cache_lookup("Aicha", "Benitez", "acme.ma", "prospeo") is not None
+
+
+def test_cache_is_scoped_per_provider():
+    """Prospeo finding nothing says nothing about what Hunter would find."""
+    quota_db.cache_store("Karim", "El Amrani", "acme.ma", "prospeo", None)
+    assert quota_db.cache_lookup("Karim", "El Amrani", "acme.ma", "hunter") is None
+
+
+def test_an_entry_older_than_ninety_days_is_a_miss():
+    """Prospeo re-bills after 90 days, so our cache must re-ask at 90 days too."""
+    quota_db.cache_store("Karim", "El Amrani", "acme.ma", "prospeo", {"email": "k@acme.ma"})
+    stale = (datetime.now(timezone.utc) - timedelta(days=91)).isoformat()
+    with quota_db._conn() as con:
+        con.execute("UPDATE email_lookup_cache SET looked_up_at = ?", (stale,))
+    assert quota_db.cache_lookup("Karim", "El Amrani", "acme.ma", "prospeo") is None
+
+
+def test_an_entry_at_eighty_nine_days_is_still_a_hit():
+    quota_db.cache_store("Karim", "El Amrani", "acme.ma", "prospeo", {"email": "k@acme.ma"})
+    fresh = (datetime.now(timezone.utc) - timedelta(days=89)).isoformat()
+    with quota_db._conn() as con:
+        con.execute("UPDATE email_lookup_cache SET looked_up_at = ?", (fresh,))
+    assert quota_db.cache_lookup("Karim", "El Amrani", "acme.ma", "prospeo") is not None
+
+
+def test_storing_twice_replaces_rather_than_duplicates():
+    quota_db.cache_store("Karim", "El Amrani", "acme.ma", "prospeo", None)
+    quota_db.cache_store("Karim", "El Amrani", "acme.ma", "prospeo", {"email": "k@acme.ma"})
+    hit = quota_db.cache_lookup("Karim", "El Amrani", "acme.ma", "prospeo")
+    assert hit["result"]["email"] == "k@acme.ma"

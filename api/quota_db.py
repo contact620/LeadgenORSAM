@@ -8,9 +8,12 @@ below leaves paid-for lookups unused. Both are silent, so the provider's own
 number always wins (see sync_remaining) and the local counter only moves on a
 result the provider actually billed.
 """
+import json
 import os
+import re
 import sqlite3
-from datetime import date
+import unicodedata
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import config as pipeline_config
@@ -29,6 +32,25 @@ CREATE TABLE IF NOT EXISTS provider_quota (
 )
 """
 
+# Aligned on Prospeo's 90-day free re-enrichment window: past it the provider
+# bills again, so a cache entry that outlived the window would keep us from
+# re-asking a question that is now worth asking.
+CACHE_TTL_DAYS = 90
+
+_CREATE_EMAIL_CACHE = """
+CREATE TABLE IF NOT EXISTS email_lookup_cache (
+    first_name   TEXT NOT NULL,
+    last_name    TEXT NOT NULL,
+    domain       TEXT NOT NULL,
+    provider     TEXT NOT NULL,
+    result       TEXT,
+    looked_up_at TEXT NOT NULL,
+    PRIMARY KEY (first_name, last_name, domain, provider)
+)
+"""
+
+_NON_WORD_RE = re.compile(r"[^a-z0-9]+")
+
 
 def _conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
@@ -40,6 +62,7 @@ def _conn() -> sqlite3.Connection:
 def init_quota_tables() -> None:
     with _conn() as con:
         con.execute(_CREATE_PROVIDER_QUOTA)
+        con.execute(_CREATE_EMAIL_CACHE)
         for provider, allocation in pipeline_config.PROVIDER_ALLOCATIONS.items():
             cap = pipeline_config.PROVIDER_ROLLOVER_CAP.get(provider, 0.0)
             # allocation and rollover_cap belong to config, so they are
@@ -116,6 +139,52 @@ def sync_remaining(provider: str, remaining: float, reset_date: Optional[str]) -
                  synced_at = excluded.synced_at""",
             (provider, allocation, max(0.0, allocation - remaining), remaining,
              reset_date, cap),
+        )
+
+
+def normalize_name(value: str) -> str:
+    """Lowercase, strip accents and punctuation. Shared by cache keys so that
+    "Aïcha" and "Aicha" never pay for the same lookup twice."""
+    if not value:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", str(value))
+    deaccented = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return _NON_WORD_RE.sub(" ", deaccented.lower()).strip()
+
+
+def cache_lookup(first: str, last: str, domain: str, provider: str) -> Optional[dict]:
+    """Return {"result": <payload or None>} on a fresh hit, None on a miss.
+
+    The two-level shape matters: a cached miss is a hit on the cache (we asked,
+    the provider said no) and must not trigger another paid call, while None
+    means we never asked.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=CACHE_TTL_DAYS)).isoformat()
+    with _conn() as con:
+        row = con.execute(
+            """SELECT result FROM email_lookup_cache
+               WHERE first_name = ? AND last_name = ? AND domain = ?
+                 AND provider = ? AND looked_up_at >= ?""",
+            (normalize_name(first), normalize_name(last),
+             normalize_name(domain), provider, cutoff),
+        ).fetchone()
+    if row is None:
+        return None
+    return {"result": json.loads(row["result"]) if row["result"] else None}
+
+
+def cache_store(first: str, last: str, domain: str, provider: str,
+                result: Optional[dict]) -> None:
+    with _conn() as con:
+        con.execute(
+            """INSERT INTO email_lookup_cache
+               (first_name, last_name, domain, provider, result, looked_up_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(first_name, last_name, domain, provider) DO UPDATE SET
+                 result = excluded.result, looked_up_at = excluded.looked_up_at""",
+            (normalize_name(first), normalize_name(last), normalize_name(domain),
+             provider, json.dumps(result, ensure_ascii=False) if result else None,
+             datetime.now(timezone.utc).isoformat()),
         )
 
 
