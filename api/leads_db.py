@@ -66,6 +66,25 @@ _LEAD_POOL_ADDED_COLUMNS = {
     "website_check_reason": "TEXT",
     "email_status": "TEXT",
     "email_confidence": "INTEGER",
+    # ── 2026-09-25 free-cascade rework ──────────────────────────────────────
+    # CREATE TABLE IF NOT EXISTS leaves an existing table untouched, so a pool
+    # created before this date would silently drop every one of these on
+    # insert.
+    "email_source": "TEXT",
+    "email_type": "TEXT",
+    "contact_source_url": "TEXT",
+    "domain_catch_all": "INTEGER",
+    "domain_mx_provider": "TEXT",
+    "domain_mismatch": "INTEGER",
+    "phone_type": "TEXT",
+    "phone_source": "TEXT",
+    "whatsapp": "INTEGER",
+    "facebook_url": "TEXT",
+    "instagram_url": "TEXT",
+    "linkedin_company_url": "TEXT",
+    "prescore": "REAL",
+    "reachable": "INTEGER",
+    "contact_level": "TEXT",
 }
 
 _CREATE_POOL_META = """
@@ -234,23 +253,39 @@ def create_pool(name: str, apollo_url: str, scrape_job_id: str, leads: list[dict
             (pool_id, name, apollo_url, now, scrape_job_id, total, hit_count),
         )
         for lead in leads:
-            coherent = lead.get("website_coherent")
+
+            def _bool_or_none(field: str) -> Optional[int]:
+                # None stays None: "not checked"/"undetermined" and "checked,
+                # false" are different states and reachability distinguishes
+                # them (a pending_quota lead is reachable=None, not False).
+                value = lead.get(field)
+                return None if value is None else int(bool(value))
+
             con.execute(
                 """INSERT INTO lead_pool
                    (pool_id, first_name, last_name, company, job_title, location,
                     email, phone, linkedin_url, website,
                     website_coherent, website_rejected, website_check_reason,
                     email_status, email_confidence,
+                    email_source, email_type, contact_source_url,
+                    domain_catch_all, domain_mx_provider, domain_mismatch,
+                    phone_type, phone_source, whatsapp,
+                    facebook_url, instagram_url, linkedin_company_url,
+                    prescore, reachable, contact_level,
                     hit_score, is_hit, is_duplicate, first_seen_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (pool_id, lead.get("first_name"), lead.get("last_name"),
                  lead.get("company"), lead.get("job_title"), lead.get("location"),
                  lead.get("email"), lead.get("phone"), lead.get("linkedin_url"), lead.get("website"),
-                 # None stays None: "not checked" and "checked, incoherent"
-                 # are different states and hit_calculator distinguishes them.
-                 None if coherent is None else int(bool(coherent)),
+                 _bool_or_none("website_coherent"),
                  lead.get("website_rejected"), lead.get("website_check_reason"),
                  lead.get("email_status"), lead.get("email_confidence"),
+                 lead.get("email_source"), lead.get("email_type"), lead.get("contact_source_url"),
+                 _bool_or_none("domain_catch_all"), lead.get("domain_mx_provider"),
+                 _bool_or_none("domain_mismatch"),
+                 lead.get("phone_type"), lead.get("phone_source"), _bool_or_none("whatsapp"),
+                 lead.get("facebook_url"), lead.get("instagram_url"), lead.get("linkedin_company_url"),
+                 lead.get("prescore"), _bool_or_none("reachable"), lead.get("contact_level"),
                  lead.get("hit_score", 0), int(lead.get("is_hit", False)),
                  int(lead.get("is_duplicate", False)), lead.get("first_seen_at")),
             )
@@ -269,16 +304,27 @@ def get_pool(pool_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def get_pool_leads(pool_id: str, only_hit: bool = False, only_unenriched: bool = False, limit: int = 0) -> list[dict]:
-    """Get leads from a pool with optional filters."""
+def get_pool_leads(pool_id: str, only_reachable: bool = False,
+                   only_unenriched: bool = False, limit: int = 0,
+                   order_by: str = "prescore") -> list[dict]:
+    """Read leads from a pool, ordered for spending.
+
+    pending_quota leads sort first: they never got their question asked, and
+    the monthly reset is precisely when they should. Everything else follows
+    by prescore descending — the free relevance estimate that decides where
+    the month's credits go (see processors/prescore.py).
+    """
     query = "SELECT * FROM lead_pool WHERE pool_id = ?"
     params: list = [pool_id]
 
-    if only_hit:
-        query += " AND is_hit = 1"
+    if only_reachable:
+        # reachable IS NULL is pending_quota: undetermined, never excluded.
+        query += " AND (reachable = 1 OR reachable IS NULL)"
     if only_unenriched:
         query += " AND enriched = 0"
-    query += " ORDER BY hit_score DESC"
+
+    query += (" ORDER BY CASE WHEN email_status = 'pending_quota' THEN 0 ELSE 1 END, "
+              "COALESCE(prescore, 0) DESC, id ASC")
     if limit > 0:
         query += " LIMIT ?"
         params.append(limit)
@@ -287,14 +333,22 @@ def get_pool_leads(pool_id: str, only_hit: bool = False, only_unenriched: bool =
         _migrate_lead_pool(con)
         rows = con.execute(query, params).fetchall()
 
+    def _bool_or_none(value):
+        return None if value is None else bool(value)
+
     result = []
     for r in rows:
         d = dict(r)
-        d["is_hit"] = bool(d["is_hit"])
-        d["is_duplicate"] = bool(d["is_duplicate"])
-        d["enriched"] = bool(d["enriched"])
-        if d.get("website_coherent") is not None:
-            d["website_coherent"] = bool(d["website_coherent"])
+        # .get(), not [] : a pool table predating even the base schema (no
+        # is_duplicate column at all, as opposed to merely NULL) must still
+        # load rather than raising KeyError on these flag columns.
+        d["is_hit"] = bool(d.get("is_hit") or 0)
+        d["is_duplicate"] = bool(d.get("is_duplicate") or 0)
+        d["enriched"] = bool(d.get("enriched") or 0)
+        for field_name in ("website_coherent", "domain_catch_all", "domain_mismatch",
+                           "whatsapp", "reachable"):
+            if field_name in d:
+                d[field_name] = _bool_or_none(d[field_name])
         # Parse enrich_data JSON if present; absent keys stay None so pools
         # created before the ICP rework keep loading.
         for field_name in ENRICH_FIELDS:
@@ -306,6 +360,17 @@ def get_pool_leads(pool_id: str, only_hit: bool = False, only_unenriched: bool =
                 pass
         result.append(d)
     return result
+
+
+def count_pending_quota(pool_id: str) -> int:
+    """How many leads in this pool never got a finder's credit spent on them."""
+    with _conn() as con:
+        _migrate_lead_pool(con)
+        row = con.execute(
+            "SELECT COUNT(*) AS cnt FROM lead_pool WHERE pool_id = ? "
+            "AND email_status = 'pending_quota'", (pool_id,)
+        ).fetchone()
+    return row["cnt"] if row else 0
 
 
 def mark_leads_enriched(pool_id: str, lead_ids: list[int], enrich_job_id: str, enrich_data_map: dict[int, dict]) -> None:
