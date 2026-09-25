@@ -278,6 +278,9 @@ def test_the_cache_short_circuits_a_repeat_lookup(monkeypatch):
     monkeypatch.setattr(email_cascade.getprospect, "verify_email",
                         lambda e: EmailResult(email=e, status=NOT_FOUND,
                                               provider="getprospect", billed=True, cost=1.0))
+    monkeypatch.setattr(email_cascade.hunter, "verify_email",
+                        lambda e: EmailResult(email=e, status=NOT_FOUND,
+                                              provider="hunter", billed=True, cost=0.5))
     def _never(*a, **k):
         raise AssertionError("le cache doit éviter l'appel réseau")
     monkeypatch.setattr(email_cascade.prospeo, "find_email", _never)
@@ -285,3 +288,54 @@ def test_the_cache_short_circuits_a_repeat_lookup(monkeypatch):
     lead = _lead()
     email_cascade.resolve_email(lead, is_priority=True)
     assert lead["email"] == "karim@acme.ma"
+    assert lead["email_status"] == "valid_nominatif"
+    assert lead["email_source"] == "prospeo"
+    assert lead["domain_mismatch"] is False
+
+
+def test_a_cached_accept_all_result_replays_as_catch_all(monkeypatch):
+    """A cached accept_all payload must come back exactly as it would have
+    fresh off the wire — as catch_all, never quietly upgraded to verified."""
+    quota_db.cache_store("Karim", "El Amrani", "acme.ma", "prospeo",
+                         {"email": "karim@acme.ma", "status": "accept_all"})
+    def _never(*a, **k):
+        raise AssertionError("le cache doit éviter l'appel réseau")
+    monkeypatch.setattr(email_cascade.prospeo, "find_email", _never)
+
+    lead = _lead()
+    email_cascade.resolve_email(lead, is_priority=True)
+    assert lead["email"] == "karim@acme.ma"
+    assert lead["email_status"] == "catch_all"
+    assert lead["email_source"] == "prospeo"
+
+
+def test_a_cached_unknown_result_is_never_replayed_as_verified(monkeypatch):
+    """The defect this guards: a finder that could not verify its own find
+    must not be fabricated into a clean nominative contact just because the
+    unresolved answer happens to be sitting in cache from a previous run."""
+    quota_db.cache_store("Karim", "El Amrani", "acme.ma", "prospeo",
+                         {"email": "karim@acme.ma", "status": "unknown"})
+    monkeypatch.setattr(email_cascade.getprospect, "find_email",
+                        lambda *a: EmailResult(status=NOT_FOUND, provider="getprospect"))
+    monkeypatch.setattr(email_cascade.hunter, "find_email",
+                        lambda *a: EmailResult(status=NOT_FOUND, provider="hunter"))
+
+    lead = _lead()
+    email_cascade.resolve_email(lead, is_priority=True)
+    assert lead.get("email") is None
+    assert lead["email_status"] != "valid_nominatif"
+
+
+def test_a_cached_wrong_domain_result_replays_the_mismatch_flag(monkeypatch):
+    """The defect this guards: RUN 2 in the bug report — a cached address on
+    another company's domain must keep its mismatch warning, never lose it."""
+    quota_db.cache_store("Karim", "El Amrani", "acme.ma", "prospeo",
+                         {"email": "karim@autre-societe.ma", "status": "valid"})
+    def _never(*a, **k):
+        raise AssertionError("le cache doit éviter l'appel réseau")
+    monkeypatch.setattr(email_cascade.prospeo, "find_email", _never)
+
+    lead = _lead()
+    email_cascade.resolve_email(lead, is_priority=True)
+    assert lead["email"] == "karim@autre-societe.ma"
+    assert lead["domain_mismatch"] is True

@@ -21,7 +21,9 @@ from api import quota_db
 from api.provider_status import StepOutcome
 from enrichers import domain_intel, email_patterns
 from enrichers.providers import getprospect, hunter, prospeo
-from enrichers.providers.base import ACCEPT_ALL, NOT_FOUND, UNKNOWN, VALID, EmailResult
+from enrichers.providers.base import (
+    ACCEPT_ALL, NOT_FOUND, UNKNOWN, VALID, EmailResult, check_domain,
+)
 from enrichers.retry import AuthError, QuotaExhausted, RateLimited, RetryableRemoteFailure
 
 logger = logging.getLogger(__name__)
@@ -186,9 +188,13 @@ def _finders(lead: dict, first: str, last: str, domain: str,
         if cached is not None:
             payload = cached["result"]
             if payload and payload.get("email"):
-                _set(lead, email=payload["email"], status="valid_nominatif",
-                     source=provider, email_type="nominatif_lead")
-                return lead
+                status = payload.get("status")
+                if status in (VALID, ACCEPT_ALL):
+                    _set(lead, email=payload["email"],
+                         status="valid_nominatif" if status == VALID else "catch_all",
+                         source=provider, email_type="nominatif_lead",
+                         mismatch=check_domain(payload["email"], domain))
+                    return lead
             continue
 
         if not quota_db.can_spend(provider, cost):
