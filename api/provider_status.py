@@ -8,17 +8,17 @@ records an outcome; a failure on a critical provider stops the run.
 from dataclasses import dataclass, field
 from typing import Optional
 
-# Providers whose failure invalidates the run's core deliverable.
-# Remplacé par PROVIDER_GROUPS en Task 3. Vide dans l'intervalle : plus aucun
-# fournisseur n'est critique à lui seul depuis le retrait de Dropcontact.
-CRITICAL_PROVIDERS = frozenset()
+# Providers grouped by the deliverable they serve. A group degrades when one
+# member is impaired and fails only when every configured member is down:
+# since Dropcontact was removed, no single email provider is load-bearing,
+# and reporting a run as failed because one of three finders lost its key
+# would be as misleading as reporting it green.
+PROVIDER_GROUPS: dict[str, frozenset[str]] = {
+    "email": frozenset({"prospeo", "getprospect", "hunter"}),
+}
 
-# status values: "ok" | "degraded" | "failed" | "skipped"
-# For a provider in CRITICAL_PROVIDERS, both "failed" and "degraded" mark the
-# run as critically impacted: "degraded" means at least one batch never made
-# it to the provider (submission or polling failure), i.e. leads that were
-# never even attempted rather than contacts the provider legitimately
-# couldn't find.
+# Groups whose total failure invalidates the run's core deliverable.
+CRITICAL_GROUPS = frozenset({"email"})
 
 
 @dataclass
@@ -57,17 +57,36 @@ class ProviderRegistry:
             for name, o in self._outcomes.items()
         }
 
-    def has_critical_failure(self) -> bool:
-        """
-        True if a critical provider ended the run as "failed" or "degraded".
+    def group_status(self, group: str) -> str:
+        """Aggregate one group's outcomes into a single status.
 
-        A critical provider is one whose data is the run's core deliverable
-        (see CRITICAL_PROVIDERS). For such a provider, "degraded" already
-        means some batches never reached it — that is a partial failure of
-        the run, not a benign outcome, so it must flag the run just like
-        "failed" does.
+        "skipped" members are excluded from the health verdict: a provider the
+        operator never configured is not an outage. A group where every member
+        is skipped is itself "skipped", not "failed" — nothing broke, nothing
+        was ever asked to work.
         """
-        return any(
-            o.status in ("failed", "degraded") and name in CRITICAL_PROVIDERS
-            for name, o in self._outcomes.items()
-        )
+        members = PROVIDER_GROUPS.get(group, frozenset())
+        reported = [self._outcomes[name] for name in members if name in self._outcomes]
+        if not reported:
+            return "skipped"
+
+        active = [o for o in reported if o.status != "skipped"]
+        if not active:
+            return "skipped"
+        if all(o.status in ("failed", "degraded") for o in active):
+            return "failed"
+        if any(o.status in ("failed", "degraded") for o in active):
+            return "degraded"
+        return "ok"
+
+    def has_critical_failure(self) -> bool:
+        """True when a critical group lost every one of its active members."""
+        return any(self.group_status(g) == "failed" for g in CRITICAL_GROUPS)
+
+    def impaired_groups(self) -> dict[str, str]:
+        """Groups worth reporting to the operator, with their status."""
+        return {
+            group: status
+            for group in PROVIDER_GROUPS
+            if (status := self.group_status(group)) in ("degraded", "failed")
+        }
