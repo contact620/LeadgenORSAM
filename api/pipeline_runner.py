@@ -260,7 +260,7 @@ def _build_summary_prompt(
     data_lines += [
         f"- Taux d'emails trouvés : {stats.email_pct}%",
         f"- Taux LinkedIn trouvés : {stats.linkedin_pct}%",
-        f"- Pré-score moyen : {stats.avg_score}/100",
+        f"- Pré-score moyen : {stats.avg_score}/60",
     ]
     if icp_scored:
         data_lines.append(

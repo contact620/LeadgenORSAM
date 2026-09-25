@@ -3,18 +3,20 @@ import { CheckCircle2, Circle, Loader2, AlertCircle, XCircle } from 'lucide-reac
 import type { ProgressEvent, PipelineStatus } from '@/hooks/usePipeline'
 
 const STEPS = [
+  { id: 1, label: 'Entrée Apollo',                               desc: 'Validation de l\'URL de recherche' },
   { id: 2, label: 'Scraping Apollo',                             desc: 'Extraction des leads via Playwright' },
-  { id: 3, label: 'Enrichissement contacts',                     desc: 'Google + Dropcontact + Hunter — LinkedIn, site web, email, téléphone' },
-  { id: 4, label: 'Calcul du taux de hit',                       desc: 'Score 0-100, seuil 50' },
-  { id: 5, label: 'Collecte de preuves',                         desc: 'Scraping site web + Perplexity' },
-  { id: 6, label: 'Extraction de faits sourcés',                 desc: 'Faits vérifiables extraits par Claude AI' },
-  { id: 7, label: 'Scoring ICP',                                 desc: 'Profil client idéal — scoring déterministe' },
-  { id: 8, label: 'Rédaction des angles commerciaux',            desc: 'Claude AI — résumé, angle de conversion' },
+  { id: 3, label: 'LinkedIn et site web',                        desc: 'Recherche via Serper.dev + détection du site de l\'entreprise' },
+  { id: 4, label: 'Extraction des contacts du site',             desc: 'Email et téléphone publiés sur le site' },
+  { id: 5, label: 'Pré-score et priorisation',                   desc: 'Secteur, taille, localisation — priorise la cascade payante' },
+  { id: 6, label: 'Cascade email',                               desc: 'Prospeo + GetProspect + Hunter — recherche et vérification d\'email' },
+  { id: 7, label: 'Collecte de preuves',                         desc: 'Scraping site web + Perplexity' },
+  { id: 8, label: 'Extraction de faits et scoring ICP',          desc: 'Faits vérifiables extraits par Claude AI, scoring déterministe' },
+  { id: 9, label: 'Rédaction des angles commerciaux',            desc: 'Claude AI — résumé, angle de conversion' },
 ]
 
 function mapApiStepToDisplay(apiStep: number): number {
-  if (apiStep <= 1) return 0
-  if (apiStep > 8) return 8
+  if (apiStep < 1) return 0
+  if (apiStep > 9) return 9
   return apiStep
 }
 

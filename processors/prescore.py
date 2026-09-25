@@ -60,7 +60,7 @@ def _location_points(lead: dict, rules: IcpRules) -> int:
 
 
 def compute_prescore(lead: dict, rules: Optional[IcpRules] = None) -> int:
-    """Weighted 0-100 score on the three free axes. Never raises."""
+    """Weighted 0-60 score on the three free axes. Never raises."""
     active = rules or load_rules()
     points = {
         "secteur": _sector_points(lead, active),

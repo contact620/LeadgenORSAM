@@ -73,8 +73,8 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
 
   const pipelineSteps = [
     { icon: '🔍', name: 'Scraping Apollo', tool: 'Playwright' },
-    { icon: '📧', name: 'Enrichissement contacts', tool: 'Google + Dropcontact + Hunter' },
-    { icon: '📊', name: 'Calcul du taux de hit', tool: 'Hit Score 0-100' },
+    { icon: '📧', name: 'Extraction des contacts', tool: 'Google + site web' },
+    { icon: '✉️', name: 'Cascade email', tool: 'Prospeo + GetProspect + Hunter' },
     { icon: '🕵️', name: 'Collecte de preuves', tool: 'Site web + Perplexity' },
     { icon: '📄', name: 'Extraction de faits', tool: 'Claude AI' },
     { icon: '🎯', name: 'Scoring ICP', tool: 'Scoring déterministe' },

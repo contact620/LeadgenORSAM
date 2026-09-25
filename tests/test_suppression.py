@@ -48,10 +48,45 @@ def test_keys_are_normalized():
     assert a == b
 
 
+def test_distinct_emails_never_collide_on_the_same_key():
+    """normalize_name folds punctuation to spaces and dedupe_key used to
+    strip those spaces out entirely, so a.b@x.ma and ab@x.ma both collapsed
+    to the same "abxma" key — two different people registered as one."""
+    a = leads_db.dedupe_key(_lead(email="a.b@x.ma"))
+    b = leads_db.dedupe_key(_lead(email="ab@x.ma"))
+    assert a != b
+
+
 def test_a_lead_seen_by_linkedin_is_recognized_on_a_later_run():
     leads_db.register_leads("job-1", [_lead(email=None)])
     known = leads_db.check_duplicates([_lead(email=None)])
     assert leads_db.dedupe_key(_lead(email=None)) in known
+
+
+def test_a_legacy_known_leads_row_is_backfilled_not_re_inserted():
+    """Mirrors test_a_pool_created_before_the_migration_still_loads for
+    lead_pool: a known_leads row from before dedupe_kind/dedupe_value existed
+    must be backfilled by the migration, not left NULL — otherwise
+    check_duplicates() never matches it, register_leads() tries to re-INSERT
+    the same email (the table's PRIMARY KEY), and the whole batch's
+    registration raises and rolls back silently."""
+    with leads_db._conn() as con:
+        con.execute("DROP TABLE known_leads")
+        con.execute("""CREATE TABLE known_leads (
+            email TEXT PRIMARY KEY, first_name TEXT, last_name TEXT, company TEXT,
+            first_seen_job_id TEXT, first_seen_at TEXT, seen_count INTEGER DEFAULT 1)""")
+        con.execute(
+            "INSERT INTO known_leads (email, first_name, last_name, company, "
+            "first_seen_job_id, first_seen_at) VALUES "
+            "('karim@acme.ma', 'Karim', 'El Amrani', 'Acme', 'job-0', '2026-01-01T00:00:00Z')"
+        )
+
+    new_count, dup_count = leads_db.register_leads("job-1", [_lead(email="karim@acme.ma")])
+    assert new_count == 0
+    assert dup_count == 1
+
+    known = leads_db.check_duplicates([_lead(email="karim@acme.ma")])
+    assert leads_db.dedupe_key(_lead(email="karim@acme.ma")) in known
 
 
 # ── Liste de suppression ──────────────────────────────────────────────────────

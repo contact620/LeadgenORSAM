@@ -73,6 +73,17 @@ def _set(lead: dict, *, email=None, status="not_found", source=None,
     lead["domain_mismatch"] = mismatch
 
 
+
+# GetProspect has no account endpoint: every one of its responses (find and
+# verify alike) carries its own balance in metadata.credits and syncs it via
+# absorb_getprospect_metadata before this function ever sees the result (see
+# enrichers/providers/getprospect.py). Calling record_spend for these two
+# labels on top of that sync double-decrements: absorb already lands the
+# provider's authoritative post-call number, and record_spend would then
+# subtract the cost again from a balance that already reflects this call.
+_SYNCS_OWN_BALANCE = frozenset({"getprospect", "getprospect_verify"})
+
+
 def _call(provider: str, fn: Callable, *args) -> Optional[EmailResult]:
     """Run one provider call, charging the local counter only when billed.
 
@@ -88,7 +99,7 @@ def _call(provider: str, fn: Callable, *args) -> Optional[EmailResult]:
     except (RateLimited, RetryableRemoteFailure) as exc:
         logger.warning(f"{provider} failed: {exc}")
         return None
-    if result is not None and result.billed:
+    if result is not None and result.billed and provider not in _SYNCS_OWN_BALANCE:
         quota_db.record_spend(provider, cost=result.cost, billed=True)
     return result
 

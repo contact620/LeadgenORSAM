@@ -127,6 +127,17 @@ def _migrate_known_leads(con: sqlite3.Connection) -> None:
     for column in ("dedupe_kind", "dedupe_value"):
         if column not in existing:
             con.execute(f"ALTER TABLE known_leads ADD COLUMN {column} TEXT")
+    # Backfill, not just add: a row from before this migration has
+    # dedupe_kind/dedupe_value left NULL, so check_duplicates() never matches
+    # it and register_leads() re-INSERTs the same email — the table's
+    # PRIMARY KEY — which raises and rolls back the whole batch's
+    # registration inside the caller's best-effort try/except, silently.
+    # Idempotent: only rows still NULL are touched, so a repeat call is a
+    # no-op once every row has been backfilled.
+    con.execute(
+        "UPDATE known_leads SET dedupe_kind = 'email', dedupe_value = LOWER(TRIM(email)) "
+        "WHERE dedupe_kind IS NULL AND email IS NOT NULL"
+    )
 
 
 def _migrate_lead_pool(con: sqlite3.Connection) -> None:
@@ -154,7 +165,12 @@ def dedupe_key(lead: dict) -> tuple[str, str]:
     re-report the same people as new. LinkedIn comes next, then the weakest but
     always-available pair of name and company domain.
     """
-    email = normalize_name(lead.get("email") or "").replace(" ", "")
+    # normalize_name folds every run of non-alphanumeric characters (including
+    # "@" and ".") to a single space and replace(" ", "") then removes them,
+    # so "a.b@x.ma" and "ab@x.ma" both collapsed to "abxma" — the same
+    # collision the domain-cache key already had to avoid. An email's
+    # identity is exactly its characters, not a fuzzy name match.
+    email = (lead.get("email") or "").strip().lower()
     if email:
         return ("email", email)
 

@@ -216,7 +216,7 @@ export function LeadDetailModal({ lead, onClose }: Props) {
         <div className="p-6 flex items-center gap-4 flex-wrap" style={{ borderBottom: '1px solid var(--th-border-default)' }}>
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pré-score</span>
-            <span className="font-mono font-bold text-lg" style={{ color: (lead.prescore ?? 0) >= 50 ? 'var(--th-success)' : 'var(--th-text-quaternary)' }}>{lead.prescore ?? 0}</span>
+            <span className="font-mono font-bold text-lg" style={{ color: (lead.prescore ?? 0) >= 30 ? 'var(--th-success)' : 'var(--th-text-quaternary)' }}>{lead.prescore ?? 0}</span>
           </div>
           {lead.contact_level && (() => {
             const level = contactLevelOf(lead.contact_level)

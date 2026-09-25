@@ -285,6 +285,35 @@ def test_a_provider_raising_quota_exhausted_falls_through_to_the_next(monkeypatc
     assert lead["email_source"] == "getprospect"
 
 
+# ── GetProspect balance ────────────────────────────────────────────────────────
+
+def test_getprospect_responses_are_not_double_decremented(monkeypatch):
+    """GetProspect has no account endpoint: every response already syncs its
+    own balance via absorb_getprospect_metadata (see quota_sync.py), which
+    lands the provider's authoritative post-call number. record_spend must
+    not also subtract the cost on top of that already-synced number."""
+    calls = []
+    monkeypatch.setattr(quota_db, "record_spend",
+                        lambda provider, cost, billed: calls.append(provider))
+    billed_result = EmailResult(email="k@acme.ma", status=VALID,
+                                provider="getprospect", billed=True, cost=1.0)
+    email_cascade._call("getprospect", lambda: billed_result)
+    email_cascade._call("getprospect_verify", lambda: billed_result)
+    assert calls == []
+
+
+def test_other_providers_are_still_decremented_normally(monkeypatch):
+    """Only GetProspect's two labels sync their own balance — everyone else
+    must keep going through record_spend as before."""
+    calls = []
+    monkeypatch.setattr(quota_db, "record_spend",
+                        lambda provider, cost, billed: calls.append(provider))
+    billed_result = EmailResult(email="k@acme.ma", status=VALID,
+                                provider="hunter", billed=True, cost=0.5)
+    email_cascade._call("hunter", lambda: billed_result)
+    assert calls == ["hunter"]
+
+
 def test_the_cache_short_circuits_a_repeat_lookup(monkeypatch):
     quota_db.cache_store("Karim", "El Amrani", "acme.ma", "prospeo",
                          {"email": "karim@acme.ma", "status": "valid"})

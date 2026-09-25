@@ -146,12 +146,12 @@ export function StatsBar({ result }: Props) {
       >
         <div className="flex justify-between text-sm mb-2.5">
           <span className="font-medium" style={{ color: 'var(--th-text-tertiary)' }}>Pré-score moyen</span>
-          <span className="font-mono font-semibold" style={{ color: 'var(--th-text-primary)' }}>{stats.avg_score} / 100</span>
+          <span className="font-mono font-semibold" style={{ color: 'var(--th-text-primary)' }}>{stats.avg_score} / 60</span>
         </div>
         <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--th-border-default)' }}>
           <div
             className="h-full rounded-full transition-all duration-700"
-            style={{ width: `${stats.avg_score}%`, background: 'linear-gradient(90deg, #4d9fff, #34d399)' }}
+            style={{ width: `${(stats.avg_score / 60) * 100}%`, background: 'linear-gradient(90deg, #4d9fff, #34d399)' }}
           />
         </div>
         <div className="flex justify-between text-xs mt-1.5" style={{ color: 'var(--th-text-ghost)' }}>

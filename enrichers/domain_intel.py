@@ -87,7 +87,7 @@ def is_catch_all(domain: str, verify_fn: Callable[[str], str]) -> Optional[bool]
         _catch_all_cache[key] = None
         return None
 
-    if status == "valid":
+    if status in ("valid", "accept_all"):
         result: Optional[bool] = True
     elif status in ("invalid", "not_found"):
         result = False

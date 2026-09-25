@@ -12,7 +12,8 @@ interface Props {
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
-  dropcontact: 'Dropcontact',
+  prospeo: 'Prospeo',
+  getprospect: 'GetProspect',
   hunter: 'Hunter.io',
   serper: 'Serper',
   website: 'Scraping site web',

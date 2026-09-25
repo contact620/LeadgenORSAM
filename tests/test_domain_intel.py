@@ -83,6 +83,13 @@ def test_a_domain_rejecting_a_random_address_is_not_catch_all():
     assert domain_intel.is_catch_all("acme.ma", lambda e: "invalid") is False
 
 
+def test_an_accept_all_verdict_is_also_catch_all():
+    """accept_all is the answer a real verifier most likely gives for a
+    random address on a catch-all domain — it must not fall through to
+    None and cost an extra verification per candidate on that domain."""
+    assert domain_intel.is_catch_all("acme.ma", lambda e: "accept_all") is True
+
+
 def test_an_inconclusive_probe_yields_none():
     """Unknown means we could not tell. Recording it as False would send the
     cascade spending verifications on a domain that answers yes to everything."""

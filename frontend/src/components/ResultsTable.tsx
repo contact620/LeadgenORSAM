@@ -362,7 +362,7 @@ export function ResultsTable({ leads, jobId }: Props) {
                           <div className="w-12 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--th-border-default)' }}>
                             <div
                               className="h-full rounded-full"
-                              style={{ width: `${lead.prescore ?? 0}%`, background: (lead.prescore ?? 0) >= 50 ? 'var(--th-success)' : 'var(--th-text-ghost)' }}
+                              style={{ width: `${((lead.prescore ?? 0) / 60) * 100}%`, background: (lead.prescore ?? 0) >= 30 ? 'var(--th-success)' : 'var(--th-text-ghost)' }}
                             />
                           </div>
                           <span className="font-mono text-xs" style={{ color: 'var(--th-text-tertiary)' }}>{lead.prescore ?? 0}</span>
