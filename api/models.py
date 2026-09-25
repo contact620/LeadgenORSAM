@@ -88,6 +88,15 @@ class JobStats(BaseModel):
     linkedin_count: int = 0
     phone_count: int = 0
     website_count: int = 0
+    # Which branch of the free cascade produced each address — the number
+    # that tells the operator whether the free steps are carrying their
+    # weight (see api.pipeline_runner.compute_stats).
+    email_by_source: dict[str, int] = {}
+    mobile_count: int = 0
+    whatsapp_count: int = 0
+    pending_quota_count: int = 0
+    reachable_count: int = 0
+    provider_credits: dict[str, dict] = {}
     icp_hot_count: int = 0
     icp_warm_count: int = 0
     icp_cold_count: int = 0
@@ -98,8 +107,12 @@ class JobResult(BaseModel):
     job_id: str
     status: str           # "running" | "done" | "error"
     total_leads: int = 0
+    # Named hit_leads/nohit_leads for frontend compatibility, but they now
+    # carry the reachable/unreachable split (see processors/reachability.py)
+    # rather than a hit-score threshold.
     hit_leads: int = 0
     nohit_leads: int = 0
+    pending_quota_leads: int = 0
     stats: JobStats = JobStats()
     leads: list[dict] = []
     error: Optional[str] = None

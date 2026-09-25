@@ -1,15 +1,17 @@
 """
 ORSAM — B2B Lead Generation Pipeline
 ======================================
-Pipeline en 8 étapes :
-  1. Input Apollo URL          (CLI arg)
-  2. Scraping Apollo            (Playwright headless)
-  3. Enrichissement multi-sources  (Google Search)
-  4. Calcul du taux de hit     (score 0-100, seuil 50)
-  5. Collecte de preuves        (site web + Perplexity, hit leads uniquement)
-  6. Extraction de faits sourcés (Claude, à partir des preuves collectées)
-  7. Scoring ICP déterministe   (règles versionnées appliquées aux faits)
-  8. Rédaction des angles commerciaux (Claude, leads retenus uniquement)
+Nine-step pipeline. The free/paid boundary mirrors the one between
+/api/scrape and /api/enrich (see api/pipeline_runner.py):
+  1. Input Apollo URL              (CLI arg)
+  2. Scraping Apollo                (Playwright headless)
+  3. LinkedIn and website + coherence (Google Search)
+  4. Site contact extraction        (free — published emails/phones)
+  5. Pre-score and prioritization   (free — decides where credits go)
+  6. Email cascade                  (paid — finders, priority leads only)
+  7. Evidence collection            (site + Perplexity, reachable leads only)
+  8. Fact extraction and ICP scoring (Claude, versioned rules)
+  9. Sales angle writing            (Claude, retained leads only)
 
 Usage:
   python main.py --url "https://app.apollo.io/#/people?..." [options]
@@ -32,15 +34,21 @@ from datetime import datetime
 import pandas as pd
 
 import config
+from api import quota_db
+from api.pipeline_runner import _apply_suppression_filter, _dedupe_leads, _harvest_lead_contacts
 from api.provider_status import ProviderFailure, ProviderRegistry
 from scrapers.apollo_scraper import scrape_apollo
 from enrichers.google_search import enrich_leads_google
 from processors.hit_calculator import score_all_leads
+from processors.prescore import apply_prescores, rank_for_spending
 from lead_schema import CSV_COLUMNS
 
 # How each provider is named to the operator in the CLI summary.
 PROVIDER_LABELS = {
-    "hunter": "Hunter.io (vérification des emails)",
+    "hunter": "Hunter.io (recherche et vérification d'emails)",
+    "prospeo": "Prospeo (recherche d'emails)",
+    "getprospect": "GetProspect (recherche d'emails)",
+    "getprospect_verify": "GetProspect (vérification d'emails)",
     "serper": "Serper (recherche LinkedIn)",
     "website": "Scraping des sites web",
     "perplexity": "Perplexity (signaux business)",
@@ -111,14 +119,18 @@ def print_provider_health(registry: ProviderRegistry):
 
 
 def print_summary(all_leads: list[dict], hit_leads: list[dict], nohit_leads: list[dict],
-                  path: str, registry: ProviderRegistry | None = None):
+                  path: str, registry: ProviderRegistry | None = None,
+                  pending_leads: list[dict] | None = None):
+    pending_leads = pending_leads or []
     total = len(all_leads)
     print("\n" + "=" * 60)
     print("  ORSAM — PIPELINE SUMMARY")
     print("=" * 60)
     print(f"  Total leads scraped    : {total}")
-    print(f"  Hit leads (score >= {config.HIT_THRESHOLD}) : {len(hit_leads)}")
-    print(f"  No-hit leads           : {len(nohit_leads)}")
+    print(f"  Reachable leads        : {len(hit_leads)}")
+    print(f"  Unreachable leads      : {len(nohit_leads)}")
+    if pending_leads:
+        print(f"  Pending quota          : {len(pending_leads)} (no provider credit left — not discarded)")
     if total:
         emails = sum(1 for l in all_leads if l.get("email"))
         linkedins = sum(1 for l in all_leads if l.get("linkedin_url"))
@@ -166,48 +178,79 @@ async def run_pipeline(args):
 
     logger.info(f"Step 2 complete: {len(leads)} raw leads")
 
-    # ── Step 3a: Google enrichment ────────────────────────────────────────────
-    logger.info("Step 3a — Google enrichment (LinkedIn + website)...")
+    # ── Step 3: LinkedIn and website + coherence ───────────────────────────────
+    logger.info("Step 3 — LinkedIn et site web (Google Search)...")
     leads = enrich_leads_google(leads, registry=registry)
 
-    # ── Step 4: Hit score ─────────────────────────────────────────────────────
-    logger.info("Step 4 — Calculating hit scores...")
-    hit_leads, nohit_leads = score_all_leads(leads)
+    # ── Step 4: site contact extraction (free) ─────────────────────
+    logger.info("Step 4 — Extraction des contacts du site...")
+    for lead in leads:
+        _harvest_lead_contacts(lead)
 
-    # ── Save intermediate CSV (all leads, before evidence collection) ─────────
+    # ── Step 5: pre-score and prioritization ──────────────────────────────────────
+    logger.info("Step 5 — Calcul du pre-score...")
+    apply_prescores(leads)
+
+    # ── Suppression and dedup, before any enrichment ─────────────
+    leads, suppressed = _apply_suppression_filter(leads)
+    if suppressed:
+        logger.info(f"{len(suppressed)} lead(s) écarté(s) — liste de suppression")
+    _dedupe_leads(leads, job_id=f"cli-{datetime.now().strftime('%Y%m%d%H%M%S')}")
+
+    # ── Save intermediate CSV (all leads, before the cascade) ─────────────────
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     intermediate_filename = f"leads_intermediate_{ts}.csv"
     intermediate_path = export_csv(leads, intermediate_filename)
     logger.info(f"Intermediate CSV saved: {intermediate_path}")
 
-    # ── Step 5: Evidence collection (hit leads only) ──────────────────────────
+    # ── Step 6: email cascade (paid) ─────────────────────────────────────────
+    logger.info("Step 6 — Synchronisation des quotas fournisseurs...")
+    from enrichers.providers.quota_sync import sync_all
+    sync_all(registry)
+
+    # Finder credits go to the head of the queue, not to whoever happens to be
+    # scraped first (§7).
+    ranked = rank_for_spending(leads)
+    budget = sum(quota_db.get_quota(p)["remaining"] for p in ("prospeo", "getprospect", "hunter"))
+    logger.info(f"Step 6 — Cascade email sur {len(ranked)} lead(s) (budget finders : {budget})...")
+    from enrichers.email_cascade import resolve_email
+    for position, lead in enumerate(ranked):
+        resolve_email(lead, is_priority=position < budget, registry=registry)
+    leads = ranked
+
+    # ── Reachability: reachable / unreachable / pending_quota ─────────────────
+    hit_leads, nohit_leads, pending_leads = score_all_leads(leads)
+    nohit_leads = nohit_leads + suppressed
+
+    # ── Steps 7-9: evidence, facts, ICP scoring, angles (reachable only) ────────────
     if not args.skip_gpt and hit_leads:
-        logger.info(f"Step 5 — Evidence collection on {len(hit_leads)} hit leads...")
+        logger.info(f"Step 7 — Evidence collection on {len(hit_leads)} reachable leads...")
         from enrichers.evidence_collector import collect_evidence_async
         hit_leads, active_providers = await collect_evidence_async(
             hit_leads, registry=registry
         )
 
-        logger.info("Step 6 — Fact extraction...")
+        logger.info("Step 8 — Fact extraction and ICP scoring...")
         from enrichers.fact_extractor import extract_leads_facts
         hit_leads = extract_leads_facts(hit_leads, active_providers, registry=registry)
 
-        logger.info("Step 7 — ICP scoring...")
         from processors.icp_scorer import apply_scores
         hit_leads = apply_scores(hit_leads)
 
-        logger.info("Step 8 — Angle writing...")
+        logger.info("Step 9 — Angle writing...")
         from enrichers.angle_writer import write_leads_angles
         hit_leads = write_leads_angles(hit_leads, registry=registry)
     else:
-        reason = "--skip-gpt flag set" if args.skip_gpt else "no hit leads"
-        logger.info(f"Steps 5-8 — Skipped ({reason})")
+        reason = "--skip-gpt flag set" if args.skip_gpt else "no reachable leads"
+        logger.info(f"Steps 7-9 — Skipped ({reason})")
         for lead in hit_leads:
             for field in ("icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
                           "disqualification_reason", "evidence_level", "evidence_verified",
                           "facts_json", "activity_summary", "conversion_angle",
                           "digital_maturity", "estimated_budget", "business_signals"):
                 lead.setdefault(field, None)
+
+    leads = hit_leads + nohit_leads + pending_leads
 
     # ── Final CSV export ──────────────────────────────────────────────────────
     output_filename = args.output or f"leads_final_{ts}.csv"
@@ -219,7 +262,14 @@ async def run_pipeline(args):
         nohit_path = export_csv(nohit_leads, nohit_filename)
         logger.info(f"No-hit CSV saved: {nohit_path}")
 
-    print_summary(leads, hit_leads, nohit_leads, final_path, registry)
+    # pending_quota leads were never asked the question — a separate CSV keeps
+    # them from padding either the hit or the no-hit numbers (§11).
+    if pending_leads:
+        pending_filename = f"leads_pending_quota_{ts}.csv"
+        pending_path = export_csv(pending_leads, pending_filename)
+        logger.info(f"Pending-quota CSV saved: {pending_path}")
+
+    print_summary(leads, hit_leads, nohit_leads, final_path, registry, pending_leads)
 
 
 def parse_args():

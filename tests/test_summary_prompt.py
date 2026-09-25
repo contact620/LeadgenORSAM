@@ -37,14 +37,16 @@ def test_disqualified_leads_are_counted():
     """50 leads, 30 disqualified: the three-tier breakdown described 20 of
     them and let the other 30 disappear without a word."""
     prompt = _build_summary_prompt(
-        leads=_leads(), hit_count=50, nohit_count=0, stats=_stats(),
+        leads=_leads(), reachable_count=50, unreachable_count=0, pending_count=0,
+        stats=_stats(),
     )
     assert "30 disqualifiés" in prompt
 
 
 def test_unverified_leads_are_named_as_such():
     prompt = _build_summary_prompt(
-        leads=_leads(unverified=12), hit_count=50, nohit_count=0, stats=_stats(),
+        leads=_leads(unverified=12), reachable_count=50, unreachable_count=0,
+        pending_count=0, stats=_stats(),
     )
     assert "12 leads non vérifiés" in prompt
     assert "preuves insuffisantes" in prompt
@@ -52,21 +54,23 @@ def test_unverified_leads_are_named_as_such():
 
 def test_every_tier_total_is_reported():
     prompt = _build_summary_prompt(
-        leads=_leads(), hit_count=50, nohit_count=7, stats=_stats(),
+        leads=_leads(), reachable_count=50, unreachable_count=7, pending_count=0,
+        stats=_stats(),
     )
     assert "5 haute pertinence" in prompt
     assert "5 pertinence moyenne" in prompt
     assert "10 faible pertinence" in prompt
     assert "50 prospects analysés" in prompt
-    assert "7 non qualifiés" in prompt
+    assert "7 non joignables" in prompt
 
 
 def test_degraded_provider_is_named():
     prompt = _build_summary_prompt(
-        leads=_leads(), hit_count=50, nohit_count=0, stats=_stats(),
+        leads=_leads(), reachable_count=50, unreachable_count=0, pending_count=0,
+        stats=_stats(),
         provider_status={
             "serper": {"status": "degraded", "reason": "clé rejetée", "leads_affected": 40},
-            "dropcontact": {"status": "ok", "reason": None, "leads_affected": 50},
+            "prospeo": {"status": "ok", "reason": None, "leads_affected": 50},
         },
     )
     assert "Serper" in prompt
@@ -78,7 +82,8 @@ def test_degraded_provider_is_named():
 
 def test_failed_provider_is_named_as_failed():
     prompt = _build_summary_prompt(
-        leads=_leads(), hit_count=50, nohit_count=0, stats=_stats(),
+        leads=_leads(), reachable_count=50, unreachable_count=0, pending_count=0,
+        stats=_stats(),
         provider_status={
             "hunter": {"status": "failed", "reason": "401", "leads_affected": 50},
         },
@@ -89,9 +94,10 @@ def test_failed_provider_is_named_as_failed():
 
 def test_healthy_providers_are_not_mentioned():
     prompt = _build_summary_prompt(
-        leads=_leads(), hit_count=50, nohit_count=0, stats=_stats(),
+        leads=_leads(), reachable_count=50, unreachable_count=0, pending_count=0,
+        stats=_stats(),
         provider_status={
-            "dropcontact": {"status": "ok", "reason": None, "leads_affected": 50},
+            "prospeo": {"status": "ok", "reason": None, "leads_affected": 50},
             "perplexity": {"status": "skipped", "reason": "clé API absente", "leads_affected": 0},
         },
     )
@@ -103,7 +109,7 @@ def test_unscored_run_is_not_reported_as_zero_relevant_leads():
     that as "0 lead pertinent trouvé"."""
     leads = [{"company": "Acme", "icp_tier": None} for _ in range(10)]
     prompt = _build_summary_prompt(
-        leads=leads, hit_count=4, nohit_count=6,
+        leads=leads, reachable_count=4, unreachable_count=6, pending_count=0,
         stats=_stats(icp_hot_count=0, icp_warm_count=0, icp_cold_count=0,
                      icp_disqualified_count=0),
     )
@@ -114,7 +120,8 @@ def test_unscored_run_is_not_reported_as_zero_relevant_leads():
 
 def test_user_instructions_are_carried_through():
     prompt = _build_summary_prompt(
-        leads=_leads(), hit_count=50, nohit_count=0, stats=_stats(),
+        leads=_leads(), reachable_count=50, unreachable_count=0, pending_count=0,
+        stats=_stats(),
         enrich_instructions="cibler les PME qui recrutent",
     )
     assert "cibler les PME qui recrutent" in prompt
@@ -122,6 +129,29 @@ def test_user_instructions_are_carried_through():
 
 def test_absent_instructions_are_stated_explicitly():
     prompt = _build_summary_prompt(
-        leads=_leads(), hit_count=50, nohit_count=0, stats=_stats(),
+        leads=_leads(), reachable_count=50, unreachable_count=0, pending_count=0,
+        stats=_stats(),
     )
     assert "aucune instruction spécifique" in prompt
+
+
+def test_the_summary_prompt_names_pending_quota_leads():
+    """A run that left 40 leads unqueried because the month ran out must say
+    so: the numbers otherwise read as a poor find rate."""
+    leads = [{"email_status": "pending_quota"} for _ in range(40)]
+    prompt = _build_summary_prompt(leads=leads, reachable_count=0, unreachable_count=0,
+                                   pending_count=40, stats=JobStats(),
+                                   provider_status={})
+    assert "40" in prompt
+    assert "quota" in prompt.lower()
+
+
+def test_the_summary_prompt_reports_a_degraded_provider_group():
+    prompt = _build_summary_prompt(
+        leads=[], reachable_count=0, unreachable_count=0, pending_count=0,
+        stats=JobStats(),
+        provider_status={"prospeo": {"status": "failed", "reason": "clé rejetée",
+                                     "leads_affected": 12}},
+    )
+    assert "Prospeo" in prompt or "prospeo" in prompt
+    assert "dégradé" in prompt or "en échec" in prompt

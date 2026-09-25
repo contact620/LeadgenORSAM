@@ -168,7 +168,9 @@ class EnrichRequest(BaseModel):
 
 @router.post("/scrape")
 async def scrape_only(req: ScrapeRequest):
-    """Start a scrape-only pipeline (steps 2-4). Stores leads in a pool."""
+    """Start a scrape-only pipeline (the free side — Apollo, LinkedIn/site,
+    contact harvesting, pre-score, suppression and dedup). Stores leads in a
+    pool. Never touches the cascade, Perplexity or Claude."""
     if not req.url.strip():
         raise HTTPException(status_code=400, detail="Apollo URL required")
     job_id = start_scrape_job(
@@ -181,15 +183,18 @@ async def scrape_only(req: ScrapeRequest):
 
 @router.post("/enrich")
 async def enrich_pool(req: EnrichRequest):
-    """Start an enrich-only pipeline (steps 5-7) on existing pool leads."""
+    """Start an enrich-only pipeline (the paid side — cascade, reachability,
+    evidence, facts, ICP scoring, angles) on existing pool leads."""
     from api.leads_db import get_pool, get_pool_leads
     pool = get_pool(req.pool_id)
     if not pool:
         raise HTTPException(status_code=404, detail="Pool not found")
-    # Check there are unenriched hit leads before starting
-    available = get_pool_leads(req.pool_id, only_hit=True, only_unenriched=True, limit=1)
+    # Check there are unenriched leads before starting. Reachability is only
+    # known once the cascade has run, so it cannot gate this check — every
+    # unenriched lead (including a previous run's pending_quota) is eligible.
+    available = get_pool_leads(req.pool_id, only_unenriched=True, limit=1)
     if not available:
-        raise HTTPException(status_code=400, detail="Tous les leads hit de ce pool sont déjà enrichis.")
+        raise HTTPException(status_code=400, detail="Tous les leads de ce pool sont déjà enrichis.")
     job_id = start_enrich_job(
         pool_id=req.pool_id,
         batch_size=req.batch_size,
@@ -216,10 +221,10 @@ async def get_pool_detail(pool_id: str):
 
 
 @router.get("/pools/{pool_id}/leads")
-async def get_pool_leads_route(pool_id: str, only_hit: bool = False, only_unenriched: bool = False, limit: int = 0):
+async def get_pool_leads_route(pool_id: str, only_reachable: bool = False, only_unenriched: bool = False, limit: int = 0):
     """Get leads from a pool."""
     from api.leads_db import get_pool_leads
-    return get_pool_leads(pool_id, only_hit=only_hit, only_unenriched=only_unenriched, limit=limit)
+    return get_pool_leads(pool_id, only_reachable=only_reachable, only_unenriched=only_unenriched, limit=limit)
 
 
 @router.delete("/pools/{pool_id}")

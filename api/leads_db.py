@@ -373,16 +373,47 @@ def count_pending_quota(pool_id: str) -> int:
     return row["cnt"] if row else 0
 
 
+# Cascade/reachability outcomes, written back to their own columns rather
+# than left inside the enrich_data JSON blob only. create_pool() inserts a
+# lead before /api/enrich ever runs the cascade on it, so these columns start
+# NULL; get_pool_leads' only_reachable filter reads the raw `reachable`
+# column in SQL, and a value that only ever lived inside enrich_data would
+# leave that filter permanently blind to the real outcome.
+CASCADE_POOL_COLUMNS: tuple[str, ...] = (
+    "email", "email_status", "email_confidence", "email_source", "email_type",
+    "contact_source_url", "domain_catch_all", "domain_mx_provider", "domain_mismatch",
+    "phone", "phone_type", "phone_source", "whatsapp",
+    "facebook_url", "instagram_url", "linkedin_company_url",
+    "reachable", "contact_level",
+)
+
+_CASCADE_BOOL_COLUMNS = frozenset({"domain_catch_all", "domain_mismatch", "whatsapp", "reachable"})
+
+
 def mark_leads_enriched(pool_id: str, lead_ids: list[int], enrich_job_id: str, enrich_data_map: dict[int, dict]) -> None:
-    """Mark specific leads as enriched and store their enrichment data."""
+    """Mark specific leads as enriched and store their enrichment data.
+
+    Any key in enrich_data_map that names a CASCADE_POOL_COLUMNS column is
+    additionally written to that column directly (see its docstring).
+    """
     now = datetime.now(timezone.utc).isoformat()
     with _conn() as con:
+        _migrate_lead_pool(con)
         for lid in lead_ids:
-            data_json = json.dumps(enrich_data_map.get(lid, {}))
+            data = enrich_data_map.get(lid, {})
+            data_json = json.dumps(data)
             con.execute(
                 "UPDATE lead_pool SET enriched = 1, enrich_job_id = ?, enriched_at = ?, enrich_data = ? WHERE id = ?",
                 (enrich_job_id, now, data_json, lid),
             )
+            updates = {col: data[col] for col in CASCADE_POOL_COLUMNS if col in data}
+            if updates:
+                values = [
+                    (None if v is None else int(bool(v))) if col in _CASCADE_BOOL_COLUMNS else v
+                    for col, v in updates.items()
+                ]
+                set_clause = ", ".join(f"{col} = ?" for col in updates)
+                con.execute(f"UPDATE lead_pool SET {set_clause} WHERE id = ?", (*values, lid))
         # Update pool meta
         enriched_count = con.execute(
             "SELECT COUNT(*) as cnt FROM lead_pool WHERE pool_id = ? AND enriched = 1", (pool_id,)
