@@ -1,5 +1,8 @@
+import logging
+
 import pytest
 
+import config
 from api import quota_db
 from enrichers.providers import quota_sync
 
@@ -29,7 +32,24 @@ def test_prospeo_pull_reads_the_nested_response_key():
     assert quota["reset_date"] == "2026-10-18"
 
 
-def test_prospeo_error_payload_is_ignored():
+def test_prospeo_error_payload_is_ignored(monkeypatch):
+    """An error payload writes nothing, so the seeded allowance stands.
+
+    The allowance is pinned here rather than read from config: this test
+    asserts that nothing changed, and "nothing" is only legible against a
+    known starting value. Left to the shipped default it would break on any
+    machine whose .env raises PROSPEO_MONTHLY_ALLOCATION.
+
+    init_quota_tables() alone does not plant that known value: its ON
+    CONFLICT clause updates allocation but deliberately leaves remaining
+    untouched (a restart must never grant credits), and the autouse fixture
+    already inserted a row using whatever allocation was ambient before this
+    monkeypatch ran. sync_remaining is what actually pins remaining, and it
+    is exercised here as itself a legitimate call, not a workaround.
+    """
+    monkeypatch.setitem(config.PROVIDER_ALLOCATIONS, "prospeo", 100.0)
+    quota_db.init_quota_tables()
+    quota_db.sync_remaining("prospeo", 100.0, None)
     quota_sync._absorb_prospeo({"error": True, "error_code": "INVALID_API_KEY"})
     assert quota_db.get_quota("prospeo")["remaining"] == 100.0
 
@@ -89,7 +109,13 @@ def test_getprospect_piggyback_updates_both_counters():
     assert quota_db.get_quota("getprospect")["reset_date"] == "2026-10-01"
 
 
-def test_getprospect_metadata_without_credits_is_a_no_op():
+def test_getprospect_metadata_without_credits_is_a_no_op(monkeypatch):
+    """Same reasoning as test_prospeo_error_payload_is_ignored: the allowance
+    is pinned so that "unchanged" has a fixed reference, and sync_remaining
+    is what actually plants that value in remaining."""
+    monkeypatch.setitem(config.PROVIDER_ALLOCATIONS, "getprospect", 50.0)
+    quota_db.init_quota_tables()
+    quota_db.sync_remaining("getprospect", 50.0, None)
     quota_sync.absorb_getprospect_metadata({"timestamp": "2026-09-25T14:07:55.000Z"})
     assert quota_db.get_quota("getprospect")["remaining"] == 50.0
 
@@ -101,6 +127,27 @@ def test_absorbing_a_malformed_payload_never_raises():
         quota_sync._absorb_prospeo(payload)
         quota_sync._absorb_hunter(payload)
         quota_sync.absorb_getprospect_metadata(payload)
+
+
+def test_pull_logs_a_distinct_warning_when_the_shape_is_unrecognised(monkeypatch, caplog):
+    """A reachable 200 whose body does not match the expected shape is not an
+    outage — it is the provider having changed its API, the one scenario this
+    module exists to survive. That must be logged distinctly from a network
+    failure so an operator can tell the two apart."""
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"unexpected": "shape"}
+
+    monkeypatch.setattr(quota_sync.requests, "get", lambda *args, **kwargs: FakeResponse())
+    with caplog.at_level(logging.WARNING):
+        result = quota_sync._pull(
+            "prospeo", quota_sync.PROSPEO_ACCOUNT_URL, {}, {}, quota_sync._absorb_prospeo,
+        )
+    assert result == "unreachable"
+    assert "prospeo" in caplog.text
 
 
 def test_sync_all_skips_providers_without_a_key(monkeypatch):

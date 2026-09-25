@@ -104,7 +104,19 @@ def _pull(provider: str, url: str, headers: dict, params: dict, absorber) -> str
     except Exception as exc:
         logger.warning(f"Quota sync unreachable for {provider}: {exc}")
         return "unreachable"
-    return "synced" if absorber(payload) else "unreachable"
+
+    if absorber(payload):
+        return "synced"
+    # Reachable but unreadable: the provider answered 200 with a body whose
+    # shape we do not recognise. That is not an outage — it is the provider
+    # having changed its API, which is the single scenario this module exists
+    # to survive. Logging it distinctly is what lets an operator tell the two
+    # apart, since both end up as the same "unreachable" status.
+    logger.warning(
+        f"Quota sync for {provider}: response did not match the expected "
+        f"shape; keeping the local counter."
+    )
+    return "unreachable"
 
 
 def sync_all(registry=None) -> dict[str, str]:
