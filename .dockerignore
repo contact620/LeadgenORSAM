@@ -1,0 +1,25 @@
+# Secrets — ne doivent JAMAIS finir dans l'image
+.env
+apollo_cookies.json
+linkedin_cookies.json
+data/
+
+# Environnements et artefacts locaux
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+output/
+frontend/node_modules/
+frontend/dist/
+frontend/design-previews/
+
+# Divers
+.git/
+.claude/
+tests/
+docs/
+*.bat
+*.lnk
+*.ico

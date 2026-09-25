@@ -30,3 +30,6 @@ Thumbs.db
 
 # Claude Code context (not for repo)
 .claude/
+
+# Docker data volume (keys, cookies, outputs)
+data/

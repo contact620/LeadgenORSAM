@@ -14,8 +14,7 @@ from config import _is_placeholder
 
 router = APIRouter()
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-_ENV_PATH = os.path.join(_ROOT, ".env")
+_ENV_PATH = pipeline_config.ENV_PATH
 
 
 class ConfigUpdate(BaseModel):

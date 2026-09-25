@@ -394,9 +394,11 @@ async def _scrape_page(page: Page) -> list[dict]:
 
 async def _take_debug_screenshot(page: Page, name: str):
     try:
-        os.makedirs("output/debug", exist_ok=True)
-        await page.screenshot(path=f"output/debug/{name}.png", full_page=False)
-        logger.info(f"Debug screenshot: output/debug/{name}.png")
+        debug_dir = os.path.join(config.OUTPUT_DIR, "debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        shot_path = os.path.join(debug_dir, f"{name}.png")
+        await page.screenshot(path=shot_path, full_page=False)
+        logger.info(f"Debug screenshot: {shot_path}")
     except Exception:
         pass
 

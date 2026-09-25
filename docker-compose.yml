@@ -1,0 +1,12 @@
+services:
+  orsam:
+    build: .
+    image: orsam-leadgen:latest
+    container_name: orsam
+    ports:
+      - "8000:8000"   # application web
+      - "6080:6080"   # navigateur Apollo (noVNC)
+    volumes:
+      - ./data:/data  # .env, apollo_cookies.json, output/ (CSV + history.db)
+    shm_size: "1gb"   # Chromium plante avec le /dev/shm de 64 Mo par défaut
+    restart: unless-stopped

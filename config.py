@@ -3,7 +3,10 @@ import json
 import logging
 from dotenv import load_dotenv
 
-load_dotenv()
+# .env lives at the project root by default; Docker points ENV_PATH at the
+# mounted data volume so keys saved from the UI survive container rebuilds.
+ENV_PATH = os.getenv("ENV_PATH") or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+load_dotenv(ENV_PATH)
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
@@ -17,7 +20,7 @@ LLM_MODEL = os.getenv("LLM_MODEL", "claude-sonnet-4-6")
 
 # ── File Paths ─────────────────────────────────────────────────────────────────
 APOLLO_COOKIES_PATH = os.getenv("APOLLO_COOKIES_PATH", "apollo_cookies.json")
-OUTPUT_DIR = "output"
+OUTPUT_DIR = os.getenv("OUTPUT_DIR", "output")
 
 # ── Behavior ──────────────────────────────────────────────────────────────────
 REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "2.0"))

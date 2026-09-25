@@ -38,6 +38,37 @@ L'interface web s'ouvre sur : **http://localhost:5173**
 
 ---
 
+## Installation avec Docker (sans Python ni Node.js)
+
+Seul prerequis : **[Docker Desktop](https://www.docker.com/products/docker-desktop/)**, lance.
+
+1. Double-cliquer sur **`lancer-docker.bat`** (le premier lancement prend ~5 minutes), ou depuis un terminal :
+   ```bash
+   docker compose up -d --build
+   ```
+2. Pour arreter : **`arreter-docker.bat`** (ou `docker compose down`)
+3. Ouvrir **http://localhost:8000** (ouvert automatiquement par le script) et renseigner les cles API et le fichier cookies Apollo depuis la page **Parametres**
+4. Pendant un run, le navigateur Apollo est visible sur **http://localhost:6080/vnc.html** (bouton *Connect*). C'est la que vous vous connectez a Apollo si les cookies ont expire.
+
+Toutes les donnees sont stockees dans le dossier `data/` cree a cote du projet et conservees entre les redemarrages :
+
+| Fichier | Contenu |
+|---------|---------|
+| `data/.env` | Cles API et parametres (cree depuis `.env.example` au premier lancement) |
+| `data/apollo_cookies.json` | Cookies Apollo |
+| `data/output/` | CSV exportes et `history.db` (historique, pools, quotas, liste de suppression) |
+
+Commandes utiles :
+
+```bash
+docker compose logs -f              # voir les logs
+docker compose down                 # arreter
+docker compose up -d --build        # mettre a jour apres une nouvelle version du code
+docker compose run --rm --service-ports orsam python main.py --url "https://app.apollo.io/#/people?..."   # CLI
+```
+
+---
+
 ## Configuration du fichier `.env`
 
 Le fichier `.env` est cree automatiquement par `setup.bat`. Vous pouvez le remplir manuellement avec un editeur de texte, ou **configurer vos cles directement depuis l'interface web** (page Parametres) sans toucher au fichier :
