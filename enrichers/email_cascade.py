@@ -90,6 +90,15 @@ def _call(provider: str, fn: Callable, *args) -> Optional[EmailResult]:
     A quota or auth failure returns None so the caller moves to the next
     provider: since Dropcontact was removed, no single provider is allowed to
     end the cascade on its own.
+
+    The final `except Exception` is what makes that promise true rather than
+    aspirational. Naming only the four typed failures left every other one —
+    a read timeout above all — free to propagate out of the cascade and abort
+    the whole run. That is not hypothetical: GetProspect's own documentation
+    says verification "runs live and can take up to a minute", so a timeout is
+    an expected answer from that endpoint, not an anomaly. A first real run
+    died at step 6 on exactly that, after five free steps had already
+    succeeded.
     """
     try:
         result = fn(*args)
@@ -98,6 +107,11 @@ def _call(provider: str, fn: Callable, *args) -> Optional[EmailResult]:
         return None
     except (RateLimited, RetryableRemoteFailure) as exc:
         logger.warning(f"{provider} failed: {exc}")
+        return None
+    except Exception as exc:
+        # Anything else — timeout, DNS failure, a shape we never anticipated.
+        # The lead loses this provider, never the run.
+        logger.warning(f"{provider} errored ({type(exc).__name__}): {exc}")
         return None
     if result is not None and result.billed and provider not in _SYNCS_OWN_BALANCE:
         quota_db.record_spend(provider, cost=result.cost, billed=True)

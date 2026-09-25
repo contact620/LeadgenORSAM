@@ -32,6 +32,14 @@ VERIFY_URL = "https://api.getprospect.com/v2/email/verify"
 COST_PER_EMAIL = 1.0
 COST_PER_VERIFICATION = 1.0
 
+# GetProspect's own documentation says verification "runs live and can take up
+# to a minute", so a timeout here is an expected answer, not an anomaly. The
+# original 60s paired with two retries meant three minutes on one address —
+# and the cascade tries up to three candidates per lead. Since a second
+# verifier (Hunter) is always next in line, yielding to it beats insisting:
+# a timeout costs one provider, not the lead's whole verification budget.
+REQUEST_TIMEOUT = 25
+
 # Statuses attested in the documentation. Anything else degrades to UNKNOWN:
 # the OpenAPI declares status as a bare string with no enum, so the list is
 # known to be incomplete and must never be treated as exhaustive.
@@ -53,7 +61,7 @@ def _post(url: str, payload: dict, label: str) -> dict:
     answer rather than an error.
     """
     headers = {"Content-Type": "application/json", "x-api-key": config.GETPROSPECT_API_KEY}
-    resp = requests.post(url, json=payload, headers=headers, timeout=60)
+    resp = requests.post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT)
     try:
         body = resp.json()
     except ValueError:
@@ -112,7 +120,7 @@ def find_email(first: str, last: str, domain: str) -> EmailResult:
             raw_status=raw or None, domain_mismatch=check_domain(address, domain),
         )
 
-    return retry_api_call(_request, max_retries=2, operation_name=f"GetProspect find ({domain})")
+    return retry_api_call(_request, max_retries=1, operation_name=f"GetProspect find ({domain})")
 
 
 def verify_email(email: str) -> EmailResult:
@@ -133,4 +141,4 @@ def verify_email(email: str) -> EmailResult:
             raw_status=raw or None,
         )
 
-    return retry_api_call(_request, max_retries=2, operation_name=f"GetProspect verify ({email})")
+    return retry_api_call(_request, max_retries=0, operation_name=f"GetProspect verify ({email})")

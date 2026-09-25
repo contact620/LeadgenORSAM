@@ -381,3 +381,29 @@ def test_a_cached_wrong_domain_result_replays_the_mismatch_flag(monkeypatch):
     email_cascade.resolve_email(lead, is_priority=True)
     assert lead["email"] == "karim@autre-societe.ma"
     assert lead["domain_mismatch"] is True
+
+
+def test_a_network_timeout_does_not_kill_the_run(monkeypatch):
+    """A raw timeout from a provider must cost that provider, never the run.
+
+    GetProspect documents verification as running live and taking up to a
+    minute, so a ReadTimeout is an expected answer from it. _call names four
+    typed failures; anything outside that list used to propagate out of the
+    cascade and abort the whole pipeline — observed on a real run, which died
+    at the cascade step after five free steps had succeeded.
+    """
+    import requests
+
+    def _timeout(*a, **k):
+        raise requests.exceptions.ReadTimeout("read timeout=25")
+
+    monkeypatch.setattr(email_cascade.getprospect, "verify_email", _timeout)
+    monkeypatch.setattr(email_cascade.hunter, "verify_email", _timeout)
+    monkeypatch.setattr(email_cascade.prospeo, "find_email", _timeout)
+    monkeypatch.setattr(email_cascade.getprospect, "find_email", _timeout)
+    monkeypatch.setattr(email_cascade.hunter, "find_email", _timeout)
+
+    lead = _lead()
+    email_cascade.resolve_email(lead, is_priority=True)   # must not raise
+    assert lead["email"] is None
+    assert lead["email_status"] in ("not_found", "pending_quota")
