@@ -12,6 +12,30 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM -- Migration unique depuis une installation sans Docker --
+REM Docker lit tout dans data\ ; on y COPIE les donnees existantes a la
+REM racine (cles, cookies, historique, CSV) sans toucher aux originaux.
+if not exist "data\" (
+    if exist ".env" set MIGRER=1
+    if exist "apollo_cookies.json" set MIGRER=1
+    if exist "output\" set MIGRER=1
+)
+if defined MIGRER (
+    echo Reprise des donnees de l'installation existante vers data\ ...
+    mkdir "data"
+    if exist ".env" copy /y ".env" "data\.env" >nul
+    if exist "apollo_cookies.json" copy /y "apollo_cookies.json" "data\apollo_cookies.json" >nul
+    if exist "output\" robocopy "output" "data\output" /E /NFL /NDL /NJH /NJS /NP >nul
+    if errorlevel 8 (
+        echo [ERREUR] Copie de output\ impossible. Fermez l'ancienne version de l'appli ^(start.bat^) puis relancez.
+        rmdir /s /q "data"
+        pause
+        exit /b 1
+    )
+    echo       - cles, cookies et historique repris ^(originaux conserves^)
+    echo.
+)
+
 echo Construction et demarrage (le premier lancement prend ~5 minutes)...
 docker compose up -d --build
 if errorlevel 1 (
