@@ -69,7 +69,40 @@
     "Chine": ["china", "chine", "pekin", "beijing", "shanghai", "shenzhen"],
     "Japon": ["japan", "japon", "tokyo"],
     "Australie": ["australia", "australie", "sydney", "melbourne"],
-    "Russie": ["russia", "russie", "moscou", "moscow"]
+    "Russie": ["russia", "russie", "moscou", "moscow"],
+
+    "Éthiopie": ["ethiopie", "ethiopia", "addis abeba", "addis ababa"],
+    "Tanzanie": ["tanzania", "tanzanie", "dar es salaam", "dodoma"],
+    "Ouganda": ["uganda", "ouganda", "kampala"],
+    "Rwanda": ["rwanda", "kigali"],
+    "Burundi": ["burundi", "bujumbura"],
+    "Zambie": ["zambia", "zambie", "lusaka"],
+    "Zimbabwe": ["zimbabwe", "harare"],
+    "Mozambique": ["mozambique", "maputo"],
+    "Angola": ["angola", "luanda"],
+    "Namibie": ["namibia", "namibie", "windhoek"],
+    "Botswana": ["botswana", "gaborone"],
+    "Libye": ["libya", "libye", "tripoli"],
+    "Soudan": ["sudan", "soudan", "khartoum"],
+    "Somalie": ["somalia", "somalie", "mogadiscio", "mogadishu"],
+    "Djibouti": ["djibouti"],
+    "Érythrée": ["eritrea", "erythree", "asmara"],
+    "Malawi": ["malawi", "lilongwe"],
+    "Lesotho": ["lesotho", "maseru"],
+    "Eswatini": ["eswatini", "swaziland", "mbabane"],
+    "Maurice": ["maurice", "mauritius", "port louis"],
+    "Seychelles": ["seychelles", "victoria"],
+    "Cap-Vert": ["cap vert", "cabo verde", "cape verde", "praia"],
+    "Guinée-Bissau": ["guinee bissau", "guinea bissau", "bissau"],
+    "Guinée équatoriale": ["guinee equatoriale", "equatorial guinea", "malabo"],
+    "Sierra Leone": ["sierra leone", "freetown"],
+    "Liberia": ["liberia", "monrovia"],
+    "Gambie": ["gambie", "gambia", "banjul"],
+    "Comores": ["comores", "comoros", "moroni"],
+    "Sao Tomé-et-Principe": ["sao tome", "sao tome et principe"],
+    "Centrafrique": ["centrafrique", "republique centrafricaine",
+                     "central african republic", "bangui"],
+    "Soudan du Sud": ["soudan du sud", "south sudan", "juba"]
   },
 
   "zone_countries": {
@@ -77,7 +110,16 @@
     "afrique_francophone": [
       "Algérie", "Tunisie", "Sénégal", "Côte d'Ivoire", "Cameroun", "Gabon",
       "Bénin", "Burkina Faso", "Mali", "Niger", "Togo", "Guinée", "Congo",
-      "RDC", "Madagascar", "Mauritanie", "Tchad"
+      "RDC", "Madagascar", "Mauritanie", "Tchad", "Centrafrique", "Djibouti",
+      "Comores", "Guinée équatoriale"
+    ],
+    "reste_afrique": [
+      "Nigeria", "Ghana", "Kenya", "Égypte", "Afrique du Sud", "Éthiopie",
+      "Tanzanie", "Ouganda", "Rwanda", "Burundi", "Zambie", "Zimbabwe",
+      "Mozambique", "Angola", "Namibie", "Botswana", "Libye", "Soudan",
+      "Somalie", "Érythrée", "Malawi", "Lesotho", "Eswatini", "Maurice",
+      "Seychelles", "Cap-Vert", "Guinée-Bissau", "Sierra Leone", "Liberia",
+      "Gambie", "Sao Tomé-et-Principe", "Soudan du Sud"
     ],
     "france": ["France"],
     "francophonie_elargie": ["Belgique", "Suisse", "Luxembourg", "Canada"]
@@ -85,8 +127,9 @@
   "zone_points": {
     "maroc": 100,
     "afrique_francophone": 90,
-    "france": 80,
-    "francophonie_elargie": 50
+    "reste_afrique": 70,
+    "france": 20,
+    "francophonie_elargie": 10
   },
 
   "size_bands": [

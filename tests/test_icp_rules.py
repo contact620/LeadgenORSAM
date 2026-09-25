@@ -5,6 +5,11 @@ import pytest
 from processors.icp_rules import IcpRules, load_rules, normalize_label
 
 
+@pytest.fixture
+def rules():
+    return load_rules()
+
+
 def test_default_rules_load():
     rules = load_rules()
     assert isinstance(rules, IcpRules)
@@ -104,12 +109,14 @@ def test_canonical_country_prefers_the_longest_alias():
 
 
 def test_alias_matching_respects_word_boundaries():
-    # "Niger" is in zone, "Nigeria" is not: a substring match would merge them.
+    # Niger and Nigeria are both in zone since Task 19 (décision 2), but in
+    # two different ones: a substring match would merge them into the same
+    # zone, which is exactly the regression this test guards against.
     rules = load_rules()
     assert rules.canonical_country("Nigeria") == "Nigeria"
     assert rules.canonical_country("Niger") == "Niger"
     assert rules.country_zone("Niger") == "afrique_francophone"
-    assert rules.country_zone("Nigeria") is None
+    assert rules.country_zone("Nigeria") == "reste_afrique"
 
 
 def test_every_zone_country_is_recognised():
@@ -209,3 +216,47 @@ def test_canonical_sector_resolves_excluded_labels_too():
     rules = load_rules()
     assert rules.canonical_sector("agriculture") == "agriculture"
     assert rules.canonical_sector("Agriculture") == "agriculture"
+
+
+# ── Geography (décision 2): Africa widened, Europe secondary ────────────────
+
+@pytest.mark.parametrize("country,zone", [
+    ("Maroc", "maroc"), ("Morocco", "maroc"), ("Casablanca", "maroc"),
+    ("Sénégal", "afrique_francophone"), ("Côte d'Ivoire", "afrique_francophone"),
+    ("Nigeria", "reste_afrique"), ("Ghana", "reste_afrique"),
+    ("Kenya", "reste_afrique"), ("Égypte", "reste_afrique"),
+    ("Afrique du Sud", "reste_afrique"), ("Ethiopie", "reste_afrique"),
+    ("France", "france"), ("Belgique", "francophonie_elargie"),
+    ("Canada", "francophonie_elargie"),
+])
+def test_countries_land_in_the_expected_zone(rules, country, zone):
+    assert rules.country_zone(country) == zone
+
+
+@pytest.mark.parametrize("zone,points", [
+    ("maroc", 100), ("afrique_francophone", 90), ("reste_afrique", 70),
+    ("france", 20), ("francophonie_elargie", 10),
+])
+def test_zone_points_match_the_validated_scale(rules, zone, points):
+    assert rules.zone_points[zone] == points
+
+
+def test_europe_is_no_longer_out_of_zone(rules):
+    """Décision 2: Europe stays relevant but secondary. It must resolve to a
+    zone — an unrecognised country is what triggers disqualification."""
+    for country in ("France", "Belgique", "Suisse", "Luxembourg", "Canada"):
+        assert rules.country_zone(country) is not None
+
+
+def test_a_country_outside_every_zone_still_resolves_to_none(rules):
+    assert rules.country_zone("Japon") is None
+    assert rules.country_zone("Zzz") is None
+
+
+def test_the_african_floor_stays_above_the_european_ceiling(rules):
+    """The client targets Africa first: no European zone may outrank the
+    weakest African one."""
+    african = min(rules.zone_points[z] for z in
+                  ("maroc", "afrique_francophone", "reste_afrique"))
+    european = max(rules.zone_points[z] for z in ("france", "francophonie_elargie"))
+    assert african > european

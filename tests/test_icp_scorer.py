@@ -50,7 +50,8 @@ def test_unverified_lead_falls_into_cold_capped(rules):
 
 
 def test_mid_fit_lead_with_one_signal_is_warm(rules):
-    # secteur "other" 50x0.20 + taille 100x0.20 + France 80x0.20 + 1 signal 40x0.40 = 62
+    # secteur "other" 50x0.20 + taille 100x0.20 + France 20x0.20 (Task 19:
+    # Europe repondérée en secondaire) + 1 signal 40x0.40 = 50
     facts = _facts(
         secteur={"value": "logistique", "source": "website"},
         pays={"value": "France", "source": "website"},
@@ -58,7 +59,7 @@ def test_mid_fit_lead_with_one_signal_is_warm(rules):
                   "source": "perplexity", "citation": "..."}],
     )
     result = score_lead(facts, "sufficient", rules, RUN_DATE)
-    assert result.icp_score == 62
+    assert result.icp_score == 50
     assert result.icp_tier == "warm"
 
 
@@ -370,3 +371,41 @@ def test_unverified_competitor_falls_into_cold_capped_not_disqualified(rules):
     assert result.icp_tier == "cold"
     assert result.icp_score <= rules.unverified_score_cap
     assert result.disqualification_reason is None
+
+
+# ── Geography (décision 2): Africa widened, Europe secondary ────────────────
+
+def _geo_facts(country):
+    return {
+        "identite_confirmee": True,
+        "pays": {"value": country, "source": "website"},
+        "secteur": {"value": "e-commerce", "source": "website"},
+        "effectif": {"value": 45, "source": "perplexity"},
+        "est_concurrent": None,
+        "maturite_digitale": {"value": 3, "source": "perplexity"},
+        "signaux": [{"type": "recrutement", "date": "2026-08", "source": "perplexity",
+                     "citation": "x"}],
+    }
+
+
+def test_a_french_lead_is_scored_not_disqualified():
+    result = score_lead(_geo_facts("France"), "sufficient", load_rules(), date(2026, 9, 25))
+    assert result.icp_tier != "disqualified"
+    assert result.disqualification_reason is None
+
+
+def test_a_nigerian_lead_scores_on_the_reste_afrique_zone():
+    result = score_lead(_geo_facts("Nigeria"), "sufficient", load_rules(), date(2026, 9, 25))
+    assert result.icp_tier in ("hot", "warm")
+
+
+def test_a_country_outside_every_zone_is_still_disqualified():
+    result = score_lead(_geo_facts("Japon"), "sufficient", load_rules(), date(2026, 9, 25))
+    assert result.icp_tier == "disqualified"
+    assert "hors zone" in result.disqualification_reason
+
+
+def test_a_moroccan_lead_outranks_an_identical_french_one():
+    rules, today = load_rules(), date(2026, 9, 25)
+    assert (score_lead(_geo_facts("Maroc"), "sufficient", rules, today).icp_score
+            > score_lead(_geo_facts("France"), "sufficient", rules, today).icp_score)
