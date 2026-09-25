@@ -228,3 +228,59 @@ def test_cached_and_direct_paths_produce_identical_text_for_the_same_html():
     assert cached_text == direct_text
     assert "JavaScript" not in cached_text
     assert "internal note" not in cached_text
+
+
+# ── Rejected-site gate: never reuse another company's cached page ───────────
+
+def test_scrape_hit_leads_ignores_cached_page_for_a_rejected_site():
+    """Regression: find_linkedin_and_website stores `_page_fetch` before the
+    coherence verdict, so a candidate site rejected as belonging to a
+    different company still has its HTML sitting in the cache. `website` is
+    the acceptance gate (rejection nulls it) — without checking it, the
+    short-circuit would feed another company's page to fact extraction
+    while evidence_level stayed "sufficient", since usable_sources already
+    gates on website_coherent independently.
+    """
+    page = PageFetch(
+        url="https://zerktouni.example",
+        html="<html><body>Transports Zerktouni, logistique et fret routier, "
+             "300 camions, Tanger.</body></html>",
+        text="Transports Zerktouni, logistique et fret routier, 300 camions, Tanger.",
+        title="Transports Zerktouni",
+        unreachable=False,
+    )
+    leads = [{"first_name": "A", "last_name": "B", "website": None,
+              "website_coherent": False, "_page_fetch": page}]
+
+    async def _fake_scrape(url):
+        return "", False
+
+    with patch("scrapers.website_scraper._scrape_website", side_effect=_fake_scrape) as mock_scrape, \
+         patch("scrapers.website_scraper.time.sleep", return_value=None):
+        result = _run(scrape_hit_leads(leads))
+
+    mock_scrape.assert_called_once_with(None)
+    assert result[0]["website_text"] == ""
+    assert "Zerktouni" not in result[0]["website_text"]
+
+
+def test_scrape_hit_leads_still_reuses_cached_page_when_website_is_accepted():
+    """Counterpart to the rejected-site gate above: an accepted site (the
+    common case) must not lose its cached page just because the gate now
+    also checks `website`. Over-gating here would silently drop evidence
+    for every otherwise-normal hit lead."""
+    page = PageFetch(
+        url="https://acme.example",
+        html="<html><body>" + "Acme est une agence digitale. " * 20 + "</body></html>",
+        text="Acme est une agence digitale. " * 20,
+        title="Acme",
+        unreachable=False,
+    )
+    leads = [{"first_name": "A", "last_name": "B", "website": "https://acme.example",
+              "website_coherent": True, "_page_fetch": page}]
+
+    with patch("scrapers.website_scraper._scrape_website") as mock_scrape:
+        result = _run(scrape_hit_leads(leads))
+
+    mock_scrape.assert_not_called()
+    assert "Acme est une agence digitale" in result[0]["website_text"]

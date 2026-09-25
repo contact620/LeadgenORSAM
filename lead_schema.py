@@ -14,12 +14,15 @@ CSV_COLUMNS: list[str] = [
     # Why a candidate site was kept or dropped — auditable in the export,
     # not only in the UI modal.
     "website_check_reason",
-    # True when the step-5/6a scrape itself failed (network/DNS/timeout/error
+    # True when the site fetch itself failed (network/DNS/timeout/error
     # status) rather than the page answering thin or empty. This is what
     # lets a lead like Astrak reach evidence_level="sufficient" on Perplexity
     # alone — without this column in the export, that outcome is invisible
-    # to an operator comparing two otherwise-similar leads. None means the
-    # lead never reached the scraping step (no-hit lead, never enriched).
+    # to an operator comparing two otherwise-similar leads. Set as early as
+    # step 3a (find_linkedin_and_website) for any lead with a candidate
+    # website, hit or not, and possibly overwritten in step 5/6a for hit
+    # leads once the evidence scrape runs. None means no candidate website
+    # was ever fetched for this lead (no company name, or none found).
     "website_unreachable",
     # Hit scoring
     "hit_score", "is_hit",

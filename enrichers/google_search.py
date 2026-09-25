@@ -184,7 +184,14 @@ MAX_PAGE_TEXT_CHARS = 200_000
 
 
 def _light_page_text(html: str) -> tuple[str, str]:
-    """Extract (title, full plain text) from raw HTML without a parser dependency."""
+    """Extract (title, full plain text) from raw HTML without a parser dependency.
+
+    Deliberately lighter than scrapers/website_scraper.py::_html_to_text (no
+    <noscript>/comment stripping): this feeds the coherence check, whose job
+    is to recognise a company name wherever it appears on the page, not to
+    produce clean text for a fact extractor. Do not merge the two — a name
+    that only appears inside an HTML comment must keep counting as found here.
+    """
     title_match = _TITLE_RE.search(html)
     title = _TAG_RE.sub(" ", title_match.group(1)).strip() if title_match else ""
 

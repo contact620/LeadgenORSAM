@@ -118,7 +118,17 @@ async def scrape_hit_leads(hit_leads: list[dict]) -> list[dict]:
         logger.info(f"Scraping hit lead [{i}/{total}]: {name}")
 
         cached = lead.get("_page_fetch")
-        if cached is not None and (cached.html or cached.unreachable):
+        # lead["website"] is the acceptance gate, and it is load-bearing.
+        # find_linkedin_and_website stores _page_fetch before the coherence
+        # verdict, so a site that answered but was rejected as belonging to a
+        # different company still has its HTML sitting in the cache. Before
+        # this refactor the gate was implicit: rejection nulled lead["website"]
+        # and _scrape_website(None) returned "". Reusing the cache without it
+        # feeds another company's page to the fact extractor — reopening
+        # exactly the association the 2026-08-10 coherence check was built to
+        # prevent, and silently, since evidence_level stays correct while the
+        # facts underneath it are wrong.
+        if cached is not None and lead.get("website") and (cached.html or cached.unreachable):
             # Reuse the page fetched during the coherence check rather than
             # asking the site for the same document a second time. Re-derive
             # the text from the cached HTML with this module's own extraction
