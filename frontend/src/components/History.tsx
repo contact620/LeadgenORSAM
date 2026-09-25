@@ -93,6 +93,8 @@ export function History({ onBack, onRerun }: Props) {
       total_leads: viewEntry.total_leads,
       hit_leads: viewEntry.hit_leads,
       nohit_leads: viewEntry.nohit_leads,
+      // History rows predate the pending_quota split — not tracked per entry.
+      pending_quota_leads: 0,
       stats: {
         email_pct: viewEntry.email_pct,
         linkedin_pct: viewEntry.linkedin_pct,
@@ -100,6 +102,8 @@ export function History({ onBack, onRerun }: Props) {
         website_pct: viewEntry.website_pct,
         avg_score: viewEntry.avg_score,
         email_count: 0, linkedin_count: 0, phone_count: 0, website_count: 0,
+        email_by_source: {}, mobile_count: 0, whatsapp_count: 0,
+        pending_quota_count: 0, reachable_count: 0, provider_credits: {},
         icp_hot_count: 0, icp_warm_count: 0, icp_cold_count: 0, icp_disqualified_count: 0,
       },
       leads: viewLeads ?? [],

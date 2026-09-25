@@ -23,6 +23,8 @@ class ConfigUpdate(BaseModel):
     anthropic_api_key: Optional[str] = None
     perplexity_api_key: Optional[str] = None
     hunter_api_key: Optional[str] = None
+    prospeo_api_key: Optional[str] = None
+    getprospect_api_key: Optional[str] = None
     hit_threshold: Optional[int] = None
     max_leads: Optional[int] = None
     services: Optional[list[str]] = None
@@ -36,6 +38,8 @@ def get_config():
     pipeline_config.ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
     pipeline_config.PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
     pipeline_config.HUNTER_API_KEY = os.getenv("HUNTER_API_KEY", "")
+    pipeline_config.PROSPEO_API_KEY = os.getenv("PROSPEO_API_KEY", "")
+    pipeline_config.GETPROSPECT_API_KEY = os.getenv("GETPROSPECT_API_KEY", "")
     pipeline_config.HIT_THRESHOLD = int(os.getenv("HIT_THRESHOLD", "50"))
     pipeline_config.MAX_LEADS = int(os.getenv("MAX_LEADS", "500"))
 
@@ -45,15 +49,28 @@ def get_config():
     if services_str:
         services = [s.strip() for s in services_str.split("|") if s.strip()]
 
+    from api import quota_db
+    quotas = {
+        name: {
+            "remaining": quota_db.get_quota(name)["remaining"],
+            "allocation": quota_db.get_quota(name)["allocation"],
+            "reset_date": quota_db.get_quota(name)["reset_date"],
+        }
+        for name in pipeline_config.PROVIDER_ALLOCATIONS
+    }
+
     return {
         "serper_api_key": not _is_placeholder(pipeline_config.SERPER_API_KEY),
         "anthropic_api_key": not _is_placeholder(pipeline_config.ANTHROPIC_API_KEY),
         "perplexity_api_key": not _is_placeholder(pipeline_config.PERPLEXITY_API_KEY),
         "hunter_api_key": not _is_placeholder(pipeline_config.HUNTER_API_KEY),
+        "prospeo_api_key": not _is_placeholder(pipeline_config.PROSPEO_API_KEY),
+        "getprospect_api_key": not _is_placeholder(pipeline_config.GETPROSPECT_API_KEY),
         "apollo_cookies": os.path.exists(pipeline_config.APOLLO_COOKIES_PATH),
         "hit_threshold": pipeline_config.HIT_THRESHOLD,
         "max_leads": pipeline_config.MAX_LEADS,
         "services": services,
+        "quotas": quotas,
     }
 
 
@@ -72,6 +89,10 @@ def update_config(body: ConfigUpdate):
         updates["PERPLEXITY_API_KEY"] = body.perplexity_api_key
     if body.hunter_api_key is not None:
         updates["HUNTER_API_KEY"] = body.hunter_api_key
+    if body.prospeo_api_key is not None:
+        updates["PROSPEO_API_KEY"] = body.prospeo_api_key
+    if body.getprospect_api_key is not None:
+        updates["GETPROSPECT_API_KEY"] = body.getprospect_api_key
     if body.hit_threshold is not None:
         updates["HIT_THRESHOLD"] = str(body.hit_threshold)
     if body.max_leads is not None:
@@ -88,6 +109,8 @@ def update_config(body: ConfigUpdate):
     pipeline_config.ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
     pipeline_config.PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
     pipeline_config.HUNTER_API_KEY = os.getenv("HUNTER_API_KEY", "")
+    pipeline_config.PROSPEO_API_KEY = os.getenv("PROSPEO_API_KEY", "")
+    pipeline_config.GETPROSPECT_API_KEY = os.getenv("GETPROSPECT_API_KEY", "")
     if body.hit_threshold is not None:
         pipeline_config.HIT_THRESHOLD = body.hit_threshold
     if body.max_leads is not None:
@@ -173,6 +196,33 @@ async def validate_api_key(body: dict):
                 return {"valid": False, "error": "Clé invalide"}
             if resp.status_code >= 400:
                 return {"valid": False, "error": f"Erreur Hunter.io ({resp.status_code})"}
+            return {"valid": True}
+
+        elif key_type == "prospeo":
+            import requests
+            # /account-information is documented as free.
+            resp = requests.get(
+                "https://api.prospeo.io/account-information",
+                headers={"X-KEY": key_value}, timeout=10,
+            )
+            body = resp.json() if resp.content else {}
+            if body.get("error") and body.get("error_code") == "INVALID_API_KEY":
+                return {"valid": False, "error": "Clé invalide"}
+            return {"valid": True}
+
+        elif key_type == "getprospect":
+            import requests
+            # No account endpoint exists: a minimal find against a domain that
+            # yields nothing is refunded, so this costs no credit.
+            resp = requests.post(
+                "https://api.getprospect.com/v2/email/find",
+                headers={"x-api-key": key_value, "Content-Type": "application/json"},
+                json={"data": {"first_name": "Zzqx", "last_name": "Vbnm",
+                               "domain": "example.com"}},
+                timeout=15,
+            )
+            if resp.status_code == 401:
+                return {"valid": False, "error": "Clé invalide"}
             return {"valid": True}
 
         else:

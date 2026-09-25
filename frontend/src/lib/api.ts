@@ -26,6 +26,14 @@ export interface JobStats {
   linkedin_count: number
   phone_count: number
   website_count: number
+  // Which branch of the free cascade produced each address — tells the
+  // operator whether the free steps are carrying their weight.
+  email_by_source: Record<string, number>
+  mobile_count: number
+  whatsapp_count: number
+  pending_quota_count: number
+  reachable_count: number
+  provider_credits: Record<string, { remaining: number; allocation: number }>
   icp_hot_count: number
   icp_warm_count: number
   icp_cold_count: number
@@ -45,8 +53,26 @@ export interface Lead {
   phone?: string
   linkedin_url?: string
   website?: string
-  hit_score?: number
-  is_hit?: boolean
+  // Reachability — a boolean and its best route, never a score (2026-09-25).
+  reachable?: boolean | null
+  contact_level?: string
+  // Email acquisition — which branch of the cascade produced this address.
+  email_source?: string
+  email_type?: string
+  contact_source_url?: string
+  // Domain-level facts, shared by every lead on the same domain.
+  domain_catch_all?: boolean | null
+  domain_mx_provider?: string
+  domain_mismatch?: boolean
+  // Phones and social, all extracted from the company's own site.
+  phone_type?: string
+  phone_source?: string
+  whatsapp?: boolean
+  facebook_url?: string
+  instagram_url?: string
+  linkedin_company_url?: string
+  // Pass-1 spending prioritisation — never a verdict.
+  prescore?: number
   activity_summary?: string
   conversion_angle?: string
   digital_maturity?: string
@@ -126,8 +152,12 @@ export interface JobResult {
   job_id: string
   status: 'running' | 'done' | 'error' | 'completed_with_errors'
   total_leads: number
+  // Named hit_leads/nohit_leads for backend compatibility, but they carry
+  // the reachable/unreachable split (see processors/reachability.py) rather
+  // than a hit-score threshold.
   hit_leads: number
   nohit_leads: number
+  pending_quota_leads: number
   stats: JobStats
   leads: Lead[]
   error?: string
@@ -180,24 +210,33 @@ export async function getHealth(): Promise<HealthCheck> {
 
 // ── Config endpoints ───────────────────────────────────────────────────────────
 
+export interface ProviderQuota {
+  remaining: number
+  allocation: number
+  reset_date: string | null
+}
+
 export interface ConfigStatus {
   serper_api_key: boolean
-  dropcontact_api_key: boolean
   anthropic_api_key: boolean
   perplexity_api_key: boolean
   hunter_api_key: boolean
+  prospeo_api_key: boolean
+  getprospect_api_key: boolean
   apollo_cookies: boolean
   hit_threshold: number
   max_leads: number
   services: string[]
+  quotas: Record<string, ProviderQuota>
 }
 
 export interface ConfigUpdate {
   serper_api_key?: string
-  dropcontact_api_key?: string
   anthropic_api_key?: string
   perplexity_api_key?: string
   hunter_api_key?: string
+  prospeo_api_key?: string
+  getprospect_api_key?: string
   hit_threshold?: number
   max_leads?: number
   services?: string[]
@@ -328,9 +367,9 @@ export async function getPoolDetail(poolId: string): Promise<LeadPool> {
   return res.json()
 }
 
-export async function getPoolLeads(poolId: string, onlyHit = false, onlyUnenriched = false, limit = 0): Promise<PoolLead[]> {
+export async function getPoolLeads(poolId: string, onlyReachable = false, onlyUnenriched = false, limit = 0): Promise<PoolLead[]> {
   const params = new URLSearchParams()
-  if (onlyHit) params.set('only_hit', 'true')
+  if (onlyReachable) params.set('only_reachable', 'true')
   if (onlyUnenriched) params.set('only_unenriched', 'true')
   if (limit) params.set('limit', String(limit))
   const res = await fetch(`/api/pools/${poolId}/leads?${params}`)
@@ -341,6 +380,39 @@ export async function getPoolLeads(poolId: string, onlyHit = false, onlyUnenrich
 export async function deletePool(poolId: string): Promise<void> {
   const res = await fetch(`/api/pools/${poolId}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Failed to delete pool')
+}
+
+// ── Suppression list endpoints ───────────────────────────────────────────────
+
+export interface SuppressionEntry {
+  id: number
+  email: string | null
+  linkedin_url: string | null
+  domaine: string | null
+  motif: string
+  added_at: string
+}
+
+export async function getSuppressionList(): Promise<SuppressionEntry[]> {
+  const res = await fetch('/api/suppression')
+  if (!res.ok) throw new Error('Failed to fetch suppression list')
+  return res.json()
+}
+
+export async function importSuppressionCsv(file: File): Promise<{ imported: number; skipped: number }> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch('/api/suppression/import', { method: 'POST', body: form })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail ?? 'Failed to import suppression CSV')
+  }
+  return res.json()
+}
+
+export async function deleteSuppressionEntry(id: number): Promise<void> {
+  const res = await fetch(`/api/suppression/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete suppression entry')
 }
 
 // ── Cookie endpoints ─────────────────────────────────────────────────────────

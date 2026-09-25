@@ -1,6 +1,9 @@
-import { X, Briefcase, MapPin, Mail, Phone, Linkedin, Globe, Target, TrendingUp, DollarSign, Activity, Zap, Copy, ExternalLink } from 'lucide-react'
+import { X, Briefcase, MapPin, Mail, Phone, Linkedin, Globe, Target, TrendingUp, DollarSign, Activity, Zap, Copy, ExternalLink, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
-import { EVIDENCE_LEVEL_STYLE, TIER_ICON, TIER_STYLE, evidenceLabel, tierOf } from '@/lib/tiers'
+import {
+  CONTACT_LEVEL_ICON, CONTACT_LEVEL_LABEL, CONTACT_LEVEL_STYLE, EVIDENCE_LEVEL_STYLE,
+  TIER_ICON, TIER_STYLE, contactLevelOf, emailSourceLabel, evidenceLabel, tierOf,
+} from '@/lib/tiers'
 
 function copyToClipboard(text: string, label: string) {
   navigator.clipboard.writeText(text).then(() => toast.success(`${label} copié`))
@@ -16,8 +19,18 @@ interface LeadData {
   phone?: string
   linkedin_url?: string
   website?: string
-  hit_score?: number
-  is_hit?: boolean
+  // Reachability — a boolean and its best route, never a score.
+  reachable?: boolean | null
+  contact_level?: string
+  prescore?: number
+  // Email acquisition — which branch of the cascade produced this address.
+  email_source?: string
+  email_type?: string
+  contact_source_url?: string
+  // Domain-level facts, shared by every lead on the same domain.
+  domain_catch_all?: boolean | null
+  domain_mx_provider?: string
+  domain_mismatch?: boolean
   icp_score?: number
   icp_tier?: string
   icp_rationale?: string
@@ -97,8 +110,8 @@ export function LeadDetailModal({ lead, onClose }: Props) {
           </button>
         </div>
 
-        {/* Disqualification / evidence warnings */}
-        {(lead.disqualification_reason || lead.evidence_verified === false) && (
+        {/* Disqualification / evidence / domain-mismatch warnings */}
+        {(lead.disqualification_reason || lead.evidence_verified === false || lead.domain_mismatch) && (
           <div className="px-6 pt-4">
             {lead.disqualification_reason && (
               <div className="text-sm rounded-lg px-3 py-2 mb-2"
@@ -115,6 +128,13 @@ export function LeadDetailModal({ lead, onClose }: Props) {
                     {evidenceLabel(lead.evidence_level)}
                   </span>
                 )}
+              </div>
+            )}
+            {lead.domain_mismatch && (
+              <div className="flex items-center gap-2 text-sm rounded-lg px-3 py-2 mb-2"
+                   style={{ background: 'var(--th-warning-soft)', color: 'var(--th-warning-text)' }}>
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                Le fournisseur a renvoyé un email sur un domaine différent de celui attendu — à vérifier avant tout envoi.
               </div>
             )}
           </div>
@@ -154,12 +174,64 @@ export function LeadDetailModal({ lead, onClose }: Props) {
           )}
         </div>
 
+        {/* Where each contact came from */}
+        {(lead.email_source || lead.domain_mx_provider != null || lead.domain_catch_all != null) && (
+          <div className="p-6 space-y-2" style={{ borderBottom: '1px solid var(--th-border-default)' }}>
+            <h3 className="text-xs font-semibold mb-1" style={{ color: 'var(--th-text-faint)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+              Origine du contact
+            </h3>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              {lead.email_source && (
+                <div style={{ color: 'var(--th-text-tertiary)' }}>
+                  Source email : <span style={{ color: 'var(--th-text-primary)' }}>{emailSourceLabel(lead.email_source)}</span>
+                  {lead.email_type && <span style={{ color: 'var(--th-text-muted)' }}> ({lead.email_type})</span>}
+                </div>
+              )}
+              {lead.contact_source_url && (
+                <div>
+                  <a
+                    href={lead.contact_source_url} target="_blank" rel="noreferrer"
+                    className="inline-flex items-center gap-1"
+                    style={{ color: 'var(--th-primary)' }}
+                  >
+                    Page source <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              )}
+              {lead.domain_mx_provider != null && (
+                <div style={{ color: 'var(--th-text-tertiary)' }}>
+                  Fournisseur mail : <span style={{ color: 'var(--th-text-primary)' }}>{lead.domain_mx_provider || 'inconnu'}</span>
+                </div>
+              )}
+              {lead.domain_catch_all != null && (
+                <div style={{ color: 'var(--th-text-tertiary)' }}>
+                  Domaine catch-all : <span style={{ color: 'var(--th-text-primary)' }}>{lead.domain_catch_all ? 'oui' : 'non'}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Scores */}
         <div className="p-6 flex items-center gap-4 flex-wrap" style={{ borderBottom: '1px solid var(--th-border-default)' }}>
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Hit Score</span>
-            <span className="font-mono font-bold text-lg" style={{ color: (lead.hit_score ?? 0) >= 50 ? 'var(--th-success)' : 'var(--th-text-quaternary)' }}>{lead.hit_score ?? 0}</span>
+            <span className="text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pré-score</span>
+            <span className="font-mono font-bold text-lg" style={{ color: (lead.prescore ?? 0) >= 50 ? 'var(--th-success)' : 'var(--th-text-quaternary)' }}>{lead.prescore ?? 0}</span>
           </div>
+          {lead.contact_level && (() => {
+            const level = contactLevelOf(lead.contact_level)
+            return (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Joignabilité</span>
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold"
+                  style={CONTACT_LEVEL_STYLE[level]}
+                >
+                  {CONTACT_LEVEL_ICON[level]} {CONTACT_LEVEL_LABEL[level]}
+                </span>
+              </div>
+            )
+          })()}
           {lead.icp_score != null && (
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>ICP</span>

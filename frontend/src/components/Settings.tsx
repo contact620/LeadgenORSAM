@@ -3,9 +3,12 @@ import { toast } from 'sonner'
 import {
   KeyRound, CheckCircle2, XCircle, Eye, EyeOff,
   Upload, Save, RefreshCw, Cookie, SlidersHorizontal,
-  ArrowLeft, AlertCircle,
+  ArrowLeft, AlertCircle, Gauge, ShieldOff, Trash2, FileUp,
 } from 'lucide-react'
-import { getConfig, saveConfig, uploadCookies, type ConfigStatus } from '@/lib/api'
+import {
+  getConfig, saveConfig, uploadCookies, type ConfigStatus,
+  getSuppressionList, importSuppressionCsv, deleteSuppressionEntry, type SuppressionEntry,
+} from '@/lib/api'
 
 interface Props {
   onBack: () => void
@@ -43,6 +46,33 @@ function SectionCard({ title, icon, children }: { title: string; icon: React.Rea
         <h2 className="font-semibold text-sm" style={{ color: 'var(--th-text-primary)' }}>{title}</h2>
       </div>
       <div style={{ padding: '20px 24px' }}>{children}</div>
+    </div>
+  )
+}
+
+const PROVIDER_QUOTA_LABEL: Record<string, string> = {
+  prospeo: 'Prospeo',
+  hunter: 'Hunter.io',
+  getprospect: 'GetProspect (recherche)',
+  getprospect_verify: 'GetProspect (vérification)',
+}
+
+function QuotaBar({ label, quota }: { label: string; quota: ConfigStatus['quotas'][string] }) {
+  const pct = quota.allocation > 0 ? Math.min(100, Math.round((quota.remaining / quota.allocation) * 100)) : 0
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-sm">
+        <span style={{ color: 'var(--th-text-tertiary)' }}>{label}</span>
+        <span className="font-mono text-xs" style={{ color: 'var(--th-text-muted)' }}>
+          {Math.round(quota.remaining)} / {Math.round(quota.allocation)}
+        </span>
+      </div>
+      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--th-border-default)' }}>
+        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: pct > 20 ? 'var(--th-success)' : 'var(--th-error)' }} />
+      </div>
+      {quota.reset_date && (
+        <p className="text-xs" style={{ color: 'var(--th-text-faint)' }}>Réinitialisation : {quota.reset_date}</p>
+      )}
     </div>
   )
 }
@@ -180,14 +210,17 @@ function CookiePanel({ service, label, isPresent, onUploaded }: CookiePanelProps
 
 export function Settings({ onBack, onConfigChange }: Props) {
   const [config, setConfig] = useState<ConfigStatus | null>(null)
-  const [keys, setKeys] = useState({ serper: '', dropcontact: '', anthropic: '', perplexity: '', hunter: '' })
-  const [showKey, setShowKey] = useState({ serper: false, dropcontact: false, anthropic: false, perplexity: false, hunter: false })
+  const [keys, setKeys] = useState({ serper: '', anthropic: '', perplexity: '', hunter: '', prospeo: '', getprospect: '' })
+  const [showKey, setShowKey] = useState({ serper: false, anthropic: false, perplexity: false, hunter: false, prospeo: false, getprospect: false })
   const [savingKeys, setSavingKeys] = useState(false)
   const [keysStatus, setKeysStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
   const [pipeline, setPipeline] = useState({ hitThreshold: 50, services: [] as string[] })
   const [newService, setNewService] = useState('')
   const [savingPipeline, setSavingPipeline] = useState(false)
   const [pipelineStatus, setPipelineStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
+  const [suppression, setSuppression] = useState<SuppressionEntry[]>([])
+  const [importingSuppression, setImportingSuppression] = useState(false)
+  const suppressionFileRef = useRef<HTMLInputElement>(null)
 
   const refreshConfig = useCallback(() => {
     getConfig().then(c => { setConfig(c); setPipeline({ hitThreshold: c.hit_threshold, services: c.services || [] }); onConfigChange?.(c) }).catch(() => {
@@ -195,14 +228,48 @@ export function Settings({ onBack, onConfigChange }: Props) {
     })
   }, [onConfigChange])
 
+  const refreshSuppression = useCallback(() => {
+    getSuppressionList().then(setSuppression).catch(() => {
+      toast.error('Impossible de charger la liste de suppression')
+    })
+  }, [])
+
   useEffect(() => { refreshConfig() }, [refreshConfig])
+  useEffect(() => { refreshSuppression() }, [refreshSuppression])
+
+  const handleImportSuppression = async (file: File) => {
+    setImportingSuppression(true)
+    try {
+      const report = await importSuppressionCsv(file)
+      toast.success(`${report.imported} entrée(s) importée(s)${report.skipped ? `, ${report.skipped} ignorée(s)` : ''}`)
+      refreshSuppression()
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Échec de l'import")
+    } finally { setImportingSuppression(false) }
+  }
+
+  const handleDeleteSuppression = async (id: number) => {
+    try {
+      await deleteSuppressionEntry(id)
+      setSuppression(prev => prev.filter(entry => entry.id !== id))
+    } catch {
+      toast.error("Échec de la suppression de l'entrée")
+    }
+  }
 
   const handleSaveKeys = async () => {
     setSavingKeys(true); setKeysStatus(null)
     try {
-      await saveConfig({ serper_api_key: keys.serper || undefined, dropcontact_api_key: keys.dropcontact || undefined, anthropic_api_key: keys.anthropic || undefined, perplexity_api_key: keys.perplexity || undefined, hunter_api_key: keys.hunter || undefined })
+      await saveConfig({
+        serper_api_key: keys.serper || undefined,
+        anthropic_api_key: keys.anthropic || undefined,
+        perplexity_api_key: keys.perplexity || undefined,
+        hunter_api_key: keys.hunter || undefined,
+        prospeo_api_key: keys.prospeo || undefined,
+        getprospect_api_key: keys.getprospect || undefined,
+      })
       setKeysStatus({ type: 'success', msg: 'Clés sauvegardées' })
-      setKeys({ serper: '', dropcontact: '', anthropic: '', perplexity: '', hunter: '' })
+      setKeys({ serper: '', anthropic: '', perplexity: '', hunter: '', prospeo: '', getprospect: '' })
       refreshConfig()
     } catch (e: unknown) {
       setKeysStatus({ type: 'error', msg: e instanceof Error ? e.message : 'Erreur' })
@@ -222,10 +289,11 @@ export function Settings({ onBack, onConfigChange }: Props) {
 
   const keyFields: { id: keyof typeof keys; label: string; required: boolean; configKey: keyof ConfigStatus; hint?: string }[] = [
     { id: 'serper',      label: 'SERPER_API_KEY',      required: true,  configKey: 'serper_api_key' },
-    { id: 'dropcontact', label: 'DROPCONTACT_API_KEY', required: false, configKey: 'dropcontact_api_key', hint: 'Optionnel — email/téléphone ignorés si absent' },
     { id: 'anthropic',   label: 'ANTHROPIC_API_KEY',   required: true,  configKey: 'anthropic_api_key' },
     { id: 'perplexity',  label: 'PERPLEXITY_API_KEY',  required: false, configKey: 'perplexity_api_key', hint: 'Optionnel — enrichissement Perplexity Sonar ignoré si absent' },
     { id: 'hunter',      label: 'HUNTER_API_KEY',      required: false, configKey: 'hunter_api_key',    hint: 'Optionnel — vérification email Hunter.io ignorée si absent (~$0.01/vérif)' },
+    { id: 'prospeo',     label: 'PROSPEO_API_KEY',     required: false, configKey: 'prospeo_api_key',     hint: 'Optionnel — 100 recherches/mois en plan gratuit' },
+    { id: 'getprospect', label: 'GETPROSPECT_API_KEY', required: false, configKey: 'getprospect_api_key', hint: 'Optionnel — 50 emails + 100 vérifications/mois' },
   ]
 
   const actionBtnStyle = (disabled: boolean) => ({
@@ -332,13 +400,83 @@ export function Settings({ onBack, onConfigChange }: Props) {
 
           <button
             onClick={handleSaveKeys}
-            disabled={savingKeys || (!keys.serper && !keys.dropcontact && !keys.anthropic && !keys.perplexity && !keys.hunter)}
+            disabled={savingKeys || Object.values(keys).every(v => !v)}
             className="btn-grad flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white"
-            style={actionBtnStyle(savingKeys || (!keys.serper && !keys.dropcontact && !keys.anthropic && !keys.perplexity && !keys.hunter))}
+            style={actionBtnStyle(savingKeys || Object.values(keys).every(v => !v))}
           >
             {savingKeys ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
             Sauvegarder les clés
           </button>
+        </div>
+      </SectionCard>
+
+      {/* Quotas */}
+      {config && config.quotas && Object.keys(config.quotas).length > 0 && (
+        <SectionCard title="Quotas fournisseurs" icon={<Gauge className="w-4 h-4" />}>
+          <div className="space-y-4">
+            <p className="text-xs" style={{ color: 'var(--th-text-muted)' }}>
+              Crédits restants sur l'allocation mensuelle de chaque fournisseur de la cascade email.
+            </p>
+            {Object.entries(config.quotas).map(([provider, quota]) => (
+              <QuotaBar key={provider} label={PROVIDER_QUOTA_LABEL[provider] ?? provider} quota={quota} />
+            ))}
+          </div>
+        </SectionCard>
+      )}
+
+      {/* Suppression list */}
+      <SectionCard title="Liste de suppression" icon={<ShieldOff className="w-4 h-4" />}>
+        <div className="space-y-4">
+          <p className="text-xs" style={{ color: 'var(--th-text-muted)' }}>
+            Clients existants et opt-out : ces leads ne sont jamais contactés, gratuit ou payant. Colonnes CSV : email, linkedin_url, domaine, motif.
+          </p>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => suppressionFileRef.current?.click()}
+              disabled={importingSuppression}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium"
+              style={{
+                color: 'var(--th-primary)', background: 'var(--th-primary-soft)', border: '1px solid var(--th-primary-border)',
+                cursor: importingSuppression ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: importingSuppression ? 0.5 : 1,
+              }}
+            >
+              {importingSuppression ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <FileUp className="w-3.5 h-3.5" />}
+              Importer un CSV
+            </button>
+            <input
+              ref={suppressionFileRef} type="file" accept=".csv,text/csv" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) handleImportSuppression(f); e.target.value = '' }}
+            />
+            <span className="text-sm" style={{ color: 'var(--th-text-tertiary)' }}>
+              {suppression.length} entrée{suppression.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+
+          {suppression.length > 0 && (
+            <div className="max-h-64 overflow-y-auto rounded-lg" style={{ border: '1px solid var(--th-border-subtle)' }}>
+              <table className="w-full text-xs">
+                <tbody>
+                  {suppression.map(entry => (
+                    <tr key={entry.id} style={{ borderBottom: '1px solid var(--th-border-subtle)' }}>
+                      <td className="px-3 py-2" style={{ color: 'var(--th-text-tertiary)' }}>
+                        {entry.email || entry.linkedin_url || entry.domaine || '—'}
+                      </td>
+                      <td className="px-3 py-2" style={{ color: 'var(--th-text-muted)' }}>{entry.motif}</td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          onClick={() => handleDeleteSuppression(entry.id)}
+                          style={{ color: 'var(--th-error)', background: 'none', border: 'none', cursor: 'pointer' }}
+                          title="Supprimer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </SectionCard>
 

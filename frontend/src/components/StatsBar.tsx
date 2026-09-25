@@ -1,6 +1,6 @@
-import { Users, Zap, Mail, Linkedin, Phone, Target, Sparkles } from 'lucide-react'
+import { Users, Zap, Mail, Linkedin, Phone, Target, Sparkles, Smartphone, MessageCircle, Wallet } from 'lucide-react'
 import type { JobResult } from '@/lib/api'
-import { TIER_ICON, TIER_STYLE } from '@/lib/tiers'
+import { TIER_ICON, TIER_STYLE, emailSourceLabel } from '@/lib/tiers'
 
 interface Props {
   result: JobResult
@@ -35,8 +35,10 @@ function StatCard({ icon, label, value, sub, accentColor, glowColor }: StatCardP
 }
 
 export function StatsBar({ result }: Props) {
-  const { total_leads, hit_leads, nohit_leads, stats } = result
+  const { total_leads, hit_leads, nohit_leads, pending_quota_leads, stats } = result
   const hitRate = total_leads > 0 ? Math.round((hit_leads / total_leads) * 100) : 0
+  const topSource = Object.entries(stats.email_by_source ?? {}).sort((a, b) => b[1] - a[1])[0]
+  const totalCredits = Object.values(stats.provider_credits ?? {}).reduce((s, q) => s + q.remaining, 0)
 
   return (
     <div className="w-full max-w-5xl mx-auto">
@@ -46,12 +48,41 @@ export function StatsBar({ result }: Props) {
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <StatCard icon={<Users className="w-4 h-4" style={{ color: 'var(--th-primary)' }} />} accentColor="#4d9fff" glowColor="rgba(77,159,255,0.15)" label="Leads totaux" value={total_leads} />
-        <StatCard icon={<Zap className="w-4 h-4" style={{ color: 'var(--th-success)' }} />} accentColor="#34d399" glowColor="rgba(52,211,153,0.15)" label="Leads hit" value={hit_leads} sub={`${hitRate}% du total`} />
-        <StatCard icon={<Users className="w-4 h-4" style={{ color: 'var(--th-text-muted)' }} />} accentColor="rgba(226,232,248,0.3)" glowColor="rgba(226,232,248,0.05)" label="No-hit" value={nohit_leads} sub={`${100 - hitRate}% du total`} />
-        <StatCard icon={<Mail className="w-4 h-4" style={{ color: 'var(--th-purple)' }} />} accentColor="#9b6bff" glowColor="rgba(155,107,255,0.15)" label="Emails trouvés" value={`${stats.email_pct}%`} sub={`${stats.email_count ?? 0} / ${total_leads} leads`} />
+        <StatCard icon={<Zap className="w-4 h-4" style={{ color: 'var(--th-success)' }} />} accentColor="#34d399" glowColor="rgba(52,211,153,0.15)" label="Joignables" value={hit_leads} sub={`${hitRate}% du total`} />
+        <StatCard icon={<Users className="w-4 h-4" style={{ color: 'var(--th-text-muted)' }} />} accentColor="rgba(226,232,248,0.3)" glowColor="rgba(226,232,248,0.05)" label="Non joignables" value={nohit_leads} sub={`${100 - hitRate}% du total`} />
+        {pending_quota_leads > 0 && (
+          <StatCard icon={<Zap className="w-4 h-4" style={{ color: '#60a5fa' }} />} accentColor="#60a5fa" glowColor="rgba(96,165,250,0.15)" label="En attente de quota" value={pending_quota_leads} sub="pas écartés — repassent au reset" />
+        )}
+        <StatCard icon={<Mail className="w-4 h-4" style={{ color: 'var(--th-purple)' }} />} accentColor="#9b6bff" glowColor="rgba(155,107,255,0.15)" label="Emails trouvés" value={`${stats.email_pct}%`} sub={topSource ? `Principale source : ${emailSourceLabel(topSource[0])}` : `${stats.email_count ?? 0} / ${total_leads} leads`} />
         <StatCard icon={<Linkedin className="w-4 h-4" style={{ color: 'var(--th-primary)' }} />} accentColor="#4d9fff" glowColor="rgba(77,159,255,0.15)" label="LinkedIn" value={`${stats.linkedin_pct}%`} sub={`${stats.linkedin_count ?? 0} / ${total_leads} leads`} />
         <StatCard icon={<Phone className="w-4 h-4" style={{ color: 'var(--th-cyan)' }} />} accentColor="#22d3ee" glowColor="rgba(34,211,238,0.15)" label="Téléphones" value={`${stats.phone_pct}%`} sub={`${stats.phone_count ?? 0} / ${total_leads} · Site: ${stats.website_count ?? 0} / ${total_leads}`} />
+        <StatCard icon={<Smartphone className="w-4 h-4" style={{ color: '#22d3ee' }} />} accentColor="#22d3ee" glowColor="rgba(34,211,238,0.15)" label="Mobiles" value={stats.mobile_count ?? 0} sub={`sur ${total_leads} leads`} />
+        <StatCard icon={<MessageCircle className="w-4 h-4" style={{ color: '#34d399' }} />} accentColor="#34d399" glowColor="rgba(52,211,153,0.15)" label="WhatsApp" value={stats.whatsapp_count ?? 0} sub="lien publié sur le site" />
+        <StatCard icon={<Wallet className="w-4 h-4" style={{ color: '#fbbf24' }} />} accentColor="#fbbf24" glowColor="rgba(251,191,36,0.15)" label="Crédits restants" value={Math.round(totalCredits)} sub="Prospeo + GetProspect + Hunter" />
       </div>
+
+      {/* Email sources */}
+      {stats.email_by_source && Object.keys(stats.email_by_source).length > 0 && (
+        <div
+          className="mt-3 rounded-xl px-5 py-4"
+          style={{ background: 'var(--th-glass-sm-bg)', border: '1px solid var(--th-glass-sm-border)' }}
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <Mail className="w-4 h-4" style={{ color: 'var(--th-purple)' }} />
+            <span className="font-medium text-sm" style={{ color: 'var(--th-text-tertiary)' }}>Emails trouvés par source</span>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {Object.entries(stats.email_by_source)
+              .sort((a, b) => b[1] - a[1])
+              .map(([source, count]) => (
+                <span key={source} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
+                      style={{ background: 'var(--th-glass-inset)', color: 'var(--th-text-tertiary)', border: '1px solid var(--th-glass-sm-border)' }}>
+                  {emailSourceLabel(source)} : <span style={{ color: 'var(--th-text-primary)' }}>{count}</span>
+                </span>
+              ))}
+          </div>
+        </div>
+      )}
 
       {/* ICP distribution */}
       {(stats.icp_hot_count > 0 || stats.icp_warm_count > 0 || stats.icp_cold_count > 0 || stats.icp_disqualified_count > 0) && (
@@ -108,13 +139,13 @@ export function StatsBar({ result }: Props) {
         </div>
       )}
 
-      {/* Score bar */}
+      {/* Pre-score bar */}
       <div
         className="mt-3 rounded-xl px-5 py-4"
         style={{ background: 'var(--th-glass-sm-bg)', border: '1px solid var(--th-glass-sm-border)' }}
       >
         <div className="flex justify-between text-sm mb-2.5">
-          <span className="font-medium" style={{ color: 'var(--th-text-tertiary)' }}>Score moyen</span>
+          <span className="font-medium" style={{ color: 'var(--th-text-tertiary)' }}>Pré-score moyen</span>
           <span className="font-mono font-semibold" style={{ color: 'var(--th-text-primary)' }}>{stats.avg_score} / 100</span>
         </div>
         <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--th-border-default)' }}>
@@ -124,8 +155,7 @@ export function StatsBar({ result }: Props) {
           />
         </div>
         <div className="flex justify-between text-xs mt-1.5" style={{ color: 'var(--th-text-ghost)' }}>
-          <span>email+40 · linkedin+30 · phone+20 · web+10</span>
-          <span>seuil hit: 50</span>
+          <span>secteur · taille · localisation — priorisation gratuite, jamais un verdict</span>
         </div>
       </div>
 

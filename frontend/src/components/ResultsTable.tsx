@@ -1,19 +1,24 @@
 import { useState, useMemo } from 'react'
-import { Download, Search, ExternalLink, ChevronLeft, ChevronRight, SearchX, ArrowUpDown, ArrowUp, ArrowDown, Copy, CheckCircle2, XCircle, HelpCircle } from 'lucide-react'
+import { Download, Search, ExternalLink, ChevronLeft, ChevronRight, SearchX, ArrowUpDown, ArrowUp, ArrowDown, Copy, CheckCircle2, XCircle, HelpCircle, Clock } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { getDownloadUrl, type Lead } from '@/lib/api'
-import { TIER_ICON, TIER_STYLE, evidenceLabel, tierOf } from '@/lib/tiers'
+import {
+  CONTACT_LEVEL_ICON, CONTACT_LEVEL_LABEL, CONTACT_LEVEL_STYLE, TIER_ICON, TIER_STYLE,
+  contactLevelOf, emailSourceLabel, evidenceLabel, tierOf,
+} from '@/lib/tiers'
 import { LeadDetailModal } from './LeadDetailModal'
 
-// Visual style for each Hunter.io email_status value
-const EMAIL_STATUS_STYLE: Record<string, { icon: typeof CheckCircle2; bg: string; color: string; border: string; label: string }> = {
-  valid:      { icon: CheckCircle2, bg: 'rgba(34,197,94,0.10)',  color: '#22c55e', border: 'rgba(34,197,94,0.30)',  label: 'Email vérifié (valide)' },
-  invalid:    { icon: XCircle,      bg: 'rgba(239,68,68,0.10)',  color: '#ef4444', border: 'rgba(239,68,68,0.30)',  label: 'Email invalide' },
-  disposable: { icon: XCircle,      bg: 'rgba(239,68,68,0.10)',  color: '#ef4444', border: 'rgba(239,68,68,0.30)',  label: 'Email jetable' },
-  accept_all: { icon: HelpCircle,   bg: 'rgba(251,191,36,0.10)', color: '#fbbf24', border: 'rgba(251,191,36,0.30)', label: 'Domaine catch-all (incertain)' },
-  webmail:    { icon: HelpCircle,   bg: 'rgba(251,191,36,0.10)', color: '#fbbf24', border: 'rgba(251,191,36,0.30)', label: 'Webmail (gmail/outlook…)' },
-  unknown:    { icon: HelpCircle,   bg: 'rgba(148,163,184,0.10)', color: 'rgba(148,163,184,0.85)', border: 'rgba(148,163,184,0.25)', label: 'Statut inconnu' },
+// Visual style for each email_status value the cascade can produce
+// (enrichers/email_cascade.py::EMAIL_STATUSES).
+const EMAIL_STATUS_STYLE: Record<string, { icon: typeof CheckCircle2; color: string; label: string }> = {
+  valid_nominatif: { icon: CheckCircle2, color: '#22c55e', label: 'Email nominatif vérifié' },
+  valid_generique: { icon: CheckCircle2, color: '#4d9fff', label: 'Email générique vérifié' },
+  catch_all:       { icon: HelpCircle,   color: '#fbbf24', label: 'Domaine catch-all (incertain)' },
+  unverified:      { icon: HelpCircle,   color: 'rgba(148,163,184,0.85)', label: 'Non vérifié' },
+  not_found:       { icon: XCircle,      color: '#ef4444', label: 'Introuvable' },
+  pending_quota:   { icon: Clock,        color: '#60a5fa', label: 'En attente de quota' },
+  provider_failure:{ icon: XCircle,      color: '#ef4444', label: 'Échec fournisseur' },
 }
 
 const PAGE_SIZE = 10
@@ -23,8 +28,8 @@ interface Props {
   jobId: string
 }
 
-type Tab = 'all' | 'hit' | 'nohit'
-type SortKey = 'name' | 'company' | 'score' | 'icp' | null
+type Tab = 'all' | 'reachable' | 'unreachable' | 'pending'
+type SortKey = 'name' | 'company' | 'prescore' | 'icp' | null
 type SortDir = 'asc' | 'desc'
 
 function copyToClipboard(text: string, label: string) {
@@ -37,7 +42,7 @@ function getSortValue(lead: Lead, key: SortKey): string | number {
   switch (key) {
     case 'name': return `${lead.first_name ?? ''} ${lead.last_name ?? ''}`.toLowerCase()
     case 'company': return (lead.company ?? '').toLowerCase()
-    case 'score': return lead.hit_score ?? 0
+    case 'prescore': return lead.prescore ?? 0
     case 'icp': return lead.icp_score ?? -1
     default: return 0
   }
@@ -64,8 +69,11 @@ export function ResultsTable({ leads, jobId }: Props) {
 
   const filtered = useMemo(() => {
     let list = leads
-    if (tab === 'hit')   list = leads.filter(l => l.is_hit)
-    if (tab === 'nohit') list = leads.filter(l => !l.is_hit)
+    // reachable is a tri-state: true / false / null (pending_quota — never
+    // asked the question, so it must not be lumped in with unreachable).
+    if (tab === 'reachable')   list = leads.filter(l => l.reachable === true)
+    if (tab === 'unreachable') list = leads.filter(l => l.reachable === false)
+    if (tab === 'pending')     list = leads.filter(l => l.reachable == null)
     if (icpFilter !== 'all') list = list.filter(l => l.icp_tier === icpFilter)
     if (search.trim()) {
       const q = search.toLowerCase()
@@ -97,8 +105,9 @@ export function ResultsTable({ leads, jobId }: Props) {
   const pageCount = Math.ceil(filtered.length / PAGE_SIZE)
   const pageLeads = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
   const handleTabChange = (t: Tab) => { setTab(t); setPage(0) }
-  const hitCount   = leads.filter(l => l.is_hit).length
-  const nohitCount = leads.filter(l => !l.is_hit).length
+  const reachableCount   = leads.filter(l => l.reachable === true).length
+  const unreachableCount = leads.filter(l => l.reachable === false).length
+  const pendingCount     = leads.filter(l => l.reachable == null).length
 
   return (
     <div className="w-full max-w-7xl mx-auto space-y-4">
@@ -147,9 +156,10 @@ export function ResultsTable({ leads, jobId }: Props) {
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="flex gap-1 p-1 rounded-lg" style={{ background: 'var(--th-glass-inset)', border: '1px solid var(--th-glass-sm-border)' }}>
           {([
-            { key: 'all',   label: `Tous (${leads.length})` },
-            { key: 'hit',   label: `Hits (${hitCount})` },
-            { key: 'nohit', label: `No-hit (${nohitCount})` },
+            { key: 'all',         label: `Tous (${leads.length})` },
+            { key: 'reachable',   label: `Joignables (${reachableCount})` },
+            { key: 'unreachable', label: `Non joignables (${unreachableCount})` },
+            { key: 'pending',     label: `En attente de quota (${pendingCount})` },
           ] as { key: Tab; label: string }[]).map(t => (
             <button
               key={t.key}
@@ -227,8 +237,9 @@ export function ResultsTable({ leads, jobId }: Props) {
                   { key: null, label: 'Email' },
                   { key: null, label: 'Téléphone' },
                   { key: null, label: 'LinkedIn' },
-                  { key: 'score' as SortKey, label: 'Score' },
-                  { key: null, label: 'Hit' },
+                  { key: 'prescore' as SortKey, label: 'Pré-score' },
+                  { key: null, label: 'Joignable' },
+                  { key: null, label: 'Source' },
                   { key: 'icp' as SortKey, label: 'ICP' },
                   { key: null, label: 'Angle IA' },
                 ]).map(h => (
@@ -253,7 +264,7 @@ export function ResultsTable({ leads, jobId }: Props) {
             <tbody>
               {pageLeads.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-12 text-center">
+                  <td colSpan={11} className="px-4 py-12 text-center">
                     <SearchX className="w-10 h-10 mx-auto mb-3" style={{ color: 'var(--th-text-ghost)' }} />
                     <p className="text-sm" style={{ color: 'var(--th-text-faint)' }}>Aucun lead trouvé</p>
                   </td>
@@ -308,7 +319,7 @@ export function ResultsTable({ leads, jobId }: Props) {
                             {lead.email_status && EMAIL_STATUS_STYLE[lead.email_status] && (() => {
                               const s = EMAIL_STATUS_STYLE[lead.email_status]
                               const Icon = s.icon
-                              const tooltip = `${s.label}${lead.email_confidence != null ? ` — score Hunter ${lead.email_confidence}/100` : ''}`
+                              const tooltip = `${s.label}${lead.email_confidence != null ? ` — score ${lead.email_confidence}/100` : ''}`
                               return (
                                 <span
                                   title={tooltip}
@@ -351,19 +362,28 @@ export function ResultsTable({ leads, jobId }: Props) {
                           <div className="w-12 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--th-border-default)' }}>
                             <div
                               className="h-full rounded-full"
-                              style={{ width: `${lead.hit_score ?? 0}%`, background: (lead.hit_score ?? 0) >= 50 ? 'var(--th-success)' : 'var(--th-text-ghost)' }}
+                              style={{ width: `${lead.prescore ?? 0}%`, background: (lead.prescore ?? 0) >= 50 ? 'var(--th-success)' : 'var(--th-text-ghost)' }}
                             />
                           </div>
-                          <span className="font-mono text-xs" style={{ color: 'var(--th-text-tertiary)' }}>{lead.hit_score ?? 0}</span>
+                          <span className="font-mono text-xs" style={{ color: 'var(--th-text-tertiary)' }}>{lead.prescore ?? 0}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
-                        <span
-                          className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                          style={lead.is_hit ? { background: 'var(--th-success-soft)', color: 'var(--th-success)', border: '1px solid var(--th-success-border)' } : { background: 'var(--th-glass-inset)', color: 'var(--th-text-muted)', border: '1px solid var(--th-glass-sm-border)' }}
-                        >
-                          {lead.is_hit ? '✓ Hit' : 'No-hit'}
-                        </span>
+                        {(() => {
+                          const level = contactLevelOf(lead.contact_level)
+                          return (
+                            <span
+                              title={CONTACT_LEVEL_LABEL[level]}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium"
+                              style={CONTACT_LEVEL_STYLE[level]}
+                            >
+                              {CONTACT_LEVEL_ICON[level]} {CONTACT_LEVEL_LABEL[level]}
+                            </span>
+                          )
+                        })()}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-xs" style={{ color: 'var(--th-text-tertiary)' }}>
+                        {lead.email_source ? emailSourceLabel(lead.email_source) : <span style={{ color: 'var(--th-text-ghost)' }}>—</span>}
                       </td>
                       <td className="px-4 py-3">
                         {lead.icp_score != null ? (
