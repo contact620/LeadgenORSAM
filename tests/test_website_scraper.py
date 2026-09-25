@@ -15,6 +15,7 @@ import asyncio
 import requests
 from unittest.mock import patch
 
+from enrichers.google_search import PageFetch
 from scrapers.website_scraper import _scrape_website, scrape_hit_leads
 
 
@@ -113,3 +114,59 @@ def test_scrape_hit_leads_sets_website_unreachable_flag_per_lead():
     assert result[1]["website_text"]
     assert result[2]["website_unreachable"] is False
     assert result[2]["website_text"] == ""
+
+
+# ── Reusing the coherence-check fetch (step 3a') ─────────────────────────────
+
+def test_scrape_hit_leads_reuses_cached_page_fetch_without_a_new_request():
+    """A lead already carrying `_page_fetch` from verify_website must not
+    trigger a second download of the same homepage."""
+    page = PageFetch(
+        url="https://acme.example",
+        html="<html><body>content</body></html>",
+        text="Acme " * 100,
+        title="Acme",
+        unreachable=False,
+    )
+    leads = [{"first_name": "A", "last_name": "B", "website": "https://acme.example",
+              "_page_fetch": page}]
+
+    with patch("scrapers.website_scraper._scrape_website") as mock_scrape:
+        result = _run(scrape_hit_leads(leads))
+
+    mock_scrape.assert_not_called()
+    assert result[0]["website_unreachable"] is False
+    assert "Acme" in result[0]["website_text"]
+    assert result[0]["linkedin_text"] == ""
+
+
+def test_scrape_hit_leads_reuses_cached_unreachable_fetch_without_a_new_request():
+    """An unreachable fetch from the coherence check must also be reused,
+    not retried a second time in the same run."""
+    page = PageFetch(url="https://down.example", unreachable=True)
+    leads = [{"first_name": "A", "last_name": "B", "website": "https://down.example",
+              "_page_fetch": page}]
+
+    with patch("scrapers.website_scraper._scrape_website") as mock_scrape:
+        result = _run(scrape_hit_leads(leads))
+
+    mock_scrape.assert_not_called()
+    assert result[0]["website_unreachable"] is True
+    assert result[0]["website_text"] == ""
+
+
+def test_scrape_hit_leads_fetches_normally_when_no_cached_fetch_present():
+    """A lead coming from a pool created before this change has no
+    `_page_fetch` and must still be scraped the old way."""
+    leads = [{"first_name": "A", "last_name": "B", "website": "https://acme.example"}]
+
+    async def _fake_scrape(url):
+        return "Fresh text " * 20, False
+
+    with patch("scrapers.website_scraper._scrape_website", side_effect=_fake_scrape) as mock_scrape, \
+         patch("scrapers.website_scraper.time.sleep", return_value=None):
+        result = _run(scrape_hit_leads(leads))
+
+    mock_scrape.assert_called_once_with("https://acme.example")
+    assert result[0]["website_unreachable"] is False
+    assert "Fresh text" in result[0]["website_text"]

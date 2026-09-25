@@ -17,6 +17,7 @@ Company website search:
 import logging
 import re
 import time
+from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -195,15 +196,36 @@ def _light_page_text(html: str) -> tuple[str, str]:
     return title, body[:MAX_PAGE_TEXT_CHARS]
 
 
-def verify_website(url: str, company: str) -> CoherenceResult:
+@dataclass(frozen=True)
+class PageFetch:
+    """One homepage fetch, kept for every downstream consumer.
+
+    The coherence check (step 3a') already downloads this page. Contact
+    extraction (step 3d) and evidence collection (step 5) used to download it
+    again — three requests per lead for one document, three chances to be rate
+    limited or to read a different version of the page than the one we scored.
+    """
+    url: str = ""
+    html: str = ""
+    text: str = ""
+    title: str = ""
+    unreachable: bool = False
+
+
+def verify_website(url: str, company: str) -> tuple[CoherenceResult, PageFetch]:
     """
     Cheap homepage fetch to confirm the domain belongs to the prospect's company.
 
     Runs before the hit score so an unrelated site never earns its 10 points.
     A failed fetch is inconclusive, never a rejection.
+
+    Returns the coherence verdict alongside the fetched page so downstream
+    consumers (contact extraction, evidence collection) can reuse it instead
+    of downloading the same homepage again.
     """
     if not url:
-        return CoherenceResult(coherent=True, verified=False, reason="aucun site à vérifier")
+        return (CoherenceResult(coherent=True, verified=False, reason="aucun site à vérifier"),
+                PageFetch())
     try:
         resp = requests.get(
             url,
@@ -212,12 +234,15 @@ def verify_website(url: str, company: str) -> CoherenceResult:
             allow_redirects=True,
         )
         resp.raise_for_status()
-        title, text = _light_page_text(resp.text)
+        html = resp.text
+        title, text = _light_page_text(html)
     except Exception as e:
         logger.debug(f"Light website check failed for {url}: {e}")
-        return CoherenceResult(coherent=True, verified=False, reason="site injoignable")
+        return (CoherenceResult(coherent=True, verified=False, reason="site injoignable"),
+                PageFetch(url=url, unreachable=True))
 
-    return check_site_coherence(company, title, text)
+    return (check_site_coherence(company, title, text),
+            PageFetch(url=url, html=html, text=text, title=title, unreachable=False))
 
 
 # ── Main enrichment logic ──────────────────────────────────────────────────────
@@ -268,7 +293,9 @@ def find_linkedin_and_website(lead: dict) -> dict:
     if company:
         candidate = _find_company_website(company, lead.get("location", ""))
         if candidate:
-            check = verify_website(candidate, company)
+            check, page = verify_website(candidate, company)
+            lead["_page_fetch"] = page
+            lead["website_unreachable"] = page.unreachable
             lead["website_coherent"] = check.coherent
             lead["website_check_reason"] = check.reason
             if check.coherent:

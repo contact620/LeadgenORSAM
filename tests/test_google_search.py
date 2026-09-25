@@ -1,8 +1,10 @@
 from unittest.mock import patch
 
+import requests
+
 import enrichers.google_search as gs
 from api.provider_status import ProviderRegistry
-from enrichers.google_search import _clearbit_domain, _pick_website, enrich_leads_google
+from enrichers.google_search import PageFetch, _clearbit_domain, _pick_website, enrich_leads_google, verify_website
 from processors.coherence import CoherenceResult
 
 
@@ -48,7 +50,6 @@ def test_pick_website_does_not_truncate_domain_names():
 
 
 def test_verify_website_rejects_unrelated_page():
-    from enrichers.google_search import verify_website
     html = "<html><head><title>Rentkasa</title></head><body>" + \
            "Rentkasa propose des locations saisonnieres en Espagne. " * 5 + \
            "</body></html>"
@@ -61,22 +62,19 @@ def test_verify_website_rejects_unrelated_page():
             return None
 
     with patch("enrichers.google_search.requests.get", return_value=_Resp()):
-        result = verify_website("https://rentkasa.com", "Houzing")
+        result, page = verify_website("https://rentkasa.com", "Houzing")
     assert result.coherent is False
 
 
 def test_verify_website_is_inconclusive_when_fetch_fails():
-    from enrichers.google_search import verify_website
     with patch("enrichers.google_search.requests.get", side_effect=OSError("boom")):
-        result = verify_website("https://acme.ma", "Acme")
+        result, page = verify_website("https://acme.ma", "Acme")
     assert result.coherent is True
     assert result.verified is False
 
 
 def test_verify_website_reads_the_whole_page_not_just_the_first_1500_chars():
     """The legal name lives in the footer; the old 1500-char window missed it."""
-    from enrichers.google_search import verify_website
-
     filler = "<p>Nous accompagnons les investisseurs dans leurs projets.</p>" * 60
     html = ("<html><head><title>Accueil</title></head><body>"
             + filler
@@ -91,9 +89,45 @@ def test_verify_website_reads_the_whole_page_not_just_the_first_1500_chars():
             return None
 
     with patch("enrichers.google_search.requests.get", return_value=_Resp()):
-        result = verify_website("https://zenith.ma", "Groupe Zenith Immobilier")
+        result, page = verify_website("https://zenith.ma", "Groupe Zenith Immobilier")
     assert result.coherent is True
     assert result.verified is True
+
+
+def test_verify_website_returns_the_fetched_page(monkeypatch):
+    html = "<html><head><title>Acme Maroc</title></head><body>" + "Acme Maroc " * 40 + "</body></html>"
+
+    class _Resp:
+        text = html
+        def raise_for_status(self): pass
+
+    monkeypatch.setattr("enrichers.google_search.requests.get", lambda *a, **k: _Resp())
+    result, page = verify_website("https://acme.ma", "Acme Maroc")
+
+    assert result.coherent is True
+    assert isinstance(page, PageFetch)
+    assert page.html == html
+    assert page.title == "Acme Maroc"
+    assert page.unreachable is False
+    assert "Acme Maroc" in page.text
+
+
+def test_an_unreachable_site_yields_an_empty_marked_fetch(monkeypatch):
+    def _boom(*a, **k):
+        raise requests.exceptions.ConnectionError("dns")
+
+    monkeypatch.setattr("enrichers.google_search.requests.get", _boom)
+    result, page = verify_website("https://nope.invalid", "Acme")
+
+    assert result.coherent is True and result.verified is False
+    assert page.unreachable is True
+    assert page.html == ""
+
+
+def test_no_url_is_neither_reachable_nor_unreachable():
+    result, page = verify_website("", "Acme")
+    assert page.unreachable is False
+    assert page.html == ""
 
 
 # ── Serper provider health ───────────────────────────────────────────────────

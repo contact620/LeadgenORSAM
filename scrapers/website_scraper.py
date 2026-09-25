@@ -105,6 +105,15 @@ async def scrape_hit_leads(hit_leads: list[dict]) -> list[dict]:
         name = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
         logger.info(f"Scraping hit lead [{i}/{total}]: {name}")
 
+        cached = lead.get("_page_fetch")
+        if cached is not None and (cached.html or cached.unreachable):
+            # Reuse the page fetched during the coherence check rather than
+            # asking the site for the same document a second time.
+            lead["website_text"] = _strip_noise(cached.text)[:MAX_WEBSITE_TEXT]
+            lead["website_unreachable"] = cached.unreachable
+            lead["linkedin_text"] = ""
+            continue
+
         # LinkedIn text — not scraped (risk of account ban), set empty
         lead["linkedin_text"] = ""
 
