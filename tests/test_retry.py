@@ -41,7 +41,7 @@ def test_429_is_quota_exhausted_and_never_retried():
 
     with pytest.raises(QuotaExhausted):
         retry_api_call(fn, max_retries=3, base_delay=0, operation_name="test")
-    assert len(calls) == 1, "un quota épuisé ne doit jamais être réessayé"
+    assert len(calls) == 1, "an exhausted quota must never be retried"
 
 
 def test_402_is_quota_exhausted():
