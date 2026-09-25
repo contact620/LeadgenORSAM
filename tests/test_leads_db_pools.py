@@ -85,3 +85,28 @@ def test_pending_quota_are_counted():
         _lead(email_status="pending_quota"), _lead(email_status="valid_nominatif"),
     ])
     assert leads_db.count_pending_quota(pool_id) == 1
+
+
+def test_update_cascade_columns_writes_pending_quota_without_marking_enriched():
+    """The only write path to a pool row is mark_leads_enriched, and it is
+    never called for pending_quota leads (enriched must stay 0 so they
+    resurface). update_cascade_columns is the other route: it must land
+    email_status on the row without touching enriched/enrich_data."""
+    pool_id = leads_db.create_pool("P", "url", "job-1", [
+        _lead(company="Fort", prescore=90, email_status="valid_nominatif", email=None),
+        _lead(company="EnAttente", prescore=10, email_status=None, email=None),
+    ])
+    waiting_id = next(
+        l["id"] for l in leads_db.get_pool_leads(pool_id) if l["company"] == "EnAttente"
+    )
+
+    leads_db.update_cascade_columns(
+        [waiting_id], {waiting_id: {"email_status": "pending_quota"}},
+    )
+
+    row = next(l for l in leads_db.get_pool_leads(pool_id) if l["id"] == waiting_id)
+    assert row["email_status"] == "pending_quota"
+    assert row["enriched"] is False
+
+    batch = leads_db.get_pool_leads(pool_id, only_unenriched=True, limit=2)
+    assert batch[0]["company"] == "EnAttente"

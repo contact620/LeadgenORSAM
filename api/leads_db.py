@@ -421,6 +421,33 @@ def mark_leads_enriched(pool_id: str, lead_ids: list[int], enrich_job_id: str, e
         con.execute("UPDATE pool_meta SET enriched_leads = ? WHERE pool_id = ?", (enriched_count, pool_id))
 
 
+def update_cascade_columns(lead_ids: list[int], data_map: dict[int, dict]) -> None:
+    """Write cascade outcome columns for leads without marking them enriched.
+
+    pending_quota leads must never go through mark_leads_enriched: setting
+    enriched=1 would drop them from get_pool_leads(only_unenriched=True) and
+    they would never resurface for the batch after the monthly reset (§10).
+    But mark_leads_enriched is the only path that writes CASCADE_POOL_COLUMNS
+    (email_status in particular), so without this helper a pending lead's row
+    keeps email_status = NULL forever: the "pending_quota sorts first" ORDER
+    BY in get_pool_leads can never match it, and count_pending_quota() stays
+    at 0 no matter how many leads are actually waiting on a reset.
+    """
+    with _conn() as con:
+        _migrate_lead_pool(con)
+        for lid in lead_ids:
+            data = data_map.get(lid, {})
+            updates = {col: data[col] for col in CASCADE_POOL_COLUMNS if col in data}
+            if not updates:
+                continue
+            values = [
+                (None if v is None else int(bool(v))) if col in _CASCADE_BOOL_COLUMNS else v
+                for col, v in updates.items()
+            ]
+            set_clause = ", ".join(f"{col} = ?" for col in updates)
+            con.execute(f"UPDATE lead_pool SET {set_clause} WHERE id = ?", (*values, lid))
+
+
 def delete_pool(pool_id: str) -> bool:
     with _conn() as con:
         con.execute("DELETE FROM lead_pool WHERE pool_id = ?", (pool_id,))

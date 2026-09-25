@@ -1033,7 +1033,9 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
 
         # Batch selected by descending pre-score; pending_quota leads from a
         # previous reset sort first (see api.leads_db.get_pool_leads).
-        from api.leads_db import CASCADE_POOL_COLUMNS, get_pool_leads, mark_leads_enriched
+        from api.leads_db import (
+            CASCADE_POOL_COLUMNS, get_pool_leads, mark_leads_enriched, update_cascade_columns,
+        )
         batch = get_pool_leads(pool_id, only_unenriched=True, limit=batch_size)
         if not batch:
             raise RuntimeError("Aucun lead non-enrichi dans ce pool.")
@@ -1097,6 +1099,17 @@ def _run_enrich_only_sync(job_id: str, pool_id: str, batch_size: int,
             enrich_data[lead["id"]] = payload
         if finalized:
             mark_leads_enriched(pool_id, [l["id"] for l in finalized], job_id, enrich_data)
+
+        # pending_quota leads must reach their pool row too, or their status
+        # never leaves this run's in-memory list: the next enrich batch would
+        # read email_status = NULL for them and lose the requeue-first order
+        # (see update_cascade_columns' docstring).
+        if pending_leads:
+            pending_data = {
+                lead["id"]: {k: lead.get(k) for k in CASCADE_POOL_COLUMNS if k in lead}
+                for lead in pending_leads
+            }
+            update_cascade_columns([l["id"] for l in pending_leads], pending_data)
 
         leads = reachable_leads + unreachable_leads + pending_leads
 
