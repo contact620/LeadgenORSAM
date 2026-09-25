@@ -7,6 +7,7 @@ so the quality of this module decides how much of a 50-credit month survives.
 """
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
@@ -56,6 +57,19 @@ _WEBMAIL_DOMAINS = frozenset({
     "sfr.fr", "laposte.net", "menara.ma", "iam.net.ma",
 })
 
+# Words that precede "at" in ordinary prose. The bracketed masking forms
+# ([at], (at)) are unambiguous, but a bare " at " is far more often English
+# or French text than an obfuscated address — "find out more at acme.com"
+# must not become more@acme.com. A fabricated address is worse than a
+# missing one: it is classified, enters the cascade, spends a paid
+# verification, and on a catch-all domain is accepted as a real contact.
+_PROSE_BEFORE_AT = frozenset({
+    "more", "out", "here", "us", "now", "back", "look", "available",
+    "based", "located", "arriving", "starting", "us", "home", "online",
+    "nous", "ici", "plus", "situe", "situes", "situee", "basee", "bases",
+    "disponible", "disponibles", "retrouvez", "retrouvez-nous", "rendez",
+})
+
 
 @dataclass(frozen=True)
 class ExtractedEmail:
@@ -101,10 +115,36 @@ def _is_plausible(address: str) -> bool:
     return True
 
 
+def _strip_accents(word: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", word)
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def _bare_at_replacement(match: re.Match) -> str:
+    """Decide whether one bare " word at domain" occurrence is a real mailbox.
+
+    Unlike the bracketed forms, a bare " at " has no unambiguous masking
+    intent — it is legitimate English/French prose far more often than an
+    obfuscated address. Reject the rewrite (return the match unchanged) when
+    the word preceding "at" is known prose, is a single character, or ends in
+    a hyphen — all signs of a fragment rather than a real local part.
+    """
+    local = match.group(1)
+    normalized = _strip_accents(local).lower()
+    if normalized in _PROSE_BEFORE_AT or len(local) == 1 or local.endswith("-"):
+        return match.group(0)
+    return f"{local}@"
+
+
 def _unmask(text: str) -> str:
     """Rewrite [at] / (at) / " at " and their dot equivalents into a real address."""
     unmasked = re.sub(r"\s*[\[\(]\s*at\s*[\]\)]\s*", "@", text, flags=re.IGNORECASE)
-    unmasked = re.sub(r"\s+at\s+(?=[A-Za-z0-9.\-]+\.[A-Za-z]{2,})", "@", unmasked, flags=re.IGNORECASE)
+    unmasked = re.sub(
+        r"([A-Za-z0-9._%+\-]+)\s+at\s+(?=[A-Za-z0-9.\-]+\.[A-Za-z]{2,})",
+        _bare_at_replacement,
+        unmasked,
+        flags=re.IGNORECASE,
+    )
     unmasked = re.sub(r"\s*[\[\(]\s*dot\s*[\]\)]\s*", ".", unmasked, flags=re.IGNORECASE)
     return re.sub(r"\s+dot\s+", ".", unmasked, flags=re.IGNORECASE)
 

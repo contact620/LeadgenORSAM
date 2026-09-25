@@ -142,3 +142,36 @@ def test_masked_form_does_not_fire_on_unrelated_text():
     containing "at" near a domain-looking token must not be rewritten into an
     address that was never there."""
     assert _values("<p>Come chat with the acme.ma team at the fair.</p>") == set()
+
+
+# ── Bare " at " must not fabricate addresses from ordinary prose ───────────
+#
+# The bracketed masking forms ([at], (at)) are unambiguous. A bare " at " is
+# not: it is far more often English or French prose than an obfuscated
+# address. A fabricated address is worse than a missing one — it gets
+# classified, enters the cascade, spends a paid verification, and on a
+# catch-all domain is accepted outright as a real contact.
+
+def test_bare_at_does_not_fabricate_from_english_prose():
+    assert _values("<p>Find out more at acme.com</p>", "https://acme.com/about") == set()
+
+
+def test_bare_at_does_not_fabricate_from_french_prose_based():
+    assert _values("<p>Nous sommes basés at casablanca.ma</p>", "https://casablanca.ma/about") == set()
+
+
+def test_bare_at_does_not_fabricate_a_fragment_from_french_prose():
+    """The old regex captured only the tail of "basés" (the accent breaks the
+    email-local-part character class), fabricating "s@casablanca.ma"."""
+    assert "s@casablanca.ma" not in _values(
+        "<p>Nous sommes basés at casablanca.ma</p>", "https://casablanca.ma/about"
+    )
+
+
+def test_bare_at_does_not_fabricate_from_french_imperative():
+    assert _values("<p>Retrouvez-nous at atlas.ma</p>", "https://atlas.ma/about") == set()
+
+
+def test_bare_at_still_recovers_a_real_masked_address():
+    """The existing, legitimate use case must keep working."""
+    assert "karim@acme.ma" in _values("<p>Contact : karim at acme.ma</p>")
