@@ -235,3 +235,29 @@ def test_storing_twice_replaces_rather_than_duplicates():
     quota_db.cache_store("Karim", "El Amrani", "acme.ma", "prospeo", {"email": "k@acme.ma"})
     hit = quota_db.cache_lookup("Karim", "El Amrani", "acme.ma", "prospeo")
     assert hit["result"]["email"] == "k@acme.ma"
+
+
+def test_hyphenated_and_dotted_domains_are_distinct():
+    """groupe-atlas.ma and groupe.atlas.ma must not collide in the cache.
+    A hyphenated domain and a subdomain of an unrelated company would share one key
+    if normalize_name were used, returning the wrong contact."""
+    quota_db.cache_store("Karim", "El Amrani", "groupe-atlas.ma", "prospeo",
+                         {"email": "k@groupe-atlas.ma"})
+    # Lookup for the subdomain must be a miss
+    assert quota_db.cache_lookup("Karim", "El Amrani", "groupe.atlas.ma", "prospeo") is None
+
+
+def test_normalize_domain_folds_case_and_strips_www():
+    """normalize_domain handles case folding, www. prefix removal, and whitespace."""
+    quota_db.cache_store("Karim", "El Amrani", "  WWW.Acme.MA ", "prospeo",
+                         {"email": "k@acme.ma"})
+    # Lookup with the normalized form must hit
+    hit = quota_db.cache_lookup("Karim", "El Amrani", "acme.ma", "prospeo")
+    assert hit is not None
+    assert hit["result"]["email"] == "k@acme.ma"
+
+
+def test_accents_on_names_still_fold():
+    """Verify that accent folding on names still works after domain normalization changes."""
+    quota_db.cache_store("Aïcha", "Benîtez", "acme.ma", "prospeo", {"email": "a@acme.ma"})
+    assert quota_db.cache_lookup("Aicha", "Benitez", "acme.ma", "prospeo") is not None

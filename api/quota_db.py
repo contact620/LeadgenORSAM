@@ -1,5 +1,5 @@
 """
-Per-provider quota accounting.
+Per-provider quota accounting and email lookup cache.
 
 The pipeline runs entirely on free tiers: 50 to 100 lookups a month across
 three providers. A counter that drifts above the provider's real balance
@@ -7,6 +7,10 @@ spends credits the run does not have and fails mid-cascade; one that drifts
 below leaves paid-for lookups unused. Both are silent, so the provider's own
 number always wins (see sync_remaining) and the local counter only moves on a
 result the provider actually billed.
+
+The email lookup cache prevents paying twice for the same question: a 90-day
+TTL-backed store maps (first, last, domain, provider) to result payloads or
+None. Both quota and cache are per-provider spend bookkeeping and belong here.
 """
 import json
 import os
@@ -142,52 +146,6 @@ def sync_remaining(provider: str, remaining: float, reset_date: Optional[str]) -
         )
 
 
-def normalize_name(value: str) -> str:
-    """Lowercase, strip accents and punctuation. Shared by cache keys so that
-    "Aïcha" and "Aicha" never pay for the same lookup twice."""
-    if not value:
-        return ""
-    decomposed = unicodedata.normalize("NFKD", str(value))
-    deaccented = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return _NON_WORD_RE.sub(" ", deaccented.lower()).strip()
-
-
-def cache_lookup(first: str, last: str, domain: str, provider: str) -> Optional[dict]:
-    """Return {"result": <payload or None>} on a fresh hit, None on a miss.
-
-    The two-level shape matters: a cached miss is a hit on the cache (we asked,
-    the provider said no) and must not trigger another paid call, while None
-    means we never asked.
-    """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=CACHE_TTL_DAYS)).isoformat()
-    with _conn() as con:
-        row = con.execute(
-            """SELECT result FROM email_lookup_cache
-               WHERE first_name = ? AND last_name = ? AND domain = ?
-                 AND provider = ? AND looked_up_at >= ?""",
-            (normalize_name(first), normalize_name(last),
-             normalize_name(domain), provider, cutoff),
-        ).fetchone()
-    if row is None:
-        return None
-    return {"result": json.loads(row["result"]) if row["result"] else None}
-
-
-def cache_store(first: str, last: str, domain: str, provider: str,
-                result: Optional[dict]) -> None:
-    with _conn() as con:
-        con.execute(
-            """INSERT INTO email_lookup_cache
-               (first_name, last_name, domain, provider, result, looked_up_at)
-               VALUES (?, ?, ?, ?, ?, ?)
-               ON CONFLICT(first_name, last_name, domain, provider) DO UPDATE SET
-                 result = excluded.result, looked_up_at = excluded.looked_up_at""",
-            (normalize_name(first), normalize_name(last), normalize_name(domain),
-             provider, json.dumps(result, ensure_ascii=False) if result else None,
-             datetime.now(timezone.utc).isoformat()),
-        )
-
-
 def _next_month(today: date) -> date:
     return date(today.year + (today.month == 12), (today.month % 12) + 1, 1)
 
@@ -219,4 +177,66 @@ def apply_monthly_reset(provider: str, today: Optional[date] = None) -> None:
                SET remaining = ?, consumed = 0, reset_date = ?
                WHERE provider = ?""",
             (allocation + carried, _next_month(today).isoformat(), provider),
+        )
+
+
+# ── Email lookup cache ────────────────────────────────────────────────────────
+
+
+def normalize_name(value: str) -> str:
+    """Lowercase, strip accents and punctuation. Shared by cache keys so that
+    "Aïcha" and "Aicha" never pay for the same lookup twice."""
+    if not value:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", str(value))
+    deaccented = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return _NON_WORD_RE.sub(" ", deaccented.lower()).strip()
+
+
+def normalize_domain(value: str) -> str:
+    """Fold a domain to a stable cache key.
+
+    Deliberately NOT normalize_name. That function collapses every run of
+    non-alphanumeric characters to a single space, so "groupe-atlas.ma" and
+    "groupe.atlas.ma" — a hyphenated domain and a subdomain of an unrelated
+    company — would share one key. The cache would then hand one company's
+    address back for the other's lookup, and a wrong contact in the export is
+    worse than a wasted credit: the operator cannot tell it is wrong.
+    """
+    return (value or "").strip().lower().removeprefix("www.")
+
+
+def cache_lookup(first: str, last: str, domain: str, provider: str) -> Optional[dict]:
+    """Return {"result": <payload or None>} on a fresh hit, None on a miss.
+
+    The two-level shape matters: a cached miss is a hit on the cache (we asked,
+    the provider said no) and must not trigger another paid call, while None
+    means we never asked.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=CACHE_TTL_DAYS)).isoformat()
+    with _conn() as con:
+        row = con.execute(
+            """SELECT result FROM email_lookup_cache
+               WHERE first_name = ? AND last_name = ? AND domain = ?
+                 AND provider = ? AND looked_up_at >= ?""",
+            (normalize_name(first), normalize_name(last),
+             normalize_domain(domain), provider, cutoff),
+        ).fetchone()
+    if row is None:
+        return None
+    return {"result": json.loads(row["result"]) if row["result"] else None}
+
+
+def cache_store(first: str, last: str, domain: str, provider: str,
+                result: Optional[dict]) -> None:
+    with _conn() as con:
+        con.execute(
+            """INSERT INTO email_lookup_cache
+               (first_name, last_name, domain, provider, result, looked_up_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(first_name, last_name, domain, provider) DO UPDATE SET
+                 result = excluded.result, looked_up_at = excluded.looked_up_at""",
+            (normalize_name(first), normalize_name(last), normalize_domain(domain),
+             provider, json.dumps(result, ensure_ascii=False) if result is not None else None,
+             datetime.now(timezone.utc).isoformat()),
         )
