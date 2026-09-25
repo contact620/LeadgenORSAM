@@ -68,6 +68,24 @@ def test_222_is_retryable():
         retry_api_call(fn, max_retries=0, base_delay=0, operation_name="test")
 
 
+def test_quota_exhausted_raised_directly_is_never_retried():
+    """Client code raises QuotaExhausted itself after parsing the provider's
+    own error payload (Prospeo, GetProspect, Hunter all do this), rather than
+    relying on requests.exceptions.HTTPError. That path fell into the generic
+    `except Exception` branch and was retried with full backoff — up to 7s of
+    dead sleep per lead per provider at the real base_delay=1.0 — which also
+    contradicts QuotaExhausted's own docstring: never retried."""
+    calls = []
+
+    def fn():
+        calls.append(1)
+        raise QuotaExhausted("prospeo: INSUFFICIENT_CREDITS")
+
+    with pytest.raises(QuotaExhausted):
+        retry_api_call(fn, max_retries=3, base_delay=0.1, operation_name="test")
+    assert len(calls) == 1, "a directly-raised QuotaExhausted must never be retried"
+
+
 def test_retryable_failure_is_actually_retried_then_succeeds():
     attempts = []
 

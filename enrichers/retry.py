@@ -53,6 +53,9 @@ def retry_api_call(
     - On 429/402 (quota exhausted): raise QuotaExhausted immediately, never retried
     - On 403 (rate limited): raise RateLimited, retried with backoff
     - On 408, 222, or 5xx: raise RetryableRemoteFailure, retried with backoff
+    - A QuotaExhausted or AuthError raised directly by fn() (client code that
+      parsed the provider's own error payload, rather than going through
+      requests.exceptions.HTTPError) is re-raised immediately, never retried
     - Returns the result of fn() on success
     - Raises the last exception on exhaustion
     """
@@ -60,7 +63,14 @@ def retry_api_call(
     for attempt in range(max_retries + 1):
         try:
             return fn()
-        except AuthError:
+        except (AuthError, QuotaExhausted):
+            # Both are raised directly by client code that already parsed the
+            # provider's own error payload (all three providers do this).
+            # Retrying either is dead time: an exhausted quota will not come
+            # back within this run, and a bad key will not fix itself between
+            # attempts. RateLimited and RetryableRemoteFailure stay out of
+            # this branch on purpose — those are transient by definition and
+            # retrying them is the whole point of this function.
             raise
         except requests.exceptions.HTTPError as e:
             resp = e.response
