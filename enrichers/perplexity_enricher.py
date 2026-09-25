@@ -95,7 +95,9 @@ def _call_perplexity(lead: dict, enrich_instructions: str = "") -> tuple[Optiona
     def _do_request():
         resp = requests.post(PERPLEXITY_API_URL, json=payload, headers=headers, timeout=60)
 
-        if resp.status_code in (401, 403):
+        # Only 401 signals a credential problem. 403 is a throughput ceiling,
+        # not auth — it should be retried with backoff, not disable the provider.
+        if resp.status_code == 401:
             raise AuthError(f"Perplexity auth failed (HTTP {resp.status_code})")
 
         resp.raise_for_status()

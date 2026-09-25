@@ -48,3 +48,38 @@ def test_search_prompt_requires_an_iso_date_per_signal():
     """_months_between (processors/icp_scorer.py) expects "YYYY-MM"; a signal
     the model dates in prose can never be recognised as recent."""
     assert "AAAA-MM" in px.SEARCH_PROMPT
+
+
+# ── HTTP 403 handling (task 2 fix) ─────────────────────────────────────────
+
+def test_403_response_does_not_disable_provider():
+    """HTTP 403 is rate limiting, not auth. It must not set _perplexity_disabled
+    so that subsequent leads still attempt enrichment."""
+    _reset_state()
+    with patch("enrichers.perplexity_enricher.config.PERPLEXITY_API_KEY", "key"), \
+         patch("enrichers.perplexity_enricher.requests.post") as mock_post:
+        resp = MagicMock()
+        resp.status_code = 403
+        resp.raise_for_status.side_effect = Exception("403 Not Found")
+        mock_post.return_value = resp
+
+        result = _call_perplexity(_lead())
+
+    assert result == (None, None, None), "403 should degrade gracefully"
+    assert px._perplexity_disabled is False, "403 must not disable the provider"
+
+
+def test_401_response_disables_provider():
+    """HTTP 401 is auth failure. It must set _perplexity_disabled so no further
+    leads are attempted."""
+    _reset_state()
+    with patch("enrichers.perplexity_enricher.config.PERPLEXITY_API_KEY", "key"), \
+         patch("enrichers.perplexity_enricher.requests.post") as mock_post:
+        resp = MagicMock()
+        resp.status_code = 401
+        mock_post.return_value = resp
+
+        result = _call_perplexity(_lead())
+
+    assert result == (None, None, None), "401 should degrade gracefully"
+    assert px._perplexity_disabled is True, "401 must disable the provider"
