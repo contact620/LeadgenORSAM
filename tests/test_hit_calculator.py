@@ -1,5 +1,4 @@
-import config
-from processors.hit_calculator import calculate_hit_score
+from processors.hit_calculator import SCORE_LINKEDIN, SCORE_WEBSITE, calculate_hit_score
 
 
 def test_incoherent_website_does_not_earn_points():
@@ -14,7 +13,7 @@ def test_incoherent_website_does_not_earn_points():
         "website_coherent": False,
     }
     calculate_hit_score(lead)
-    assert lead["hit_score"] == config.SCORE_LINKEDIN
+    assert lead["hit_score"] == SCORE_LINKEDIN
 
 
 def test_coherent_website_earns_points():
@@ -26,11 +25,11 @@ def test_coherent_website_earns_points():
         "website_coherent": True,
     }
     calculate_hit_score(lead)
-    assert lead["hit_score"] == config.SCORE_LINKEDIN + config.SCORE_WEBSITE
+    assert lead["hit_score"] == SCORE_LINKEDIN + SCORE_WEBSITE
 
 
 def test_website_without_coherence_flag_still_earns_points():
     # Backward compatibility with pools scraped before this change
     lead = {"email": None, "linkedin_url": None, "phone": None, "website": "https://acme.ma"}
     calculate_hit_score(lead)
-    assert lead["hit_score"] == config.SCORE_WEBSITE
+    assert lead["hit_score"] == SCORE_WEBSITE

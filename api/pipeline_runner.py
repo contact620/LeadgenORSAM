@@ -81,7 +81,7 @@ STEP_WEIGHTS = {1: 0.05, 2: 0.18, 3: 0.22, 4: 0.05, 5: 0.25, 6: 0.13, 7: 0.05, 8
 STEP_NAMES = {
     1: "Input Apollo URL",
     2: "Scraping Apollo",
-    3: "Enrichissement (Google + Dropcontact + Hunter)",
+    3: "Enrichissement (Google + Hunter)",
     4: "Calcul du taux de hit",
     5: "Collecte de preuves (site + Perplexity)",
     6: "Extraction de faits sourcés",
@@ -92,7 +92,7 @@ STEP_NAMES = {
 # Patterns to detect which step a log message belongs to
 STEP_PATTERNS = [
     (2, re.compile(r"Step 2|Scraping Apollo|apollo|page \d+", re.I)),
-    (3, re.compile(r"Step 3|Google enrichment|Dropcontact|dropcontact|batch \d+|Hunter\.io|email verification", re.I)),
+    (3, re.compile(r"Step 3|Google enrichment|batch \d+|Hunter\.io|email verification", re.I)),
     (4, re.compile(r"Step 4|hit score|Hit score complete", re.I)),
     (5, re.compile(r"Step 5|Evidence|Perplexity|Scraping hit lead", re.I)),
     (6, re.compile(r"Step 6|Fact extraction", re.I)),
@@ -179,7 +179,6 @@ class _QueueLogHandler(logging.Handler):
 
 # Providers whose degradation changes how the run's numbers should be read.
 _PROVIDER_LABELS = {
-    "dropcontact": "Dropcontact (emails/téléphones)",
     "hunter": "Hunter.io (vérification des emails)",
     "serper": "Serper (recherche LinkedIn)",
     "website": "Scraping des sites web",
@@ -310,13 +309,11 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
 
         # Reset enricher state from any previous run
         from enrichers.google_search import _reset_state as _reset_google
-        from enrichers.dropcontact import _reset_state as _reset_dc
         from enrichers.hunter_verifier import _reset_state as _reset_hunter
         from enrichers.perplexity_enricher import _reset_state as _reset_perplexity
         from enrichers.fact_extractor import _reset_state as _reset_facts
         from enrichers.angle_writer import _reset_state as _reset_angles
         _reset_google()
-        _reset_dc()
         _reset_hunter()
         _reset_perplexity()
         _reset_facts()
@@ -343,22 +340,11 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
 
         linkedin_count = sum(1 for l in leads if l.get("linkedin_url"))
         website_count = sum(1 for l in leads if l.get("website"))
+        email_count = sum(1 for l in leads if l.get("email"))
         handler.set_explicit_progress(
             3, 0.5,
             f"Google terminé — {linkedin_count}/{len(leads)} LinkedIn, "
-            f"{website_count}/{len(leads)} sites web. Lancement Dropcontact..."
-        )
-
-        # ── Step 3b: Dropcontact enrichment ───────────────────────────────────
-        from enrichers.dropcontact import enrich_leads_dropcontact
-        leads = enrich_leads_dropcontact(leads, registry=registry)
-
-        email_count = sum(1 for l in leads if l.get("email"))
-        phone_count = sum(1 for l in leads if l.get("phone"))
-        handler.set_explicit_progress(
-            3, 0.75,
-            f"Dropcontact terminé — {email_count}/{len(leads)} emails, "
-            f"{phone_count}/{len(leads)} téléphones. Vérification Hunter.io..."
+            f"{website_count}/{len(leads)} sites web. Vérification Hunter.io..."
         )
 
         # ── Step 3c: Hunter.io email verification ─────────────────────────────
@@ -695,10 +681,8 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
         registry = ProviderRegistry()
 
         from enrichers.google_search import _reset_state as _reset_google
-        from enrichers.dropcontact import _reset_state as _reset_dc
         from enrichers.hunter_verifier import _reset_state as _reset_hunter
         _reset_google()
-        _reset_dc()
         _reset_hunter()
 
         new_loop = _asyncio.new_event_loop()
@@ -717,12 +701,7 @@ def _run_scrape_only_sync(job_id: str, url: str, max_leads: int, pool_name: str,
         handler.set_explicit_progress(3, 0.0, "Enrichissement Google...")
         from enrichers.google_search import enrich_leads_google
         leads = enrich_leads_google(leads, registry=registry)
-        handler.set_explicit_progress(3, 0.4, "Google terminé. Lancement Dropcontact...")
-
-        # Step 3b: Dropcontact
-        from enrichers.dropcontact import enrich_leads_dropcontact
-        leads = enrich_leads_dropcontact(leads, registry=registry)
-        handler.set_explicit_progress(3, 0.75, "Dropcontact terminé. Vérification Hunter.io...")
+        handler.set_explicit_progress(3, 0.4, "Google terminé. Vérification Hunter.io...")
 
         # Step 3c: Hunter.io email verification
         from enrichers.hunter_verifier import enrich_leads_hunter

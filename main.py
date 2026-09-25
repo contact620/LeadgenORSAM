@@ -4,7 +4,7 @@ ORSAM — B2B Lead Generation Pipeline
 Pipeline en 8 étapes :
   1. Input Apollo URL          (CLI arg)
   2. Scraping Apollo            (Playwright headless)
-  3. Enrichissement multi-sources  (Google Search + Dropcontact + Hunter.io)
+  3. Enrichissement multi-sources  (Google Search + Hunter.io)
   4. Calcul du taux de hit     (score 0-100, seuil 50)
   5. Collecte de preuves        (site web + Perplexity, hit leads uniquement)
   6. Extraction de faits sourcés (Claude, à partir des preuves collectées)
@@ -35,14 +35,12 @@ import config
 from api.provider_status import ProviderFailure, ProviderRegistry
 from scrapers.apollo_scraper import scrape_apollo
 from enrichers.google_search import enrich_leads_google
-from enrichers.dropcontact import enrich_leads_dropcontact
 from enrichers.hunter_verifier import enrich_leads_hunter
 from processors.hit_calculator import score_all_leads
 from lead_schema import CSV_COLUMNS
 
 # How each provider is named to the operator in the CLI summary.
 PROVIDER_LABELS = {
-    "dropcontact": "Dropcontact (emails/téléphones)",
     "hunter": "Hunter.io (vérification des emails)",
     "serper": "Serper (recherche LinkedIn)",
     "website": "Scraping des sites web",
@@ -172,10 +170,6 @@ async def run_pipeline(args):
     # ── Step 3a: Google enrichment ────────────────────────────────────────────
     logger.info("Step 3a — Google enrichment (LinkedIn + website)...")
     leads = enrich_leads_google(leads, registry=registry)
-
-    # ── Step 3b: Dropcontact enrichment ───────────────────────────────────────
-    logger.info("Step 3b — Dropcontact enrichment (email + phone)...")
-    leads = enrich_leads_dropcontact(leads, registry=registry)
 
     # ── Step 3c: Hunter.io email verification ─────────────────────────────────
     logger.info("Step 3c — Hunter.io email verification...")

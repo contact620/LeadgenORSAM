@@ -9,7 +9,9 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 # Providers whose failure invalidates the run's core deliverable.
-CRITICAL_PROVIDERS = frozenset({"dropcontact"})
+# Remplacé par PROVIDER_GROUPS en Task 3. Vide dans l'intervalle : plus aucun
+# fournisseur n'est critique à lui seul depuis le retrait de Dropcontact.
+CRITICAL_PROVIDERS = frozenset()
 
 # status values: "ok" | "degraded" | "failed" | "skipped"
 # For a provider in CRITICAL_PROVIDERS, both "failed" and "degraded" mark the

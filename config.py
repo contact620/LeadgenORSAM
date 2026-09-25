@@ -7,7 +7,6 @@ load_dotenv()
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
-DROPCONTACT_API_KEY = os.getenv("DROPCONTACT_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
 HUNTER_API_KEY = os.getenv("HUNTER_API_KEY", "")
@@ -23,19 +22,12 @@ OUTPUT_DIR = "output"
 # ── Behavior ──────────────────────────────────────────────────────────────────
 REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "2.0"))
 HIT_THRESHOLD = int(os.getenv("HIT_THRESHOLD", "50"))
-DROPCONTACT_BATCH_SIZE = int(os.getenv("DROPCONTACT_BATCH_SIZE", "50"))
 MAX_LEADS = int(os.getenv("MAX_LEADS", "500"))
 # Run browser visibly — bypasses Apollo anti-bot detection (recommended: False = visible)
 APOLLO_HEADLESS = os.getenv("APOLLO_HEADLESS", "false").lower() == "true"
 
 # ── ICP Scoring ──────────────────────────────────────────────────────────────
 ICP_BATCH_SIZE = int(os.getenv("ICP_BATCH_SIZE", "5"))
-
-# ── Hit Score Weights ─────────────────────────────────────────────────────────
-SCORE_EMAIL = 40
-SCORE_LINKEDIN = 30
-SCORE_PHONE = 20
-SCORE_WEBSITE = 10
 
 
 def load_cookies(path: str) -> list[dict]:
@@ -73,7 +65,6 @@ def _is_placeholder(value: str) -> bool:
 
 def validate_config():
     missing = []
-    # DROPCONTACT_API_KEY is optional — email/phone enrichment is skipped if absent
     if _is_placeholder(ANTHROPIC_API_KEY):
         missing.append("ANTHROPIC_API_KEY")
     if missing:

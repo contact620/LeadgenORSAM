@@ -19,6 +19,15 @@ import config
 
 logger = logging.getLogger(__name__)
 
+# Hit-score weights. Used to live in config.py; Task 1 of the cascade-email-
+# gratuite refactor removed them there as dead configuration (no other module
+# read them), which made this, their sole consumer, their new home. This whole
+# scoring system is replaced by a later task in that same refactor.
+SCORE_EMAIL = 40
+SCORE_LINKEDIN = 30
+SCORE_PHONE = 20
+SCORE_WEBSITE = 10
+
 # Hunter.io status → email score multiplier (applied to SCORE_EMAIL)
 _EMAIL_STATUS_WEIGHTS = {
     "valid": 1.0,
@@ -37,9 +46,9 @@ def _email_points(lead: dict) -> int:
     status = lead.get("email_status")
     if status is None:
         # No verification was run (Hunter disabled or no API key) — fall back to legacy full weight.
-        return config.SCORE_EMAIL
+        return SCORE_EMAIL
     weight = _EMAIL_STATUS_WEIGHTS.get(status, 0.5)
-    return int(round(config.SCORE_EMAIL * weight))
+    return int(round(SCORE_EMAIL * weight))
 
 
 def calculate_hit_score(lead: dict) -> dict:
@@ -50,13 +59,13 @@ def calculate_hit_score(lead: dict) -> dict:
     score = _email_points(lead)
 
     if lead.get("linkedin_url"):
-        score += config.SCORE_LINKEDIN
+        score += SCORE_LINKEDIN
     if lead.get("phone"):
-        score += config.SCORE_PHONE
+        score += SCORE_PHONE
     # A website rejected by the coherence check must not earn points.
     # Absent flag = pool scraped before the check existed -> keep legacy behaviour.
     if lead.get("website") and lead.get("website_coherent") is not False:
-        score += config.SCORE_WEBSITE
+        score += SCORE_WEBSITE
 
     lead["hit_score"] = score
     lead["is_hit"] = score >= config.HIT_THRESHOLD

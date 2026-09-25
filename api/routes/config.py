@@ -20,7 +20,6 @@ _ENV_PATH = os.path.join(_ROOT, ".env")
 
 class ConfigUpdate(BaseModel):
     serper_api_key: Optional[str] = None
-    dropcontact_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     perplexity_api_key: Optional[str] = None
     hunter_api_key: Optional[str] = None
@@ -34,7 +33,6 @@ def get_config():
     # Always reload .env so manual edits are reflected without a server restart
     load_dotenv(_ENV_PATH, override=True)
     pipeline_config.SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
-    pipeline_config.DROPCONTACT_API_KEY = os.getenv("DROPCONTACT_API_KEY", "")
     pipeline_config.ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
     pipeline_config.PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
     pipeline_config.HUNTER_API_KEY = os.getenv("HUNTER_API_KEY", "")
@@ -49,7 +47,6 @@ def get_config():
 
     return {
         "serper_api_key": not _is_placeholder(pipeline_config.SERPER_API_KEY),
-        "dropcontact_api_key": not _is_placeholder(pipeline_config.DROPCONTACT_API_KEY),
         "anthropic_api_key": not _is_placeholder(pipeline_config.ANTHROPIC_API_KEY),
         "perplexity_api_key": not _is_placeholder(pipeline_config.PERPLEXITY_API_KEY),
         "hunter_api_key": not _is_placeholder(pipeline_config.HUNTER_API_KEY),
@@ -69,8 +66,6 @@ def update_config(body: ConfigUpdate):
     updates: dict[str, str] = {}
     if body.serper_api_key is not None:
         updates["SERPER_API_KEY"] = body.serper_api_key
-    if body.dropcontact_api_key is not None:
-        updates["DROPCONTACT_API_KEY"] = body.dropcontact_api_key
     if body.anthropic_api_key is not None:
         updates["ANTHROPIC_API_KEY"] = body.anthropic_api_key
     if body.perplexity_api_key is not None:
@@ -90,7 +85,6 @@ def update_config(body: ConfigUpdate):
     # Reload into os.environ and update the live module variables
     load_dotenv(_ENV_PATH, override=True)
     pipeline_config.SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
-    pipeline_config.DROPCONTACT_API_KEY = os.getenv("DROPCONTACT_API_KEY", "")
     pipeline_config.ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
     pipeline_config.PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
     pipeline_config.HUNTER_API_KEY = os.getenv("HUNTER_API_KEY", "")
