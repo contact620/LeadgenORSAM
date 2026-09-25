@@ -73,7 +73,14 @@ class ProviderRegistry:
         active = [o for o in reported if o.status != "skipped"]
         if not active:
             return "skipped"
-        if all(o.status in ("failed", "degraded") for o in active):
+        # "failed" requires the whole group to have been heard from. The
+        # cascade stops at its first success, so unreported members are the
+        # normal case, not an anomaly: concluding total failure from the one
+        # member that happened to report would make that member load-bearing
+        # again — exactly what removing Dropcontact was meant to end.
+        if len(reported) == len(members) and all(
+            o.status in ("failed", "degraded") for o in active
+        ):
             return "failed"
         if any(o.status in ("failed", "degraded") for o in active):
             return "degraded"

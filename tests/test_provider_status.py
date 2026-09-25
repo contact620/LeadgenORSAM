@@ -29,7 +29,7 @@ def test_degraded_optional_provider_is_not_critical():
     assert reg.has_critical_failure() is False
 
 
-def test_degraded_critical_provider_flags_the_run():
+def test_degraded_critical_provider_does_not_flag_the_run():
     # One member of a critical group being degraded does not trigger has_critical_failure()
     # because the group is still partially functional (other members are not down).
     reg = ProviderRegistry()
@@ -134,3 +134,55 @@ def test_impaired_groups_lists_only_what_is_worth_reporting():
     for name in members[1:]:
         registry.record(StepOutcome(name, "ok", None, 5))
     assert registry.impaired_groups() == {"email": "degraded"}
+
+
+def test_one_member_degraded_others_unreported_is_degraded_not_failed():
+    """The cascade stops at first success: unreported members are normal, not
+    an anomaly. A single degraded report must not flip the group to failed."""
+    registry = ProviderRegistry()
+    registry.record(StepOutcome("prospeo", "degraded", "quota épuisé", 5))
+    assert registry.group_status("email") == "degraded"
+    assert registry.has_critical_failure() is False
+
+
+def test_one_member_failed_others_unreported_is_degraded_not_failed():
+    """Even with one member completely failed, the group is degraded (not
+    failed) until all members have been tried and failed."""
+    registry = ProviderRegistry()
+    registry.record(StepOutcome("prospeo", "failed", "clé rejetée", 5))
+    assert registry.group_status("email") == "degraded"
+    assert registry.has_critical_failure() is False
+
+
+def test_all_three_members_recorded_as_failed_is_failed():
+    """The group is failed only when every member has reported and all are down."""
+    registry = ProviderRegistry()
+    for name in PROVIDER_GROUPS["email"]:
+        registry.record(StepOutcome(name, "failed", "quota épuisé", 10))
+    assert registry.group_status("email") == "failed"
+    assert registry.has_critical_failure() is True
+
+
+def test_two_members_failed_one_skipped_is_failed():
+    """A skipped member counts as 'heard from' but is excluded from the
+    active verdict. If all active members are down, the group is failed."""
+    registry = ProviderRegistry()
+    members = sorted(PROVIDER_GROUPS["email"])
+    registry.record(StepOutcome(members[0], "failed", "clé rejetée", 10))
+    registry.record(StepOutcome(members[1], "failed", "clé rejetée", 10))
+    registry.record(StepOutcome(members[2], "skipped", "clé API absente", 0))
+    assert registry.group_status("email") == "failed"
+    assert registry.has_critical_failure() is True
+
+
+def test_group_status_unknown_group_returns_skipped():
+    """Calling group_status on a group not in PROVIDER_GROUPS returns skipped."""
+    registry = ProviderRegistry()
+    assert registry.group_status("nonexistent") == "skipped"
+
+
+def test_group_status_empty_registry_returns_skipped():
+    """Calling group_status with no recorded outcomes returns skipped."""
+    registry = ProviderRegistry()
+    assert registry.group_status("email") == "skipped"
+    assert registry.has_critical_failure() is False

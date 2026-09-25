@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 import enrichers.hunter_verifier as hv
-from api.provider_status import ProviderRegistry, StepOutcome
+from api.provider_status import ProviderRegistry
 from enrichers.hunter_verifier import enrich_leads_hunter
 
 
@@ -82,9 +82,9 @@ def test_hunter_is_not_a_critical_provider():
     """A degraded Hunter inflates scores but still produces a usable file:
     it must not abort the run the way Dropcontact does.
 
-    In the group-based system, the email group degrades when one member fails,
-    but only fails when all members are down. Here, Hunter is degraded but
-    the cascade continues with other providers, so has_critical_failure() is False.
+    In the group-based system, unreported members are the normal case (the
+    cascade stops at first success). A single degraded member does not fail
+    the group, so has_critical_failure() is False.
     """
     hv._reset_state()
     reg = ProviderRegistry()
@@ -101,6 +101,4 @@ def test_hunter_is_not_a_critical_provider():
         finally:
             hv._reset_state()
 
-    # Simulate cascade: Hunter degraded, but Prospeo or GetProspect would succeed
-    reg.record(StepOutcome("prospeo", "ok", None, 2))
     assert reg.has_critical_failure() is False
