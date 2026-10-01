@@ -17,13 +17,66 @@ def _mock_response():
     resp.status_code = 200
     resp.raise_for_status = lambda: None
     resp.json.return_value = {
-        "choices": [{"message": {"content": json.dumps({
-            "digital_maturity": "Score: 5/10 — présence correcte.",
-            "estimated_budget": "50 employés — CA non communiqué",
-            "business_signals": "- [2026-05] Levée de fonds de 2M€",
-        })}}]
+        "object": "response",
+        "output": [
+            {"type": "search_results", "results": []},
+            {"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": json.dumps({
+                    "digital_maturity": "Score: 5/10 — présence correcte.",
+                    "estimated_budget": "50 employés — CA non communiqué",
+                    "business_signals": "- [2026-05] Levée de fonds de 2M€",
+                })},
+            ]},
+        ],
     }
     return resp
+
+
+# ── Agent API (Sonar chat completions retired: HTTP 403 since 2026-09) ───────
+
+def test_calls_agent_api_responses_endpoint():
+    """/chat/completions now answers 403 "chat_completions_not_available" for
+    sonar — every lead came back empty and capped at evidence_level="weak"."""
+    _reset_state()
+    with patch("enrichers.perplexity_enricher.config.PERPLEXITY_API_KEY", "key"),          patch("enrichers.perplexity_enricher.requests.post",
+               return_value=_mock_response()) as mock_post:
+        _call_perplexity(_lead())
+    assert mock_post.call_args.args[0] == "https://api.perplexity.ai/v1/responses"
+    payload = mock_post.call_args.kwargs["json"]
+    assert "messages" not in payload and "model" not in payload
+    assert isinstance(payload["input"], str) and "Acme" in payload["input"]
+
+
+def test_parses_message_text_from_agent_output():
+    _reset_state()
+    with patch("enrichers.perplexity_enricher.config.PERPLEXITY_API_KEY", "key"),          patch("enrichers.perplexity_enricher.requests.post",
+               return_value=_mock_response()):
+        maturity, budget, signals = _call_perplexity(_lead())
+    assert maturity == "Score: 5/10 — présence correcte."
+    assert budget == "50 employés — CA non communiqué"
+    assert signals == "- [2026-05] Levée de fonds de 2M€"
+
+
+def test_retired_endpoint_403_disables_provider():
+    """A 403 whose payload says the endpoint is gone will not recover within
+    the run. Leaving the provider enabled keeps "perplexity" in the expected
+    sources and caps every lead at "weak" — which silently suppresses every
+    commercial angle."""
+    _reset_state()
+    with patch("enrichers.perplexity_enricher.config.PERPLEXITY_API_KEY", "key"),          patch("enrichers.perplexity_enricher.requests.post") as mock_post:
+        resp = MagicMock()
+        resp.status_code = 403
+        resp.json.return_value = {"error": {
+            "message": "Sonar is now the Agent API.",
+            "type": "chat_completions_not_available", "code": 403,
+        }}
+        mock_post.return_value = resp
+
+        result = _call_perplexity(_lead())
+
+    assert result == (None, None, None)
+    assert px._perplexity_disabled is True
+    assert mock_post.call_count == 1, "a retired endpoint must not be retried"
 
 
 # ── Recency filter (the actual cause of "Aucun signal récent identifié") ─────
@@ -41,7 +94,8 @@ def test_search_recency_filter_is_year_not_month():
                return_value=_mock_response()) as mock_post:
         _call_perplexity(_lead())
     payload = mock_post.call_args.kwargs["json"]
-    assert payload["search_recency_filter"] == "year"
+    web_search = next(t for t in payload["tools"] if t["type"] == "web_search")
+    assert web_search["filters"]["search_recency_filter"] == "year"
 
 
 def test_search_prompt_requires_an_iso_date_per_signal():

@@ -1,5 +1,5 @@
 """
-Step 5c — Perplexity Sonar enrichment (hit leads only).
+Step 5c — Perplexity enrichment (Agent API) (hit leads only).
 
 For each hit lead, calls Perplexity Sonar API to research:
   1. digital_maturity: score and assessment of the company's digital presence
@@ -21,7 +21,13 @@ from enrichers.retry import retry_api_call, AuthError
 
 logger = logging.getLogger(__name__)
 
-PERPLEXITY_API_URL = "https://api.perplexity.ai/chat/completions"
+# Agent API. Sonar's /chat/completions answers 403
+# "chat_completions_not_available" since 2026-09.
+PERPLEXITY_API_URL = "https://api.perplexity.ai/v1/responses"
+
+# 403 payload types meaning the endpoint itself is gone, not a throughput
+# ceiling: retrying them is dead time and they will not recover within a run.
+_RETIRED_ENDPOINT_ERRORS = frozenset({"chat_completions_not_available"})
 
 SEARCH_PROMPT = """Tu es un analyste B2B. Pour l'entreprise ci-dessous, recherche et structure les informations suivantes.
 
@@ -41,6 +47,33 @@ Recherche et retourne un JSON avec exactement ces 3 clés :
 Réponds UNIQUEMENT en JSON brut avec ces 3 clés. Pas de markdown, pas d'explication."""
 
 _perplexity_disabled = False
+
+
+class PerplexityUnavailable(AuthError):
+    """The API refuses the request for good (retired endpoint). Subclasses
+    AuthError so retry_api_call re-raises it immediately, unretried."""
+
+
+def _error_type(resp) -> Optional[str]:
+    try:
+        body = resp.json()
+    except Exception:
+        return None
+    if not isinstance(body, dict) or not isinstance(body.get("error"), dict):
+        return None
+    return body["error"].get("type")
+
+
+def _output_text(data: dict) -> str:
+    """Concatenate the assistant message text from an Agent API response."""
+    parts = []
+    for item in data.get("output") or []:
+        if item.get("type") != "message":
+            continue
+        for block in item.get("content") or []:
+            if block.get("type") == "output_text" and block.get("text"):
+                parts.append(block["text"])
+    return "".join(parts).strip()
 
 
 def _reset_state():
@@ -77,10 +110,8 @@ def _call_perplexity(lead: dict, enrich_instructions: str = "") -> tuple[Optiona
     }
 
     payload = {
-        "model": "sonar",
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
+        "preset": "fast",
+        "input": prompt,
         # "year", not "month": the prompt above asks for signals from the
         # last 6 months, and a 1-month recency filter silently cut off
         # everything older than that — the actual cause of "Aucun signal
@@ -89,21 +120,29 @@ def _call_perplexity(lead: dict, enrich_instructions: str = "") -> tuple[Optiona
         # this filter; a wider filter here is safe because it only widens
         # what Perplexity is allowed to search, not what the scorer counts
         # as recent.
-        "search_recency_filter": "year",
+        "tools": [{
+            "type": "web_search",
+            "filters": {"search_recency_filter": "year"},
+        }],
     }
 
     def _do_request():
         resp = requests.post(PERPLEXITY_API_URL, json=payload, headers=headers, timeout=60)
 
-        # Only 401 signals a credential problem. 403 is a throughput ceiling,
-        # not auth — it should be retried with backoff, not disable the provider.
+        # 401 is a credential problem. A bare 403 is treated as a throughput
+        # ceiling and retried; only a 403 whose payload says the endpoint is
+        # retired disables the provider.
         if resp.status_code == 401:
             raise AuthError(f"Perplexity auth failed (HTTP {resp.status_code})")
+        if resp.status_code == 403 and _error_type(resp) in _RETIRED_ENDPOINT_ERRORS:
+            raise PerplexityUnavailable(
+                f"Perplexity endpoint unavailable (HTTP 403, {_error_type(resp)})"
+            )
 
         resp.raise_for_status()
         data = resp.json()
 
-        content = data["choices"][0]["message"]["content"].strip()
+        content = _output_text(data)
         logger.debug(f"Raw Perplexity response for {company}: {content[:200]!r}")
 
         # Parse JSON from response (handle markdown code blocks)
@@ -123,7 +162,7 @@ def _call_perplexity(lead: dict, enrich_instructions: str = "") -> tuple[Optiona
         return retry_api_call(_do_request, max_retries=2, operation_name=f"Perplexity ({company})")
     except AuthError as e:
         _perplexity_disabled = True
-        logger.error(f"Perplexity auth failed — disabled for this run: {e}")
+        logger.error(f"Perplexity unusable — disabled for this run: {e}")
         return None, None, None
     except json.JSONDecodeError as e:
         logger.warning(f"Perplexity returned non-JSON for {company}: {e}")
