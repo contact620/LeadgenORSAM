@@ -90,6 +90,22 @@ def title_names_a_company(page_title: str) -> bool:
     return bool(significant_tokens(page_title) - PAGE_TITLE_NOISE)
 
 
+# Words that mean a named person stands behind the business: a professional
+# practice, a shop, a family firm, a group. A company name that carries one and
+# also repeats the contact's name ("Cabinet Jean Dupont", "Maison Ahmed
+# Benali") is an eponymous SME, which is the normal shape of the target market,
+# not a legal entity wrongly listed as a person. Legal forms count too: the
+# firm is registered, but somebody founded it. Accents are already stripped by
+# normalize_tokens.
+PERSON_BEHIND_BUSINESS_WORDS = frozenset({
+    "cabinet", "maison", "maisons", "etablissement", "etablissements", "ets",
+    "ste", "boutique", "atelier", "ateliers", "agence", "bureau", "etude",
+    "studio", "institut", "salon", "clinique", "pharmacie", "laboratoire",
+    "restaurant", "cafe", "hotel", "garage", "librairie", "boulangerie",
+    "patisserie", "groupe", "group", "holding", "fils", "freres", "associes",
+    "cie", "co",
+}) | LEGAL_SUFFIXES
+
 _VOWELS = frozenset("aeiouy")
 
 
@@ -106,17 +122,23 @@ def name_looks_like_a_company(full_name: str, company: str = "") -> bool:
     Two signals, both cheap and both conservative:
 
       1. Containment, not overlap: every significant token of the name already
-         appears in the company's. A real person's surname is almost never a
-         subset of their employer's name; a truncated company name always is.
-         Catches "Les Marrakech".
+         appears in the company's, and nothing in the company name suggests a
+         person behind it. A real person's surname is almost never a subset of
+         their employer's name; a truncated company name always is. Catches
+         "Les Marrakech". It stays silent as soon as the company carries a word
+         from PERSON_BEHIND_BUSINESS_WORDS ("Cabinet Jean Dupont", "Maison
+         Ahmed Benali", "Dupont SARL"): in the target market an eponymous
+         practice or shop is the ordinary case, and flagging it used to switch
+         off the paid person search for a real person.
       2. A vowel-less token of three letters or more — an acronym, which no
          Latin-script given name or surname carries. Catches "Delta Btp" and
          "Stpv Voire", whose company cells share no usable token with them
          ("STPV" is a single acronym, and "Delta Btp" shares nothing with the
          spelled-out legal name).
 
-    The result is a flag, never a deletion: a lead wrongly flagged still ships
-    with everything else it has.
+    The result is a flag, but enrichers/perplexity_enricher uses it as a gate,
+    so a false positive costs a real person their enrichment. Hence the
+    asymmetry: when in doubt, do not flag.
     """
     name_tokens = significant_tokens(full_name)
     if not name_tokens:
@@ -126,7 +148,9 @@ def name_looks_like_a_company(full_name: str, company: str = "") -> bool:
         return True
 
     company_tokens = significant_tokens(company)
-    return bool(company_tokens) and name_tokens <= company_tokens
+    if not company_tokens or not name_tokens <= company_tokens:
+        return False
+    return not (normalize_tokens(company) & PERSON_BEHIND_BUSINESS_WORDS)
 
 
 def names_match(candidate: str, reference: str, min_overlap: float = 0.5) -> bool:

@@ -49,6 +49,35 @@ def test_a_real_location_is_kept_verbatim(raw):
     assert plausible_location(raw) == raw
 
 
+@pytest.mark.parametrize("raw", [
+    # Spellings and cities that were in neither table: Apollo writes
+    # "Marrakesh", and the mid-size Moroccan cities sit outside the big five.
+    "Marrakesh", "Mohammedia", "Settat", "El Jadida", "Nador", "Fez", "Meknès",
+    "Kénitra", "Oujda", "Tétouan",
+    # Francophone and wider Africa, still inside the ICP perimeter.
+    "Sousse", "Bouaké", "Kumasi", "Lubumbashi", "Alexandria", "Pretoria",
+])
+def test_a_real_city_outside_the_original_lists_is_kept(raw):
+    """The test above only fed values that were in the whitelist, so it could
+    not notice a city missing from it: a one-word cell not recognised here was
+    stored as None and the prescore location axis fell back to 0."""
+    assert plausible_location(raw) == raw
+
+
+@pytest.mark.parametrize("raw,zone", [
+    ("Marrakesh", "maroc"), ("Mohammedia", "maroc"), ("Settat", "maroc"),
+    ("El Jadida", "maroc"), ("Nador", "maroc"),
+    ("Sousse", "afrique_francophone"), ("Bouaké", "afrique_francophone"),
+    ("Kumasi", "reste_afrique"),
+])
+def test_a_kept_city_reaches_a_prescore_zone(raw, zone):
+    """Keeping the cell is half the fix: the prescore reads the same text, and
+    a city that survives the filter but maps to no zone still scores 0."""
+    from processors.icp_rules import load_rules
+
+    assert load_rules().country_zone(raw) == zone
+
+
 def test_an_unrecognised_word_without_a_comma_is_dropped():
     """None is the safe answer: every consumer treats an absent location as
     unknown, none of them survives a wrong one."""

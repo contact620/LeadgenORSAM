@@ -76,6 +76,7 @@ def test_duplicates_across_formats_collapse():
     ("Casablanca, Maroc", "MA"), ("Morocco", "MA"), ("Rabat", "MA"),
     ("Abidjan, Côte d'Ivoire", "CI"), ("Dakar, Senegal", "SN"),
     ("Paris, France", "FR"), ("", None), ("Zzz", None),
+    ("Mohammedia", "MA"), ("Marrakesh", "MA"), ("El Jadida", "MA"),
 ])
 def test_country_hint_resolves_locations(location, code):
     assert country_hint(location) == code

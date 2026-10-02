@@ -74,6 +74,9 @@ def test_the_three_companies_of_the_demo_are_flagged(full_name, company):
 
 
 @pytest.mark.parametrize("full_name,company", [
+    ("Jean Dupont", "Cabinet Jean Dupont"),
+    ("Ahmed Benali", "Maison Ahmed Benali"),
+    ("Karim Alaoui", "Etablissements Karim Alaoui SARL"),
     ("Salma Hili", "POWER FLEET"),
     ("Rachid Attabi", "SkyCrew Recruitment, Training & Employment"),
     ("Abdelmounaim Badri", "Ecole Hôtelière Privée de Marrakech -EHPM"),
@@ -81,6 +84,9 @@ def test_the_three_companies_of_the_demo_are_flagged(full_name, company):
     ("Bilal Mohamed", "INEV"),
 ])
 def test_the_real_people_of_the_demo_are_not_flagged(full_name, company):
+    """Includes the eponymous practices and shops that are the ordinary shape
+    of an SME in Morocco and francophone Africa: the flag gates the paid person
+    search, so flagging them silently cost a real person their enrichment."""
     assert name_looks_like_a_company(full_name, company) is False
 
 

@@ -27,6 +27,12 @@ COUNTRY_HINTS: dict[str, str] = {
     "maroc": "MA", "morocco": "MA", "casablanca": "MA", "rabat": "MA",
     "marrakech": "MA", "tanger": "MA", "tangier": "MA", "fes": "MA",
     "agadir": "MA", "kenitra": "MA", "oujda": "MA", "tetouan": "MA",
+    # Mid-size Moroccan cities, and the English spelling Apollo uses for
+    # Marrakech. A location cell often carries only the city.
+    "marrakesh": "MA", "meknes": "MA", "mohammedia": "MA", "settat": "MA",
+    "el jadida": "MA", "nador": "MA", "essaouira": "MA", "ouarzazate": "MA",
+    "khouribga": "MA", "berrechid": "MA", "temara": "MA", "beni mellal": "MA",
+    "laayoune": "MA", "dakhla": "MA",
     "algerie": "DZ", "algeria": "DZ", "alger": "DZ", "algiers": "DZ", "oran": "DZ",
     "tunisie": "TN", "tunisia": "TN", "tunis": "TN", "sfax": "TN",
     "senegal": "SN", "dakar": "SN",
