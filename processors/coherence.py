@@ -9,6 +9,7 @@ enough to accept a domain.
 import re
 import unicodedata
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 # Legal forms carry no identifying signal.
 LEGAL_SUFFIXES = frozenset({
@@ -24,6 +25,15 @@ GENERIC_TOKENS = frozenset({
     "services", "service", "solutions", "solution", "digital",
     "international", "partners", "associes", "company", "agency",
     "agence", "systems", "global", "france", "maroc", "africa",
+    # Cities, on the same footing as the countries just above: a place name
+    # identifies a market, not a company. Added 2026-10-02 after unescaping
+    # HTML entities (see enrichers/google_search._light_page_text) shrank the
+    # token count of a title and let "Ecole Hôtelière Privée de Marrakech"
+    # match "UPM – Université Privée de Marrakech" on {privee, marrakech}
+    # alone — two schools of the same city, and the wrong domain.
+    "marrakech", "casablanca", "rabat", "tanger", "tangier", "agadir",
+    "fes", "kenitra", "oujda", "tetouan", "dakar", "abidjan", "tunis",
+    "alger", "paris", "lyon", "marseille", "bruxelles", "geneve",
 })
 
 # Words that make up whole homepage titles and name no company. A title built
@@ -142,6 +152,50 @@ def names_match(candidate: str, reference: str, min_overlap: float = 0.5) -> boo
     return overlap >= min_overlap
 
 
+# A company token must be at least this long to mean anything inside a domain.
+# Below it, "btp" or "sas" would match half the web.
+MIN_DOMAIN_TOKEN_CHARS = 4
+
+
+def primary_domain_label(url_or_domain: str) -> str:
+    """Return the registrable label of a URL or domain, letters and digits only.
+
+    "https://www.skycrewinfo.com/" -> "skycrewinfo", "upm.ac.ma" -> "upm".
+    """
+    raw = (url_or_domain or "").strip()
+    if not raw:
+        return ""
+    netloc = urlparse(raw if "//" in raw else f"//{raw}").netloc or raw
+    label = strip_www(netloc).split(":")[0].split("/")[0].split(".")[0]
+    return re.sub(r"[^a-z0-9]", "", _deaccent(label).lower())
+
+
+def domain_echoes_company(company: str, url_or_domain: str) -> bool:
+    """True when the candidate domain itself spells out part of the company name.
+
+    This is the one piece of evidence check_site_coherence never looked at. A
+    site whose homepage title says "SkyCrew — Fly with us" shares one token
+    out of four with "SkyCrew Recruitment, Training & Employment", below the
+    overlap threshold, so the domain skycrewinfo.com was rejected and the lead
+    lost the website it already had in hand. The domain name is a deliberate
+    statement of identity by the company, and here it says "skycrew".
+
+    Deliberately asymmetric: it can only accept, never reject, and it demands a
+    company token of at least MIN_DOMAIN_TOKEN_CHARS characters contained in
+    the registrable label. That is what keeps it from rescuing the three
+    genuinely wrong domains of the same export — notfit.io for "MTCom",
+    northfloridafair.com for "INEV", upm.ac.ma for "Ecole Hôtelière Privée de
+    Marrakech -EHPM".
+    """
+    label = primary_domain_label(url_or_domain)
+    if len(label) < MIN_DOMAIN_TOKEN_CHARS:
+        return False
+    return any(
+        len(token) >= MIN_DOMAIN_TOKEN_CHARS and token in label
+        for token in significant_tokens(company)
+    )
+
+
 MIN_TEXT_FOR_VERDICT = 80  # characters below which the page proves nothing
 
 
@@ -157,6 +211,7 @@ def check_site_coherence(
     company: str,
     page_title: str,
     page_text: str,
+    url: str = "",
 ) -> CoherenceResult:
     """
     Decide whether a scraped page really belongs to the prospect's company.
@@ -167,6 +222,12 @@ def check_site_coherence(
     generic — returns coherent=True with verified=False. A rejection costs
     the lead its website, ten hit-score points and any chance of reaching
     evidence_level="sufficient", so it must be earned, not assumed.
+
+    `url` adds a second way to *accept* and never a way to reject: a domain
+    that spells out the company's name is positive evidence the page is theirs
+    even when the homepage text never writes the name out (see
+    domain_echoes_company). It is checked only once the text has already failed
+    to find the name, so it widens nothing that was already passing.
 
     Country-contradiction checking was deliberately removed (2026-08-10): it
     produced hard rejects on the client's core market, e.g. a Paris firm
@@ -179,8 +240,13 @@ def check_site_coherence(
     prospects, which matter far more for this pipeline. Do not reintroduce a
     country check without re-reading this note.
     """
+    domain_echo = domain_echoes_company(company, url)
+
     combined = f"{page_title} {page_text}".strip()
     if len(combined) < MIN_TEXT_FOR_VERDICT:
+        if domain_echo:
+            return CoherenceResult(coherent=True, verified=True,
+                                   reason="le domaine reprend le nom de l'entreprise")
         return CoherenceResult(coherent=True, verified=False,
                                reason="page trop pauvre pour conclure")
 
@@ -199,6 +265,12 @@ def check_site_coherence(
     )
 
     if not name_found:
+        # The page never writes the name out, but the domain does. That is the
+        # company's own statement of identity, and it outranks a homepage
+        # headline written for visitors ("Fly with us").
+        if domain_echo:
+            return CoherenceResult(coherent=True, verified=True,
+                                   reason="le domaine reprend le nom de l'entreprise")
         # A name with nothing discriminating in it cannot ground a rejection:
         # "Groupe Conseil" absent from a page proves nothing about whose page
         # it is.

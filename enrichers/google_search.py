@@ -18,6 +18,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from html import unescape as html_unescape
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -191,13 +192,23 @@ def _light_page_text(html: str) -> tuple[str, str]:
     is to recognise a company name wherever it appears on the page, not to
     produce clean text for a fact extractor. Do not merge the two — a name
     that only appears inside an HTML comment must keep counting as found here.
+
+    Entities are unescaped, always after the tags are gone so that an escaped
+    "&lt;script&gt;" never becomes a tag we then fail to strip. Leaving them in
+    was not cosmetic: the title "SkyCrew &#8211; Fly with us" kept "8211" as a
+    token, which inflated the denominator of the overlap ratio and helped push
+    a legitimate domain below the acceptance threshold.
     """
     title_match = _TITLE_RE.search(html)
-    title = _TAG_RE.sub(" ", title_match.group(1)).strip() if title_match else ""
+    title = _TAG_RE.sub(" ", title_match.group(1)) if title_match else ""
+    title = re.sub(r"\s{2,}", " ", html_unescape(title)).strip()
 
     body = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
     body = re.sub(r"<style[^>]*>.*?</style>", " ", body, flags=re.DOTALL | re.IGNORECASE)
     body = _TAG_RE.sub(" ", body)
+    body = html_unescape(body)
+    # Safety net for an entity html.unescape does not know; after unescape so
+    # it only ever sees what is left.
     body = re.sub(r"&[a-zA-Z]+;", " ", body)
     body = re.sub(r"\s{2,}", " ", body).strip()
     return title, body[:MAX_PAGE_TEXT_CHARS]
@@ -248,7 +259,7 @@ def verify_website(url: str, company: str) -> tuple[CoherenceResult, PageFetch]:
         return (CoherenceResult(coherent=True, verified=False, reason="site injoignable"),
                 PageFetch(url=url, unreachable=True))
 
-    return (check_site_coherence(company, title, text),
+    return (check_site_coherence(company, title, text, url=url),
             PageFetch(url=url, html=html, text=text, title=title, unreachable=False))
 
 

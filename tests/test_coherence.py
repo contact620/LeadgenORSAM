@@ -3,8 +3,10 @@ import pytest
 from processors.coherence import (
     CoherenceResult,
     check_site_coherence,
+    domain_echoes_company,
     name_looks_like_a_company,
     names_match,
+    primary_domain_label,
     normalize_tokens,
     significant_tokens,
     strip_www,
@@ -257,3 +259,116 @@ def test_generic_company_name_absent_from_the_page_is_inconclusive_not_rejected(
     assert result.coherent is True
     assert result.verified is False
     assert "générique" in (result.reason or "")
+
+
+# ── The candidate domain as evidence (2026-10-02) ─────────────────────────────
+# The four cases below are the four websites the 2026-09-25 export rejected.
+# Exactly one of them was in fact the right domain.
+
+_SKYCREW_PAGE = (
+    "SkyCrew forme et place des equipages. Nos programmes couvrent la "
+    "formation initiale, la qualification de type et le placement en "
+    "compagnie, au Maroc et a l'international depuis 2016."
+)
+
+
+def test_the_right_domain_is_no_longer_lost_to_a_marketing_headline():
+    """The one true rejection of the demo. "SkyCrew &#8211; Fly with us" shares
+    one token out of four with the company name — below the overlap threshold —
+    so website became None and the whole email cascade never started for a lead
+    whose domain was already in hand."""
+    result = check_site_coherence(
+        company="SkyCrew Recruitment, Training & Employment",
+        page_title="SkyCrew – Fly with us",
+        page_text=_SKYCREW_PAGE,
+        url="https://skycrewinfo.com/",
+    )
+    assert result.coherent is True
+
+
+def test_a_wrong_domain_born_of_a_junk_location_is_still_rejected():
+    """notfit.io came from the query "MTCom Not a fit site officiel"."""
+    result = check_site_coherence(
+        company="MTCom",
+        page_title="NotFit - The Anti-Fitness App",
+        page_text=(
+            "NotFit is the anti-fitness app for people who hate the gym. "
+            "Track nothing, celebrate everything, and keep your streak alive."
+        ),
+        url="https://notfit.io/",
+    )
+    assert result.coherent is False
+
+
+def test_a_wrong_domain_from_the_other_junk_location_is_still_rejected():
+    """northfloridafair.com came from the query "INEV Fair site officiel"."""
+    result = check_site_coherence(
+        company="INEV",
+        page_title="North Florida Fair",
+        page_text=(
+            "The North Florida Fair returns to Tallahassee this November with "
+            "rides, livestock shows, concerts and the midway."
+        ),
+        url="https://www.northfloridafair.com/",
+    )
+    assert result.coherent is False
+
+
+def test_a_plausible_but_different_school_is_still_rejected():
+    """upm.ac.ma is a real Marrakech university — and not the prospect's
+    school. The hardest of the four: same city, same sector, and a short domain
+    label that must not be allowed to echo anything."""
+    result = check_site_coherence(
+        company="Ecole Hôtelière Privée de Marrakech -EHPM",
+        page_title="UPM – Université Privée de Marrakech",
+        page_text=(
+            "L'Université Privée de Marrakech propose des formations en "
+            "ingénierie, management, santé et architecture sur son campus de "
+            "l'avenue Mohammed VI."
+        ),
+        url="https://upm.ac.ma/",
+    )
+    assert result.coherent is False
+
+
+def test_the_domain_path_only_ever_accepts():
+    """Called with no url at all, the verdict is exactly what it was before."""
+    without = check_site_coherence(
+        company="SkyCrew Recruitment, Training & Employment",
+        page_title="SkyCrew – Fly with us",
+        page_text=_SKYCREW_PAGE,
+    )
+    assert without.coherent is False
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("https://www.skycrewinfo.com/", "skycrewinfo"),
+    ("https://upm.ac.ma/", "upm"),
+    ("skycrewinfo.com", "skycrewinfo"),
+    ("https://acme-maroc.ma:8443/contact", "acmemaroc"),
+    ("", ""),
+])
+def test_primary_domain_label(raw, expected):
+    assert primary_domain_label(raw) == expected
+
+
+def test_a_short_domain_label_echoes_nothing():
+    """Three letters match too much of the web to count as evidence."""
+    assert domain_echoes_company("UPM Marrakech", "https://upm.ac.ma/") is False
+
+
+def test_a_generic_company_token_never_echoes():
+    """"Groupe" in groupe-immobilier.ma is not an identification."""
+    assert domain_echoes_company("Groupe Conseil", "https://groupe-conseil2.fr") is False
+
+
+@pytest.mark.parametrize("company,url,expected", [
+    # The four rejections of the 2026-09-25 export, judged on the one piece of
+    # evidence the rule adds. Only the first domain was the right one.
+    ("SkyCrew Recruitment, Training & Employment", "https://skycrewinfo.com/", True),
+    ("MTCom", "https://notfit.io/", False),
+    ("INEV", "https://www.northfloridafair.com/", False),
+    ("Ecole Hôtelière Privée de Marrakech -EHPM", "https://upm.ac.ma/", False),
+])
+def test_domain_echoes_company_on_the_four_demo_cases(company, url, expected):
+    assert domain_echoes_company(company, url) is expected

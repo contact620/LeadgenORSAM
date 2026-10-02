@@ -199,3 +199,28 @@ def test_enrich_leads_google_without_registry_still_works():
     finally:
         for p in patches:
             p.stop()
+
+
+# ── HTML entities (2026-10-02) ────────────────────────────────────────────────
+
+def test_a_numeric_entity_does_not_survive_as_a_token():
+    """"SkyCrew &#8211; Fly with us" used to yield a token "8211", which counted
+    as a word of the title and inflated the denominator of the overlap ratio."""
+    title, text = gs._light_page_text(
+        "<html><head><title>SkyCrew &#8211; Fly with us</title></head>"
+        "<body><p>Formation &amp; placement d&#39;&eacute;quipages</p></body></html>"
+    )
+    assert title == "SkyCrew – Fly with us"
+    assert "8211" not in title
+    assert "8211" not in text
+    assert "Formation & placement d'équipages" in text
+
+
+def test_entities_are_unescaped_after_the_tags_are_stripped():
+    """Order matters: unescaping first would turn an escaped tag into a real
+    one, which the tag stripper has already run past."""
+    _, text = gs._light_page_text(
+        "<html><body>Exemple &lt;script&gt;alert(1)&lt;/script&gt; de code "
+        "cite dans la page</body></html>"
+    )
+    assert "<script>alert(1)</script>" in text
