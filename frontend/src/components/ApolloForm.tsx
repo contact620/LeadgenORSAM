@@ -17,7 +17,10 @@ interface Props {
 export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, onOpenSettings, prefill, services = [] }: Props) {
   const [url, setUrl] = useState('')
   const [maxLeads, setMaxLeads] = useState(defaultMaxLeads ?? 200)
-  const [skipGpt, setSkipGpt] = useState(false)
+  // The UI asks the positive question ("run the AI?"); the API, the Pydantic
+  // model, the history rows and the templates all keep skip_gpt. The two are
+  // bridged at this boundary only — see handleSubmit and the prefill effect.
+  const [runAi, setRunAi] = useState(true)
   const [showConfig, setShowConfig] = useState(false)
   const [health, setHealth] = useState<HealthCheck | null>(null)
   const [selectedServices, setSelectedServices] = useState<string[]>([])
@@ -29,7 +32,7 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
     if (prefill) {
       setUrl(prefill.url)
       setMaxLeads(prefill.max_leads)
-      setSkipGpt(prefill.skip_gpt)
+      setRunAi(!prefill.skip_gpt)
     }
   }, [prefill])
 
@@ -62,7 +65,7 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
     onSubmit({
       url: url.trim(),
       max_leads: maxLeads,
-      skip_gpt: skipGpt,
+      skip_gpt: !runAi,
       enrich_instructions: parts.length > 0 ? parts.join('\n') : undefined,
     })
   }
@@ -70,6 +73,11 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
   const missingKeys = health?.missing_keys ?? []
   const hasIssues = missingKeys.length > 0 || !health?.apollo_cookies
   const isReady = !disabled && url.trim() && isValidApolloUrl(url)
+
+  // Section numbers shift by one when no service list is configured.
+  const hasServices = services.length > 0
+  const stepSignals = hasServices ? 3 : 2
+  const stepAi = hasServices ? 4 : 3
 
   const pipelineSteps = [
     { icon: '🔍', name: 'Scraping Apollo', tool: 'Playwright' },
@@ -178,13 +186,16 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
                     )
                   })}
                 </div>
+                <p className="mt-2 text-xs" style={{ color: 'var(--th-text-faint)' }}>
+                  Oriente les angles commerciaux rédigés par l'IA. Optionnel — laisser vide ne bloque pas la recherche.
+                </p>
               </div>
             )}
 
             {/* Section 3: Signals */}
             <div className="mb-5">
               <div className="flex items-center gap-3 mb-2">
-                <span className="section-number">{services.length > 0 ? '3' : '2'}</span>
+                <span className="section-number">{stepSignals}</span>
                 <label className="text-sm font-semibold" style={{ color: 'var(--th-text-primary)' }}>Signaux à rechercher</label>
               </div>
               <textarea
@@ -195,6 +206,36 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
                 className="surface-input w-full"
                 style={{ padding: '11px 14px', fontSize: '13px', lineHeight: 1.6, resize: 'none', fontFamily: "'DM Sans', sans-serif", fontStyle: 'normal' }}
               />
+              <p className="mt-2 text-xs" style={{ color: 'var(--th-text-faint)' }}>
+                Ce que l'IA doit chercher comme déclencheur (nouveau projet, levée de fonds, recrutement, site obsolète). Optionnel — laisser vide ne bloque pas la recherche.
+              </p>
+            </div>
+
+            {/* Section 4: AI research. This decides whether half the pipeline
+                runs, so it stays in the main form and never moves back under
+                "Paramètres avancés". */}
+            <div className="mb-5">
+              <div className="flex items-center gap-3 mb-2">
+                <span className="section-number">{stepAi}</span>
+                <label className="text-sm font-semibold" style={{ color: 'var(--th-text-primary)' }}>Faire la recherche IA</label>
+              </div>
+              <div className="flex items-center gap-2.5">
+                <div
+                  role="switch" aria-checked={runAi}
+                  onClick={() => !disabled && setRunAi(!runAi)}
+                  className={cn('toggle-track', runAi && 'on')}
+                  style={{ opacity: disabled ? 0.4 : 1 }}
+                >
+                  <div className="toggle-knob" />
+                </div>
+                <span className="text-xs font-medium" style={{ color: runAi ? 'var(--th-success)' : 'var(--th-warning)' }}>
+                  {runAi ? 'Activée' : 'Désactivée'}
+                </span>
+              </div>
+              <p className="mt-2 text-xs" style={{ color: 'var(--th-text-faint)' }}>
+                Collecte de preuves, extraction de faits, scoring ICP et angles commerciaux (étapes 4 à 7).
+                Désactivée, le pipeline s'arrête après les emails et les colonnes IA du CSV restent vides.
+              </p>
             </div>
 
             {/* Advanced toggle */}
@@ -210,8 +251,8 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
             </button>
 
             {showConfig && (
-              <div className="grid grid-cols-2 gap-4 surface-dark mb-5" style={{ padding: 16 }}>
-                <div>
+              <div className="surface-dark mb-5" style={{ padding: 16 }}>
+                <div style={{ maxWidth: 200 }}>
                   <label className="block text-xs font-medium mb-1" style={{ color: 'var(--th-text-tertiary)' }}>Leads max</label>
                   <input
                     type="number" min={1} max={5000} value={maxLeads}
@@ -220,22 +261,6 @@ export function ApolloForm({ onSubmit, disabled, configReady, defaultMaxLeads, o
                     className="surface-input w-full"
                     style={{ padding: '7px 10px', fontSize: 13, borderRadius: 8, opacity: disabled ? 0.4 : 1 }}
                   />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--th-text-tertiary)' }}>Skip IA</label>
-                  <div className="flex items-center gap-2" style={{ height: 34 }}>
-                    <div
-                      role="switch" aria-checked={skipGpt}
-                      onClick={() => !disabled && setSkipGpt(!skipGpt)}
-                      className={cn('toggle-track', skipGpt && 'on')}
-                      style={{ opacity: disabled ? 0.4 : 1 }}
-                    >
-                      <div className="toggle-knob" />
-                    </div>
-                    <span className="text-xs" style={{ color: 'var(--th-text-quaternary)' }}>
-                      {skipGpt ? 'Off' : 'On'}
-                    </span>
-                  </div>
                 </div>
               </div>
             )}
