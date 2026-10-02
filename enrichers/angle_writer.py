@@ -50,9 +50,6 @@ USER_PROMPT_TEMPLATE = """Prospect : {first_name} {last_name}, {job_title} chez 
 Faits vérifiés :
 {facts_json}
 
-Évaluation ICP : {icp_tier} ({icp_score}/100)
-{icp_rationale}
-
 Rédige le JSON demandé."""
 
 _writer_disabled = False
@@ -74,10 +71,27 @@ def _reset_state():
 
 
 def should_write(lead: dict) -> bool:
-    """Only evidenced, non-disqualified leads deserve the token spend."""
-    if lead.get("icp_tier") == "disqualified":
+    """Write for every lead that is not refused and has something to say.
+
+    The ICP score no longer reaches the operator — a written angle replaces it
+    — so it must not gate the writing either. Neither of the two surviving
+    conditions is a grade:
+
+    - ``disqualification_reason`` is a factual refusal ("grand groupe",
+      "secteur exclu", "hors zone géographique", "concurrent direct"), already
+      carried by every branch of processors/icp_scorer.py that refuses a
+      prospect. Nothing to sell to someone we cannot sell to.
+    - ``evidence_level != "none"`` is a floor, not a quality bar. "none" is the
+      state of EVERY lead when extraction fails: fact_extractor returns
+      _EMPTY_FACTS, identite_confirmee is False and compute_evidence_level
+      answers "none". Without this floor an Anthropic outage would produce
+      twenty invented angles instead of twenty empty cells — a silent failure
+      replacing a visible one. "weak" is deliberately allowed through: thin
+      sourced facts make a thin angle, which is a correct outcome.
+    """
+    if lead.get("disqualification_reason"):
         return False
-    return bool(lead.get("evidence_verified"))
+    return (lead.get("evidence_level") or "none") != "none"
 
 
 def _write_one(lead: dict, enrich_instructions: str = "") -> dict:
@@ -102,9 +116,6 @@ def _write_one(lead: dict, enrich_instructions: str = "") -> dict:
         job_title=lead.get("job_title", ""),
         company=lead.get("company", ""),
         facts_json=lead.get("facts_json") or json.dumps(lead.get("facts") or {}, ensure_ascii=False),
-        icp_tier=lead.get("icp_tier", "?"),
-        icp_score=lead.get("icp_score", "?"),
-        icp_rationale=lead.get("icp_rationale", ""),
     )
     name = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
 

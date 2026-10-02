@@ -166,11 +166,34 @@ def test_unsourced_competitor_claim_does_not_disqualify(rules):
         assert result.disqualification_reason is None
 
 
-def test_disqualification_requires_sufficient_evidence(rules):
-    """A weak-evidence lead is never disqualified — we cannot assert the reason."""
+def test_a_weak_lead_is_never_promoted_out_of_cold_by_a_hard_rule(rules):
+    """The TIER still requires sufficient evidence: with the evidence
+    incomplete the score is capped and no ranking verdict is asserted."""
     facts = _facts(effectif={"value": 5000, "source": "perplexity"})
     result = score_lead(facts, "weak", rules, RUN_DATE)
     assert result.icp_tier == "cold"
+    assert result.icp_score <= rules.unverified_score_cap
+    assert result.evidence_verified is False
+
+
+def test_a_weak_lead_still_reports_a_single_fact_refusal(rules):
+    """The REASON is reported at every evidence level, because each rule in
+    disqualification_reason rests on one sourced fact.
+
+    This is what protects enrichers/angle_writer.should_write now that it gates
+    on the reason instead of the score: "weak" clears the writer's evidence
+    floor, so a 5000-employee group used to be handed a commercial angle.
+    """
+    facts = _facts(effectif={"value": 5000, "source": "perplexity"})
+    result = score_lead(facts, "weak", rules, RUN_DATE)
+    assert "grand groupe" in result.disqualification_reason
+    assert "grand groupe" in result.icp_rationale
+
+
+def test_an_unevidenced_lead_with_nothing_against_it_keeps_no_reason(rules):
+    """No fact fires a rule: the lead is merely unqualified, not refused, and
+    must still reach the angle writer."""
+    result = score_lead(_facts(), "weak", rules, RUN_DATE)
     assert result.disqualification_reason is None
 
 

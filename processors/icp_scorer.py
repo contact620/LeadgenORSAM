@@ -143,7 +143,15 @@ def _score_signals(facts: dict, rules: IcpRules, run_date: date) -> tuple[int, i
 
 # ── Disqualification ─────────────────────────────────────────────────────────
 
-def _disqualification_reason(facts: dict, rules: IcpRules) -> Optional[str]:
+def disqualification_reason(facts: dict, rules: IcpRules) -> Optional[str]:
+    """Why these facts refuse the prospect outright, or None.
+
+    Public because the refusal is no longer read only by the tier: now that the
+    ICP score has left the operator's view, enrichers/angle_writer.should_write
+    gates on this reason instead. Every rule here rests on ONE sourced fact
+    (headcount, sector, country), which is why it can be applied outside the
+    evidence gate in score_lead — unlike est_concurrent, see below.
+    """
     headcount = _value(facts.get("effectif"))
     if isinstance(headcount, (int, float)):
         if headcount > rules.size_disqualify_above:
@@ -202,24 +210,38 @@ def score_lead(
     verified = evidence_level == "sufficient"
 
     # 1. Insufficient evidence: cap and fall into cold immediately. No rule
-    #    below this point — including the competitor check — may override
-    #    it, "sourced" competitor claim or not: every verdict must rest on
-    #    evidence we can point to. This used to be checked second, behind an
-    #    unconditional competitor exception; the pilot run disqualified
-    #    Astrak France (a construction-equipment parts distributor) as a
-    #    "concurrent direct" on evidence_level="weak" — exactly the false
-    #    positive this ordering now prevents.
+    #    below this point — including the competitor check — may raise the
+    #    TIER above cold, "sourced" competitor claim or not: every ranking
+    #    verdict must rest on evidence we can point to. This used to be
+    #    checked second, behind an unconditional competitor exception; the
+    #    pilot run disqualified Astrak France (a construction-equipment parts
+    #    distributor) as a "concurrent direct" on evidence_level="weak" —
+    #    exactly the false positive this ordering prevents, and the reason
+    #    est_concurrent stays behind this gate while the single-fact rules of
+    #    disqualification_reason no longer do.
     if not verified:
+        # The TIER stays "cold": with the evidence incomplete the score is
+        # capped and no ranking verdict can be asserted. The REASON, when one
+        # of the single-fact rules fires, is reported all the same — it rests
+        # on a sourced headcount, sector or country, not on the global evidence
+        # level, and enrichers/angle_writer.should_write reads it to refuse
+        # writing. Left at None here, a weak-evidence "grand groupe" of 5000
+        # employees would be handed an angle, since "weak" is above the
+        # writer's evidence floor.
+        reason = disqualification_reason(facts, rules)
+        rationale = (
+            "Preuves insuffisantes pour évaluer ce prospect "
+            f"(niveau de preuve : {evidence_level}). Score plafonné, "
+            "qualification manuelle nécessaire."
+        )
+        if reason:
+            rationale += f" Motif de refus déjà établi : {reason}."
         return IcpResult(
             icp_score=min(raw_score, rules.unverified_score_cap),
             icp_tier="cold",
-            icp_rationale=(
-                "Preuves insuffisantes pour évaluer ce prospect "
-                f"(niveau de preuve : {evidence_level}). Score plafonné, "
-                "qualification manuelle nécessaire."
-            ),
+            icp_rationale=rationale,
             icp_scores_detail=detail_json,
-            disqualification_reason=None,
+            disqualification_reason=reason,
             evidence_verified=False,
         )
 
@@ -239,7 +261,7 @@ def score_lead(
             evidence_verified=True,
         )
 
-    reason = _disqualification_reason(facts, rules)
+    reason = disqualification_reason(facts, rules)
     if reason:
         return IcpResult(
             icp_score=raw_score, icp_tier="disqualified",
