@@ -158,19 +158,36 @@ def test_pool_round_trip_keeps_the_apollo_cells_and_the_company_name_flag(
 
 
 def test_pool_round_trip_keeps_the_verification_provider(tmp_path, monkeypatch):
-    """The enrich-only flow exports from the pool, so a column the pool drops
-    reads as empty in half the exports — email_source is stored for exactly
-    that reason and its companion must be too."""
+    """The provider is written by the cascade, after the pool exists.
+
+    create_pool runs before any cascade, so the value is always None there;
+    the only path that persists it is mark_leads_enriched. The earlier version
+    of this test wrote it through create_pool and passed while the real path
+    lost the data.
+    """
     import api.leads_db as db
 
     monkeypatch.setattr(db, "_DB_PATH", str(tmp_path / "verifier.db"))
     db.init_leads_table()
     pool_id = db.create_pool("test", "url", "job", [
         {"first_name": "Karim", "last_name": "El Amrani", "company": "Acme",
-         "email": "k.elamrani@acme.ma", "email_source": "pattern_verified",
-         "email_verification_provider": "getprospect"},
+         "email": "k.elamrani@acme.ma"},
     ])
-    assert db.get_pool_leads(pool_id)[0]["email_verification_provider"] == "getprospect"
+    lead = db.get_pool_leads(pool_id)[0]
+    assert lead["email_verification_provider"] is None
+
+    db.mark_leads_enriched(pool_id, [lead["id"]], "enrich-job", {
+        lead["id"]: {"email_source": "pattern_verified",
+                     "email_verification_provider": "getprospect"},
+    })
+
+    reread = db.get_pool_leads(pool_id)[0]
+    assert reread["email_verification_provider"] == "getprospect"
+    with db._conn() as con:
+        stored = con.execute(
+            "SELECT email_verification_provider FROM lead_pool WHERE id = ?", (lead["id"],)
+        ).fetchone()[0]
+    assert stored == "getprospect", "the column itself must carry the value, not only enrich_data"
 
 
 def test_pool_round_trip_keeps_unchecked_website_as_unknown(tmp_path, monkeypatch):

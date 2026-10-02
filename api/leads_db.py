@@ -423,6 +423,10 @@ CASCADE_POOL_COLUMNS: tuple[str, ...] = (
     "phone", "phone_type", "phone_source", "whatsapp",
     "facebook_url", "instagram_url", "linkedin_company_url",
     "reachable", "contact_level",
+    # Written by the cascade's verification step, never at pool creation: the
+    # column exists from create_pool onward but is NULL until /api/enrich ran
+    # the cascade, so without this entry every later read of the pool lost it.
+    "email_verification_provider",
 )
 
 _CASCADE_BOOL_COLUMNS = frozenset({"domain_catch_all", "domain_mismatch", "whatsapp", "reachable"})
