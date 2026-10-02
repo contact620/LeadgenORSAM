@@ -1,8 +1,7 @@
 import { X, Briefcase, MapPin, Mail, Phone, Linkedin, Globe, Target, TrendingUp, DollarSign, Activity, Zap, Copy, ExternalLink, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-  CONTACT_LEVEL_ICON, CONTACT_LEVEL_LABEL, CONTACT_LEVEL_STYLE, EVIDENCE_LEVEL_STYLE,
-  TIER_ICON, TIER_STYLE, contactLevelOf, emailSourceLabel, evidenceLabel, tierOf,
+  EVIDENCE_LEVEL_STYLE, TIER_ICON, TIER_STYLE, emailSourceLabel, evidenceLabel, tierOf,
 } from '@/lib/tiers'
 
 function copyToClipboard(text: string, label: string) {
@@ -19,9 +18,7 @@ interface LeadData {
   phone?: string
   linkedin_url?: string
   website?: string
-  // Reachability — a boolean and its best route, never a score.
   reachable?: boolean | null
-  contact_level?: string
   prescore?: number
   // Email acquisition — which branch of the cascade produced this address.
   email_source?: string
@@ -218,20 +215,6 @@ export function LeadDetailModal({ lead, onClose }: Props) {
             <span className="text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pré-score</span>
             <span className="font-mono font-bold text-lg" style={{ color: (lead.prescore ?? 0) >= 30 ? 'var(--th-success)' : 'var(--th-text-quaternary)' }}>{lead.prescore ?? 0}</span>
           </div>
-          {lead.contact_level && (() => {
-            const level = contactLevelOf(lead.contact_level)
-            return (
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Joignabilité</span>
-                <span
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold"
-                  style={CONTACT_LEVEL_STYLE[level]}
-                >
-                  {CONTACT_LEVEL_ICON[level]} {CONTACT_LEVEL_LABEL[level]}
-                </span>
-              </div>
-            )
-          })()}
           {lead.icp_score != null && (
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>ICP</span>

@@ -3,10 +3,7 @@ import { Download, Search, ExternalLink, ChevronLeft, ChevronRight, SearchX, Arr
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { getDownloadUrl, type Lead } from '@/lib/api'
-import {
-  CONTACT_LEVEL_ICON, CONTACT_LEVEL_LABEL, CONTACT_LEVEL_STYLE, TIER_ICON, TIER_STYLE,
-  contactLevelOf, emailSourceLabel, evidenceLabel, tierOf,
-} from '@/lib/tiers'
+import { TIER_ICON, TIER_STYLE, emailSourceLabel, evidenceLabel, tierOf } from '@/lib/tiers'
 import { LeadDetailModal } from './LeadDetailModal'
 
 // Visual style for each email_status value the cascade can produce
@@ -238,7 +235,6 @@ export function ResultsTable({ leads, jobId }: Props) {
                   { key: null, label: 'Téléphone' },
                   { key: null, label: 'LinkedIn' },
                   { key: 'prescore' as SortKey, label: 'Pré-score' },
-                  { key: null, label: 'Joignable' },
                   { key: null, label: 'Source' },
                   { key: 'icp' as SortKey, label: 'ICP' },
                   { key: null, label: 'Angle IA' },
@@ -264,7 +260,7 @@ export function ResultsTable({ leads, jobId }: Props) {
             <tbody>
               {pageLeads.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="px-4 py-12 text-center">
+                  <td colSpan={10} className="px-4 py-12 text-center">
                     <SearchX className="w-10 h-10 mx-auto mb-3" style={{ color: 'var(--th-text-ghost)' }} />
                     <p className="text-sm" style={{ color: 'var(--th-text-faint)' }}>Aucun lead trouvé</p>
                   </td>
@@ -367,20 +363,6 @@ export function ResultsTable({ leads, jobId }: Props) {
                           </div>
                           <span className="font-mono text-xs" style={{ color: 'var(--th-text-tertiary)' }}>{lead.prescore ?? 0}</span>
                         </div>
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        {(() => {
-                          const level = contactLevelOf(lead.contact_level)
-                          return (
-                            <span
-                              title={CONTACT_LEVEL_LABEL[level]}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium"
-                              style={CONTACT_LEVEL_STYLE[level]}
-                            >
-                              {CONTACT_LEVEL_ICON[level]} {CONTACT_LEVEL_LABEL[level]}
-                            </span>
-                          )
-                        })()}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-xs" style={{ color: 'var(--th-text-tertiary)' }}>
                         {lead.email_source ? emailSourceLabel(lead.email_source) : <span style={{ color: 'var(--th-text-ghost)' }}>—</span>}
