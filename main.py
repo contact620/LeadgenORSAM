@@ -42,6 +42,7 @@ from enrichers.google_search import enrich_leads_google
 from processors.hit_calculator import score_all_leads
 from processors.prescore import apply_prescores, rank_for_spending
 from lead_schema import CSV_COLUMNS
+from processors.icp_scorer import verdict_tier
 
 # How each provider is named to the operator in the CLI summary.
 PROVIDER_LABELS = {
@@ -140,12 +141,12 @@ def print_summary(all_leads: list[dict], hit_leads: list[dict], nohit_leads: lis
         print(f"  LinkedIn URLs found    : {linkedins} ({100*linkedins//total}%)")
         print(f"  Phones found           : {phones} ({100*phones//total}%)")
         print(f"  Websites found         : {websites} ({100*websites//total}%)")
-        icp_hot = sum(1 for l in all_leads if l.get("icp_tier") == "hot")
-        icp_warm = sum(1 for l in all_leads if l.get("icp_tier") == "warm")
-        icp_cold = sum(1 for l in all_leads if l.get("icp_tier") == "cold")
+        icp_hot = sum(1 for l in all_leads if verdict_tier(l) == "hot")
+        icp_warm = sum(1 for l in all_leads if verdict_tier(l) == "warm")
+        icp_cold = sum(1 for l in all_leads if verdict_tier(l) == "cold")
         if icp_hot or icp_warm or icp_cold:
             print(f"  ICP Hot / Warm / Cold   : {icp_hot} / {icp_warm} / {icp_cold}")
-        icp_disq = sum(1 for l in all_leads if l.get("icp_tier") == "disqualified")
+        icp_disq = sum(1 for l in all_leads if verdict_tier(l) == "disqualified")
         if icp_disq:
             print(f"  ICP disqualifiés        : {icp_disq}")
     if registry is not None:

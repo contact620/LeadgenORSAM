@@ -20,6 +20,21 @@ from processors.icp_rules import IcpRules, load_rules
 logger = logging.getLogger(__name__)
 
 
+def verdict_tier(lead: dict) -> Optional[str]:
+    """The tier a lead is reported under: a factual refusal always wins.
+
+    score_lead keeps a weak-evidence lead in "cold" even when a single-fact
+    rule refused it, because no ranking verdict (hot/warm) can be asserted
+    without evidence — but it still records the reason, and the reason is what
+    the operator reads ("Disqualifié" in the modal). Counting that same lead as
+    "faible pertinence" in the run summary contradicted the screen, so every
+    reporting count goes through here. The scoring itself is untouched.
+    """
+    if lead.get("disqualification_reason"):
+        return "disqualified"
+    return lead.get("icp_tier")
+
+
 @dataclass
 class IcpResult:
     icp_score: int

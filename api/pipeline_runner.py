@@ -29,6 +29,7 @@ from api.models import JobResult, JobStats, ProgressEvent
 # happens before the function body reaches its own imports.
 from api.provider_status import ProviderFailure, ProviderRegistry, StepOutcome
 from lead_schema import CSV_COLUMNS, ENRICH_FIELDS
+from processors.icp_scorer import verdict_tier
 
 # ── In-memory job store ────────────────────────────────────────────────────────
 _jobs: dict[str, JobResult] = {}
@@ -355,10 +356,10 @@ def compute_stats(leads: list[dict]) -> JobStats:
         pending_quota_count=sum(1 for l in leads if l.get("email_status") == "pending_quota"),
         reachable_count=sum(1 for l in leads if l.get("reachable") is True),
         avg_score=round(sum(l.get("prescore") or 0 for l in leads) / total, 1),
-        icp_hot_count=sum(1 for l in leads if l.get("icp_tier") == "hot"),
-        icp_warm_count=sum(1 for l in leads if l.get("icp_tier") == "warm"),
-        icp_cold_count=sum(1 for l in leads if l.get("icp_tier") == "cold"),
-        icp_disqualified_count=sum(1 for l in leads if l.get("icp_tier") == "disqualified"),
+        icp_hot_count=sum(1 for l in leads if verdict_tier(l) == "hot"),
+        icp_warm_count=sum(1 for l in leads if verdict_tier(l) == "warm"),
+        icp_cold_count=sum(1 for l in leads if verdict_tier(l) == "cold"),
+        icp_disqualified_count=sum(1 for l in leads if verdict_tier(l) == "disqualified"),
         provider_credits=quotas,
     )
 
@@ -622,7 +623,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
             confirmed = sum(1 for l in reachable_leads if (l.get("facts") or {}).get("identite_confirmee"))
             from processors.icp_scorer import apply_scores
             reachable_leads = apply_scores(reachable_leads)
-            disq = sum(1 for l in reachable_leads if l.get("icp_tier") == "disqualified")
+            disq = sum(1 for l in reachable_leads if verdict_tier(l) == "disqualified")
             handler.set_explicit_progress(
                 8, 1.0,
                 f"{confirmed}/{len(reachable_leads)} identités confirmées — "
