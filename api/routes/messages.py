@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import unicodedata
+from datetime import date
 from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -22,7 +23,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import config
-from enrichers.fact_extractor import VALID_SOURCES
+from enrichers.angle_writer import recent_appointment
+from enrichers.fact_extractor import APPOINTMENT_LABELS, VALID_SOURCES
+from processors.icp_rules import load_rules
 from enrichers.retry import (
     CREDIT_EXHAUSTED_MESSAGE,
     AuthError,
@@ -145,7 +148,31 @@ def _sourced_value(fact) -> Optional[object]:
     return value
 
 
-def sourced_facts(facts: dict) -> dict:
+def _recent_appointment(facts: dict, today: date) -> Optional[dict]:
+    """The contact's move into the post, when it is sourced and still recent.
+
+    Recency is decided by the same window as the angle
+    (enrichers/angle_writer.recent_appointment, itself reading
+    icp_rules.signal_recency_months): the operator tunes one number, and the
+    message cannot congratulate someone on an arrival the angle already
+    considers old. An older appointment is not denied — it stays a true fact
+    in the lead's facts — it simply stops being something to open on.
+
+    The source check is this route's own: it receives facts over HTTP, so it
+    re-applies "no source, no fact" instead of trusting the caller.
+    """
+    appointment = recent_appointment({"facts": facts}, load_rules(), today)
+    if not appointment or appointment.get("source") not in VALID_SOURCES:
+        return None
+    return {
+        "date": appointment.get("value"),
+        # The wording the angle uses for the same move, so the two texts
+        # cannot describe it differently.
+        "mouvement": APPOINTMENT_LABELS[appointment["type"]],
+    }
+
+
+def sourced_facts(facts: dict, today: Optional[date] = None) -> dict:
     """Keep only the facts the message is allowed to rest on.
 
     A fact without a recognised source is dropped here, in Python: the same
@@ -156,6 +183,9 @@ def sourced_facts(facts: dict) -> dict:
         value = _sourced_value(facts.get(key))
         if value is not None:
             kept[key] = value
+    appointment = _recent_appointment(facts, today or date.today())
+    if appointment:
+        kept["prise_de_poste"] = appointment
     signals = []
     for signal in facts.get("signaux") or []:
         if (isinstance(signal, dict) and signal.get("source") in VALID_SOURCES
@@ -223,6 +253,11 @@ open question.
 5. Never mention scores, "angle", "facts", or any automated analysis.
 6. Write the whole message in {language}, whatever the language of the data \
 below. Write any number with Western digits (0-9).
+7. If the facts carry a "prise_de_poste", open on that move, described exactly \
+as the fact words it and dated as the fact dates it: someone who has just \
+taken a post is at the one moment they reconsider their providers. If there is \
+no "prise_de_poste" in the facts, do not mention one, not even obliquely — \
+"congratulations on your new role" is an invention like any other.
 
 Reply with the message text only, no quotes, no preamble."""
 

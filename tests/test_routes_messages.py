@@ -1,6 +1,7 @@
 """POST /api/leads/linkedin-message — no test here reaches the network."""
 import json
 import pathlib
+from datetime import date
 
 import pytest
 from fastapi import FastAPI
@@ -173,6 +174,69 @@ def test_unsourced_facts_never_reach_the_model(client, stub):
     assert "aéronautique" not in prompt
     assert "Levée de fonds" not in prompt
     assert "Maroc" in prompt  # the sourced country is still there
+
+
+# ── The contact's appointment, the strongest fact the angle leads on ─────────
+# Dates are built from the run date rather than written down: the window is
+# icp_rules.signal_recency_months, and a test should not break the day an
+# operator retunes it. "This month" is recent under any window, ten years ago
+# is old under any window.
+
+def _month(months_ago: int) -> str:
+    today = date.today()
+    total = today.year * 12 + (today.month - 1) - months_ago
+    return f"{total // 12:04d}-{total % 12 + 1:02d}"
+
+
+def _appointment(months_ago=0, **overrides):
+    fact = {"value": _month(months_ago), "type": "nouvelle_entreprise",
+            "source": "linkedin", "citation": "A rejoint Atlas Immo"}
+    fact.update(overrides)
+    return dict(FACTS, prise_de_poste=fact)
+
+
+def test_a_recent_appointment_reaches_the_message(client, stub):
+    """The angle opens on it (enrichers/angle_writer), so the message must be
+    able to as well — otherwise the message is weaker than the angle it
+    rewrites, on the one fact that makes a prospect reconsider a provider."""
+    client.post(ROUTE, json=_payload(facts_json=json.dumps(_appointment())))
+    prompt = stub.calls[0]["messages"][0]["content"]
+    assert "prise_de_poste" in prompt
+    assert _month(0) in prompt
+    # The angle's own wording for the move, not a second vocabulary.
+    assert "arrivée dans une nouvelle entreprise" in prompt
+
+
+def test_the_prompt_forbids_inventing_an_appointment():
+    assert "prise_de_poste" in messages.SYSTEM_PROMPT
+    assert "new role" in messages.SYSTEM_PROMPT
+
+
+def test_an_old_appointment_is_not_something_to_open_on(client, stub):
+    """Ten years in post: a true fact, but "you have just taken the post"
+    addressed to them reads as a form letter. Same cut-off as the angle."""
+    client.post(ROUTE, json=_payload(facts_json=json.dumps(_appointment(120))))
+    assert "prise_de_poste" not in stub.calls[0]["messages"][0]["content"]
+
+
+def test_an_unsourced_appointment_never_reaches_the_message(client, stub):
+    client.post(ROUTE, json=_payload(facts_json=json.dumps(_appointment(source=None))))
+    assert "prise_de_poste" not in stub.calls[0]["messages"][0]["content"]
+
+
+def test_an_appointment_without_a_known_type_is_dropped(client, stub):
+    body = _payload(facts_json=json.dumps(_appointment(type="promu_peut_etre")))
+    client.post(ROUTE, json=body)
+    assert "prise_de_poste" not in stub.calls[0]["messages"][0]["content"]
+
+
+def test_the_appointment_date_is_not_counted_as_an_invented_number(client, stub):
+    """The guard compares the message against what the model was shown. The
+    appointment is part of that now, so quoting its date is not an invention."""
+    stub.replies[:] = [f"Bonjour Salma, votre arrivée de {_month(0)} m'a interpellé."]
+    response = client.post(ROUTE, json=_payload(facts_json=json.dumps(_appointment())))
+    assert response.status_code == 200
+    assert len(stub.calls) == 1
 
 
 def test_internal_judgements_are_not_passed_on(client, stub):
