@@ -79,6 +79,9 @@ class LeadRecord(BaseModel):
     evidence_level: Optional[str] = None
     evidence_verified: Optional[bool] = None
     facts_json: Optional[str] = None
+    # Priority signal: the contact's dated entry into the role, lifted out of
+    # facts_json so it does not have to be read cell by cell.
+    prise_de_poste: Optional[str] = None
 
 
 class JobStats(BaseModel):

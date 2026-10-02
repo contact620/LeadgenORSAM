@@ -652,6 +652,7 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
                 lead.setdefault("evidence_level", None)
                 lead.setdefault("evidence_verified", None)
                 lead.setdefault("facts_json", None)
+                lead.setdefault("prise_de_poste", None)
                 lead.setdefault("activity_summary", None)
                 lead.setdefault("conversion_angle", None)
                 for field, value in unset_research.items():

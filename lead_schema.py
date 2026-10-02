@@ -53,6 +53,11 @@ CSV_COLUMNS: list[str] = [
     "disqualification_reason", "evidence_level", "evidence_verified",
     # AI enrichment
     "activity_summary", "conversion_angle", "facts_json",
+    # Priority signal, lifted out of facts_json into its own cell: a contact
+    # who just took the job is the one moment they are open to changing
+    # provider. Sourced and dated to the month, or absent — see
+    # enrichers/fact_extractor._as_appointment.
+    "prise_de_poste",
     # Company intelligence
     "digital_maturity", "estimated_budget", "business_signals",
     # Person intelligence — the contact, not their employer: current role and
@@ -68,7 +73,7 @@ CSV_COLUMNS: list[str] = [
 ENRICH_FIELDS: list[str] = [
     "icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
     "disqualification_reason", "evidence_level", "evidence_verified",
-    "activity_summary", "conversion_angle", "facts_json",
+    "activity_summary", "conversion_angle", "facts_json", "prise_de_poste",
     "digital_maturity", "estimated_budget", "business_signals",
     "person_research",
 ]

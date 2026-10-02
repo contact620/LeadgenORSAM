@@ -229,3 +229,18 @@ def test_pool_leads_expose_every_enrich_field(tmp_path, monkeypatch):
     lead = db.get_pool_leads(pool_id)[0]
     for field in ENRICH_FIELDS:
         assert field in lead, f"{field} missing from pool lead"
+
+
+def test_the_person_research_is_exported():
+    """The search is billed once per lead; a field the export drops is a credit
+    spent for nothing."""
+    assert "person_research" in CSV_COLUMNS
+    assert "person_research" in ENRICH_FIELDS
+
+
+def test_the_appointment_has_its_own_column():
+    """It sits inside facts_json too, but nobody reads that cell by cell — and
+    a contact who just took the job is the one moment they are open to
+    changing provider."""
+    assert "prise_de_poste" in CSV_COLUMNS
+    assert "prise_de_poste" in ENRICH_FIELDS

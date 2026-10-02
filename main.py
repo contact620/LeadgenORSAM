@@ -247,7 +247,8 @@ async def run_pipeline(args):
         for lead in hit_leads:
             for field in ("icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
                           "disqualification_reason", "evidence_level", "evidence_verified",
-                          "facts_json", "activity_summary", "conversion_angle",
+                          "facts_json", "prise_de_poste",
+                          "activity_summary", "conversion_angle",
                           *RESEARCH_FIELDS):
                 lead.setdefault(field, None)
 

@@ -81,8 +81,17 @@ En cas de doute : true.
   service parmi d'autres dans une offre plus large. Le nom de l'entreprise
   n'est pas une source. En cas de doute, ne mets pas true : laisse null.
 - "maturite_digitale" : entier de 1 à 10 si une source l'évalue, sinon null
+- "prise_de_poste" : la prise de fonction du CONTACT, pas un événement de
+  l'entreprise — à traiter à part des signaux ci-dessous. Mets
+  {"value": "AAAA-MM", "type": "...", "source": "...", "citation": "..."}
+  uniquement si une source DATE son entrée en fonction. "type" vaut exactement
+  "nouveau_poste" (promotion ou changement de poste dans la même entreprise) ou
+  "nouvelle_entreprise" (arrivée chez cet employeur). Le mois est obligatoire :
+  une ancienneté déduite du poste déclaré, ou datée de la seule année, n'est pas
+  une source. null si rien ne la date.
 - "signaux" : événements datés des 12 derniers mois (recrutement, levée de fonds,
   lancement, expansion, refonte). Liste vide si aucune source n'en mentionne.
+  N'y remets pas la prise de poste du contact : elle a son propre champ.
 
 ═══ FORMAT ═══
 
@@ -94,6 +103,8 @@ Réponds UNIQUEMENT par ce JSON, sans markdown ni commentaire :
   "effectif": {"value": 45, "source": "perplexity"},
   "est_concurrent": null,
   "maturite_digitale": {"value": 4, "source": "perplexity"},
+  "prise_de_poste": {"value": "2026-06", "type": "nouvelle_entreprise",
+                     "source": "linkedin", "citation": "extrait littéral"},
   "signaux": [
     {"type": "recrutement_marketing", "date": "2026-04",
      "source": "perplexity", "citation": "extrait littéral de la source"}
@@ -154,6 +165,7 @@ _EMPTY_FACTS = {
     "effectif": None,
     "est_concurrent": None,
     "maturite_digitale": None,
+    "prise_de_poste": None,
     "signaux": [],
 }
 
@@ -226,6 +238,69 @@ def _as_competitor(fact) -> Optional[dict]:
     return {"value": True, "source": sourced["source"]}
 
 
+APPOINTMENT_TYPES = frozenset({"nouveau_poste", "nouvelle_entreprise"})
+
+# How each type reads in the export, for an operator who will not open
+# facts_json. French: operator-facing text.
+_APPOINTMENT_LABELS = {
+    "nouveau_poste": "nouveau poste dans la même entreprise",
+    "nouvelle_entreprise": "arrivée dans une nouvelle entreprise",
+}
+
+_MONTH_RE = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])(?:-\d{1,2})?$")
+
+
+def _as_month(value) -> Optional[str]:
+    """Normalise a date to "YYYY-MM", or drop it.
+
+    A year alone ("2026") is refused: the whole point of this fact is whether
+    the appointment is recent, and processors/icp_scorer._months_between needs
+    a month to answer. An undated appointment is not a weaker fact, it is a
+    different claim — and one no source made.
+    """
+    match = _MONTH_RE.match(str(value).strip())
+    return f"{match.group(1)}-{match.group(2)}" if match else None
+
+
+def _as_appointment(fact) -> Optional[dict]:
+    """Keep prise_de_poste only when sourced, typed and dated to the month.
+
+    Priority signal, so it gets its own field rather than one entry among the
+    company's signals — but no exemption from "no source, no fact": it goes
+    through the same _sourced() as every other field, so an appointment the
+    model infers from the declared job title is dropped here, in Python.
+    """
+    sourced = _sourced(fact)
+    if sourced is None:
+        return None
+    kind = str(fact.get("type") or "").strip().lower()
+    if kind not in APPOINTMENT_TYPES:
+        return None
+    month = _as_month(sourced["value"])
+    if month is None:
+        return None
+    return {
+        "value": month,
+        "type": kind,
+        "source": sourced["source"],
+        "citation": str(fact.get("citation") or "").strip(),
+    }
+
+
+def appointment_label(appointment: Optional[dict]) -> Optional[str]:
+    """One export cell for a validated prise_de_poste, or None.
+
+    The fact lives in facts_json, which no one reads cell by cell: the client
+    asked for this signal to stand out, so it gets a column of its own.
+    """
+    if not isinstance(appointment, dict):
+        return None
+    kind = _APPOINTMENT_LABELS.get(appointment.get("type"))
+    if not kind or not appointment.get("value"):
+        return None
+    return f"{appointment['value']} — {kind} (source : {appointment.get('source')})"
+
+
 def _dedupe_signals(signals: list[dict]) -> list[dict]:
     """Drop signals reporting the same event twice, keeping the first occurrence.
 
@@ -256,11 +331,11 @@ def _dedupe_signals(signals: list[dict]) -> list[dict]:
 def sanitize_facts(raw: dict) -> dict:
     """Drop every unsourced or malformed fact. Always returns a complete shape.
 
-    Guarantee: never raises and always returns the full 7-key shape, whatever
-    the input — including a non-dict `raw` (list, string, int, bool, None) or
-    a non-list `signaux`. This is the enforcement point for "no source, no
-    fact"; callers (present and future, see task 12) must be able to rely on
-    it without wrapping it in their own try/except.
+    Guarantee: never raises and always returns the full _EMPTY_FACTS shape,
+    whatever the input — including a non-dict `raw` (list, string, int, bool,
+    None) or a non-list `signaux`. This is the enforcement point for "no
+    source, no fact"; callers (present and future, see task 12) must be able to
+    rely on it without wrapping it in their own try/except.
     """
     if not isinstance(raw, dict):
         raw = {}
@@ -287,6 +362,7 @@ def sanitize_facts(raw: dict) -> dict:
         "effectif": _as_int(_sourced(raw.get("effectif"))),
         "est_concurrent": _as_competitor(raw.get("est_concurrent")),
         "maturite_digitale": _as_int(_sourced(raw.get("maturite_digitale"))),
+        "prise_de_poste": _as_appointment(raw.get("prise_de_poste")),
         "signaux": _dedupe_signals(signals),
     }
 
@@ -366,6 +442,19 @@ def extract_facts(lead: dict, ev: Evidence, rules: Optional[IcpRules] = None) ->
     return facts
 
 
+def _store_facts(lead: dict, facts: dict, evidence_level: str) -> None:
+    """Write one lead's facts and everything derived from them.
+
+    Three paths assign them — the normal one, the missing-key one and the
+    extraction-disabled-mid-run one — and a key set on only two of them exports
+    as a column that is empty for part of the batch, with nothing saying why.
+    """
+    lead["facts"] = facts
+    lead["facts_json"] = json.dumps(facts, ensure_ascii=False)
+    lead["evidence_level"] = evidence_level
+    lead["prise_de_poste"] = appointment_label(facts.get("prise_de_poste"))
+
+
 def extract_leads_facts(
     leads: list[dict],
     enabled_providers: frozenset[str],
@@ -374,16 +463,15 @@ def extract_leads_facts(
     """
     Extract facts for every lead and compute its evidence level.
 
-    Sets lead['facts'], lead['facts_json'] and lead['evidence_level'].
+    Sets lead['facts'], lead['facts_json'], lead['evidence_level'] and
+    lead['prise_de_poste'] — see _store_facts.
     """
     _reset_state()
 
     if config._is_placeholder(config.ANTHROPIC_API_KEY):
         logger.error("ANTHROPIC_API_KEY not set. Skipping fact extraction.")
         for lead in leads:
-            lead["facts"] = dict(_EMPTY_FACTS)
-            lead["facts_json"] = json.dumps(_EMPTY_FACTS, ensure_ascii=False)
-            lead["evidence_level"] = "none"
+            _store_facts(lead, dict(_EMPTY_FACTS), "none")
         if registry:
             registry.record(StepOutcome("anthropic_facts", "skipped", "clé API absente", 0))
         return leads
@@ -409,18 +497,15 @@ def extract_leads_facts(
         )
 
         facts = extract_facts(lead, ev, rules)
-        lead["facts"] = facts
-        lead["facts_json"] = json.dumps(facts, ensure_ascii=False)
-        lead["evidence_level"] = compute_evidence_level(ev, facts["identite_confirmee"])
+        _store_facts(lead, facts,
+                     compute_evidence_level(ev, facts["identite_confirmee"]))
 
         if facts["identite_confirmee"]:
             extracted += 1
         if _extractor_disabled:
             logger.warning(f"Fact extraction disabled — skipping remaining {total - i} leads")
             for remaining in leads[i:]:
-                remaining["facts"] = dict(_EMPTY_FACTS)
-                remaining["facts_json"] = json.dumps(_EMPTY_FACTS, ensure_ascii=False)
-                remaining["evidence_level"] = "none"
+                _store_facts(remaining, dict(_EMPTY_FACTS), "none")
             break
         if i < total:
             time.sleep(0.3)

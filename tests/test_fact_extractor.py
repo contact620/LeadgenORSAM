@@ -458,3 +458,104 @@ def test_a_lead_without_person_material_renders_an_explicit_absence():
     prompt = _capture_user_prompt(_leads(1)[0])
     assert "None" not in prompt
     assert prompt.count("Non disponible") >= 2
+
+
+# ── prise_de_poste, a sourced fact of its own (task 11) ───────────────────────
+
+def _appointment(**kw):
+    base = {"value": "2026-06", "type": "nouvelle_entreprise",
+            "source": "linkedin", "citation": "A rejoint Acme en juin 2026"}
+    base.update(kw)
+    return base
+
+
+def test_a_sourced_dated_appointment_survives():
+    facts = sanitize_facts({"prise_de_poste": _appointment()})
+    assert facts["prise_de_poste"] == {
+        "value": "2026-06", "type": "nouvelle_entreprise",
+        "source": "linkedin", "citation": "A rejoint Acme en juin 2026",
+    }
+
+
+def test_an_unsourced_appointment_is_dropped():
+    """No exemption from "no source, no fact": an appointment the model infers
+    from the declared job title is dropped here, in Python."""
+    raw = {"prise_de_poste": {"value": "2026-06", "type": "nouveau_poste"}}
+    assert sanitize_facts(raw)["prise_de_poste"] is None
+    assert sanitize_facts({"prise_de_poste": "depuis juin"})["prise_de_poste"] is None
+    assert sanitize_facts({"prise_de_poste": True})["prise_de_poste"] is None
+    assert sanitize_facts({})["prise_de_poste"] is None
+
+
+def test_an_appointment_with_an_unknown_source_is_dropped():
+    raw = {"prise_de_poste": _appointment(source="intuition")}
+    assert sanitize_facts(raw)["prise_de_poste"] is None
+
+
+def test_an_appointment_without_a_recognised_type_is_dropped():
+    """"Promotion" or "arrival" is the whole content of the signal: without it
+    the angle cannot say anything useful about the move."""
+    for kind in (None, "", "promotion", "autre"):
+        raw = {"prise_de_poste": _appointment(type=kind)}
+        assert sanitize_facts(raw)["prise_de_poste"] is None, kind
+
+
+def test_an_appointment_dated_to_the_year_alone_is_dropped():
+    """The point of the fact is whether the move is recent, and
+    processors/icp_scorer._months_between needs a month to answer."""
+    for bad in ("2026", "juin 2026", "2026-13", "bientôt"):
+        raw = {"prise_de_poste": _appointment(value=bad)}
+        assert sanitize_facts(raw)["prise_de_poste"] is None, bad
+
+
+def test_a_full_date_is_normalised_to_the_month():
+    raw = {"prise_de_poste": _appointment(value="2026-06-15")}
+    assert sanitize_facts(raw)["prise_de_poste"]["value"] == "2026-06"
+
+
+def test_the_appointment_type_is_case_insensitive():
+    raw = {"prise_de_poste": _appointment(type=" Nouveau_Poste ")}
+    assert sanitize_facts(raw)["prise_de_poste"]["type"] == "nouveau_poste"
+
+
+def test_the_appointment_is_described_in_the_prompt_fields():
+    prompt = build_system_prompt(load_rules())
+    assert "prise_de_poste" in prompt
+    for kind in fx.APPOINTMENT_TYPES:
+        assert kind in prompt
+
+
+def test_the_appointment_reaches_its_own_export_cell():
+    """The fact lives in facts_json, which nobody reads cell by cell. The
+    client asked for this signal to stand out."""
+    lead = {}
+    fx._store_facts(lead, sanitize_facts({"prise_de_poste": _appointment()}), "weak")
+    assert lead["prise_de_poste"] == (
+        "2026-06 — arrivée dans une nouvelle entreprise (source : linkedin)"
+    )
+
+
+def test_a_lead_without_an_appointment_gets_an_empty_cell_not_a_stray_label():
+    lead = {}
+    fx._store_facts(lead, dict(_EMPTY_FACTS), "none")
+    assert lead["prise_de_poste"] is None
+
+
+def test_the_appointment_cell_is_set_on_every_lead_of_a_failed_run():
+    """A key written on only part of the batch exports as a column that is
+    empty for some rows with nothing saying why."""
+    fx._reset_state()
+    leads = _leads(4)
+
+    with patch("enrichers.fact_extractor.config.ANTHROPIC_API_KEY", "sk-test"), \
+         patch("enrichers.fact_extractor.retry_api_call",
+               side_effect=AuthError("401 invalid x-api-key")), \
+         patch("enrichers.fact_extractor.time.sleep", return_value=None):
+        try:
+            result = extract_leads_facts(leads, frozenset({"website"}),
+                                         registry=ProviderRegistry())
+        finally:
+            fx._reset_state()
+
+    assert all("prise_de_poste" in l for l in result)
+    assert all(l["prise_de_poste"] is None for l in result)
