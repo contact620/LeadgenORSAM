@@ -55,10 +55,14 @@ def test_a_nominative_site_email_wins_without_spending(monkeypatch):
     assert lead["email_source"] == "website"
 
 
-def test_a_generic_site_email_is_kept_but_marked_generique(monkeypatch):
+def test_a_generic_site_email_is_the_last_resort_not_the_first(monkeypatch):
+    """The net: the generic comes back only once everything else has failed."""
     monkeypatch.setattr(email_cascade.getprospect, "verify_email",
-                        lambda e: EmailResult(email=e, status=VALID, provider="getprospect",
-                                              billed=True, cost=1.0))
+                        lambda e: EmailResult(email=e, status=NOT_FOUND,
+                                              provider="getprospect", billed=True, cost=1.0))
+    monkeypatch.setattr(email_cascade.hunter, "verify_email",
+                        lambda e: EmailResult(email=e, status=NOT_FOUND,
+                                              provider="hunter", billed=True, cost=0.5))
     monkeypatch.setattr(email_cascade.prospeo, "find_email",
                         lambda *a: EmailResult(status=NOT_FOUND, provider="prospeo"))
     monkeypatch.setattr(email_cascade.getprospect, "find_email",
@@ -70,6 +74,91 @@ def test_a_generic_site_email_is_kept_but_marked_generique(monkeypatch):
     email_cascade.resolve_email(lead, is_priority=True)
     assert lead["email"] == "contact@acme.ma"
     assert lead["email_status"] == "valid_generique"
+    assert lead["email_source"] == "website"
+    assert lead["email_type"] == "generique"
+    assert lead["contact_source_url"] == "https://acme.ma/contact"
+
+
+def test_a_generic_site_email_no_longer_stops_the_cascade(monkeypatch):
+    """The 7 valid_generique rows of the 2026-09-25 demo left with a
+    switchboard address and an empty domain_catch_all column — proof that the
+    cascade had returned before the verification step ever ran. A generic must
+    now cost nothing but a place in reserve.
+    """
+    monkeypatch.setattr(email_cascade.getprospect, "verify_email",
+                        lambda e: EmailResult(email=e, status=VALID, provider="getprospect",
+                                              billed=True, cost=1.0))
+    def _never(*a, **k):
+        raise AssertionError("un nominatif vérifié rend le finder inutile")
+    monkeypatch.setattr(email_cascade.prospeo, "find_email", _never)
+    monkeypatch.setattr(email_cascade.getprospect, "find_email", _never)
+
+    lead = _lead(_site_contacts=_site(("contact@acme.ma", "generique")))
+    email_cascade.resolve_email(lead, is_priority=True)
+
+    assert lead["email"] == "karim.elamrani@acme.ma"
+    assert lead["email_status"] == "valid_nominatif"
+    assert lead["email_source"] == "pattern_verified"
+    assert lead["domain_catch_all"] is False, "l'étape (c) doit avoir été atteinte"
+
+
+def test_a_finder_hit_beats_the_generic_held_in_reserve(monkeypatch):
+    monkeypatch.setattr(email_cascade.getprospect, "verify_email",
+                        lambda e: EmailResult(email=e, status=NOT_FOUND,
+                                              provider="getprospect", billed=True, cost=1.0))
+    monkeypatch.setattr(email_cascade.hunter, "verify_email",
+                        lambda e: EmailResult(email=e, status=NOT_FOUND,
+                                              provider="hunter", billed=True, cost=0.5))
+    monkeypatch.setattr(email_cascade.prospeo, "find_email",
+                        lambda *a: EmailResult(status=NOT_FOUND, provider="prospeo"))
+    monkeypatch.setattr(email_cascade.getprospect, "find_email",
+                        lambda f, l, d: EmailResult(email="k.elamrani@acme.ma", status=VALID,
+                                                    provider="getprospect",
+                                                    billed=True, cost=1.0))
+
+    lead = _lead(_site_contacts=_site(("contact@acme.ma", "generique")))
+    email_cascade.resolve_email(lead, is_priority=True)
+    assert lead["email"] == "k.elamrani@acme.ma"
+    assert lead["email_source"] == "getprospect"
+    assert lead["email_type"] == "nominatif_lead"
+
+
+def test_a_non_priority_lead_falls_back_to_the_generic(monkeypatch):
+    """A withheld finder credit is not a reason to export an empty cell when
+    the company published a reachable address."""
+    monkeypatch.setattr(email_cascade.getprospect, "verify_email",
+                        lambda e: EmailResult(email=e, status=NOT_FOUND,
+                                              provider="getprospect", billed=True, cost=1.0))
+    monkeypatch.setattr(email_cascade.hunter, "verify_email",
+                        lambda e: EmailResult(email=e, status=NOT_FOUND,
+                                              provider="hunter", billed=True, cost=0.5))
+
+    lead = _lead(_site_contacts=_site(("contact@acme.ma", "generique")))
+    email_cascade.resolve_email(lead, is_priority=False)
+    assert lead["email"] == "contact@acme.ma"
+    assert lead["email_status"] == "valid_generique"
+
+
+def test_a_published_generic_is_never_overwritten_by_a_catch_all_guess(monkeypatch):
+    """Arbitration: candidates[0] on a catch-all domain is a guess nobody can
+    confirm — the domain says yes to every address. The real address the
+    company published must survive it, with its own status, not be replaced by
+    a fiction labelled nominatif_lead."""
+    monkeypatch.setattr(email_cascade.domain_intel, "is_catch_all", lambda d, fn: True)
+    def _never(*a, **k):
+        raise AssertionError("un domaine catch-all ne se vérifie pas")
+    monkeypatch.setattr(email_cascade.getprospect, "verify_email", _never)
+    monkeypatch.setattr(email_cascade.hunter, "verify_email", _never)
+    monkeypatch.setattr(email_cascade.prospeo, "find_email", _never)
+    monkeypatch.setattr(email_cascade.getprospect, "find_email", _never)
+
+    lead = _lead(_site_contacts=_site(("contact@acme.ma", "generique")))
+    email_cascade.resolve_email(lead, is_priority=True)
+
+    assert lead["email"] == "contact@acme.ma"
+    assert lead["email_status"] == "valid_generique"
+    assert lead["email_type"] == "generique"
+    assert lead["domain_catch_all"] is True, "le fait reste exporté"
 
 
 def test_a_webmail_on_the_site_is_never_used_as_the_company_address(monkeypatch):

@@ -4,11 +4,16 @@ Step 5 — Email acquisition cascade (replaces Dropcontact).
 Ordered cheapest-first and stopping at the first success, because the whole
 month's budget is 50 to 100 lookups:
 
-  a. an address the company already published on its own site  — free
+  a. a NOMINATIVE address the company published on its own site — free
   b. a candidate generated from the company's format           — free to build
   c. verification of that candidate                            — 0.5 to 1 credit
   d. a finder, priority leads only                              — 1 credit
   e. nothing left to spend                                     — pending_quota
+
+A generic address found in step (a) — contact@, info@ — does not end the
+cascade: it reaches a switchboard, not the person the operator chose. It is
+held back as a net and restored at the very end only if nothing nominative
+was found (see _keep_generic).
 
 Every branch records what it cost so api/quota_db.py only ever decrements on
 a result the provider actually billed.
@@ -71,6 +76,21 @@ def _set(lead: dict, *, email=None, status="not_found", source=None,
     lead["email_source"] = source
     lead["email_type"] = email_type
     lead["domain_mismatch"] = mismatch
+
+
+def _keep_generic(lead: dict, generic) -> dict:
+    """Restore the generic address held back in step (a), if nothing beat it.
+
+    This is the last rung of the cascade, not a branch of it: a shared inbox
+    is better than an empty cell, but every nominative route — pattern,
+    verification, finders — has to have been tried and failed first.
+    """
+    if generic is None or lead.get("email"):
+        return lead
+    _set(lead, email=generic.value, status="valid_generique", source="website",
+         email_type="generique")
+    lead["contact_source_url"] = generic.source_url
+    return lead
 
 
 
@@ -143,19 +163,29 @@ def resolve_email(lead: dict, is_priority: bool, registry=None) -> dict:
     _set(lead)
 
     # ── a. An address the company published itself ────────────────────────────
-    for kind, status in (("nominatif_lead", "valid_nominatif"),
-                         ("generique", "valid_generique")):
-        found = next((e for e in site_emails if e.kind == kind), None)
-        if found:
-            _set(lead, email=found.value, status=status, source="website",
-                 email_type=kind)
-            lead["contact_source_url"] = found.source_url
-            return lead
+    nominative = next((e for e in site_emails if e.kind == "nominatif_lead"), None)
+    if nominative:
+        _set(lead, email=nominative.value, status="valid_nominatif",
+             source="website", email_type="nominatif_lead")
+        lead["contact_source_url"] = nominative.source_url
+        return lead
+
+    # A generic address (contact@, info@) is real and free, but it reaches a
+    # switchboard, not the person the operator picked — which is the one thing
+    # the cascade exists to do. Returning it here used to end the cascade
+    # outright: on the 2026-09-25 demo, 7 of 20 leads left with a company
+    # switchboard address and an empty domain_catch_all column, proof that
+    # they never reached step (c) at all.
+    #
+    # So it is held back as a net and only restored, by _keep_generic, once
+    # every nominative route has failed.
+    generic = next((e for e in site_emails if e.kind == "generique"), None)
 
     if not domain or not mx.has_mx:
         # No MX means the domain receives no mail at all: generating a pattern
         # would spend a verification on an address that cannot exist.
-        return _finders(lead, first, last, domain, is_priority, registry)
+        return _keep_generic(
+            _finders(lead, first, last, domain, is_priority, registry), generic)
 
     # ── b. Candidates, collapsed to one when a colleague reveals the format ──
     colleague = lead.get("_site_colleague") or {}
@@ -166,13 +196,22 @@ def resolve_email(lead: dict, is_priority: bool, registry=None) -> dict:
         known_last=colleague.get("last_name"),
     )
     if not candidates:
-        return _finders(lead, first, last, domain, is_priority, registry)
+        return _keep_generic(
+            _finders(lead, first, last, domain, is_priority, registry), generic)
 
     # ── c. Verification, unless the domain accepts everything ────────────────
     catch_all = domain_intel.is_catch_all(domain, _probe_verifier())
     lead["domain_catch_all"] = catch_all
     if catch_all is True:
         # Verifying here buys no information: the domain says yes to anything.
+        if generic is not None:
+            # Arbitration: candidates[0] is a guess nobody confirmed, and on a
+            # catch-all domain nobody ever can — the domain accepts every
+            # address, including the ones that have no mailbox behind them. A
+            # published generic is at least a mailbox the company vouches for,
+            # so it wins here. The other way round would overwrite a real
+            # address with a plausible fiction and label it nominative.
+            return _keep_generic(lead, generic)
         _set(lead, email=candidates[0], status="catch_all",
              source="pattern_verified", email_type="nominatif_lead")
         return lead
@@ -190,7 +229,8 @@ def resolve_email(lead: dict, is_priority: bool, registry=None) -> dict:
                  source="pattern_verified", email_type="nominatif_lead")
             return lead
 
-    return _finders(lead, first, last, domain, is_priority, registry)
+    return _keep_generic(
+        _finders(lead, first, last, domain, is_priority, registry), generic)
 
 
 def _probe_verifier() -> Callable[[str], str]:
