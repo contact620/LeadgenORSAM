@@ -85,6 +85,15 @@ _LEAD_POOL_ADDED_COLUMNS = {
     "prescore": "REAL",
     "reachable": "INTEGER",
     "contact_level": "TEXT",
+    # ── 2026-10-02 input integrity ──────────────────────────────────────────
+    # The two Apollo cells the prescore reads, plus the flag raised when the
+    # contact row holds a company rather than a person. Without them here,
+    # the enrich-only flow exports three empty columns and the operator is
+    # back to not knowing whether a prescore of 0 means "poor fit" or
+    # "Apollo never showed the column".
+    "apollo_industry": "TEXT",
+    "employee_count": "INTEGER",
+    "name_looks_like_company": "INTEGER",
 }
 
 _CREATE_POOL_META = """
@@ -291,9 +300,10 @@ def create_pool(name: str, apollo_url: str, scrape_job_id: str, leads: list[dict
                     domain_catch_all, domain_mx_provider, domain_mismatch,
                     phone_type, phone_source, whatsapp,
                     facebook_url, instagram_url, linkedin_company_url,
-                    prescore, reachable, contact_level,
+                    prescore, apollo_industry, employee_count,
+                    name_looks_like_company, reachable, contact_level,
                     hit_score, is_hit, is_duplicate, first_seen_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (pool_id, lead.get("first_name"), lead.get("last_name"),
                  lead.get("company"), lead.get("job_title"), lead.get("location"),
                  lead.get("email"), lead.get("phone"), lead.get("linkedin_url"), lead.get("website"),
@@ -305,7 +315,9 @@ def create_pool(name: str, apollo_url: str, scrape_job_id: str, leads: list[dict
                  _bool_or_none("domain_mismatch"),
                  lead.get("phone_type"), lead.get("phone_source"), _bool_or_none("whatsapp"),
                  lead.get("facebook_url"), lead.get("instagram_url"), lead.get("linkedin_company_url"),
-                 lead.get("prescore"), _bool_or_none("reachable"), lead.get("contact_level"),
+                 lead.get("prescore"), lead.get("apollo_industry"),
+                 lead.get("employee_count"), _bool_or_none("name_looks_like_company"),
+                 _bool_or_none("reachable"), lead.get("contact_level"),
                  lead.get("hit_score", 0), int(lead.get("is_hit", False)),
                  int(lead.get("is_duplicate", False)), lead.get("first_seen_at")),
             )
@@ -366,7 +378,7 @@ def get_pool_leads(pool_id: str, only_reachable: bool = False,
         d["is_duplicate"] = bool(d.get("is_duplicate") or 0)
         d["enriched"] = bool(d.get("enriched") or 0)
         for field_name in ("website_coherent", "domain_catch_all", "domain_mismatch",
-                           "whatsapp", "reachable"):
+                           "whatsapp", "reachable", "name_looks_like_company"):
             if field_name in d:
                 d[field_name] = _bool_or_none(d[field_name])
         # Parse enrich_data JSON if present; absent keys stay None so pools

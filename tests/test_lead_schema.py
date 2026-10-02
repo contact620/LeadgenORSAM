@@ -119,6 +119,36 @@ def test_pool_round_trip_keeps_the_scoring_inputs(tmp_path, monkeypatch):
     assert "Acme" in lead["website_check_reason"]
 
 
+def test_pool_round_trip_keeps_the_apollo_cells_and_the_company_name_flag(
+        tmp_path, monkeypatch):
+    """The enrich-only flow exports from the pool, not from the scrape. Without
+    these three columns stored, an operator reading the pool export sees an
+    empty apollo_industry and no flag, which is exactly the blindness the
+    2026-09-25 demo exposed.
+    """
+    import api.leads_db as db
+
+    monkeypatch.setattr(db, "_DB_PATH", str(tmp_path / "apollo.db"))
+    db.init_leads_table()
+    pool_id = db.create_pool("test", "url", "job", [
+        {"first_name": "", "last_name": "El Lyazidi", "company": "DAVINCI dental clinic",
+         "apollo_industry": "sante", "employee_count": 45,
+         "name_looks_like_company": False},
+        {"first_name": "Delta", "last_name": "Btp",
+         "company": "CONSTRUCTION BATIMENT TRAVAUX PUBLICS ET DIVERS SARL",
+         "name_looks_like_company": True},
+    ])
+    first, second = db.get_pool_leads(pool_id, order_by="id")
+
+    assert {first["last_name"], second["last_name"]} == {"El Lyazidi", "Btp"}
+    by_name = {l["last_name"]: l for l in (first, second)}
+    assert by_name["El Lyazidi"]["apollo_industry"] == "sante"
+    assert by_name["El Lyazidi"]["employee_count"] == 45
+    assert by_name["El Lyazidi"]["name_looks_like_company"] is False
+    assert by_name["Btp"]["name_looks_like_company"] is True
+    assert by_name["Btp"]["apollo_industry"] is None
+
+
 def test_pool_round_trip_keeps_unchecked_website_as_unknown(tmp_path, monkeypatch):
     """None means "not checked" and must not collapse into False.
 
