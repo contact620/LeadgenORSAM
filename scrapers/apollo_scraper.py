@@ -15,6 +15,7 @@ from playwright.async_api import async_playwright, Page, BrowserContext
 
 import config
 from enrichers.phone_extractor import COUNTRY_HINTS
+from processors.coherence import name_looks_like_a_company
 from processors.icp_rules import IcpRules, load_rules, normalize_label, padded_words
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,50 @@ def parse_employee_count(raw) -> int | None:
         return _digits(match.group(1))
 
     return None
+
+
+# Particles that belong to a Maghrebi surname rather than to a given name.
+NAME_PARTICLES: frozenset[str] = frozenset({"el", "ben", "ait", "ould", "bel", "abd"})
+
+# The subset that is never a given name on its own. "Ben" and "Bel" are
+# attested given names ("Ben Johnson"), so a bare "Ben Smith" keeps the default
+# split; "El Lyazidi" or "Ould Cheikh" cannot be read as given name + surname.
+_SURNAME_ONLY_PARTICLES: frozenset[str] = frozenset({"el", "ait", "ould", "abd"})
+
+
+def split_person_name(full_name: str) -> tuple[str, str]:
+    """Split an Apollo name cell into (first_name, last_name).
+
+    The default is Apollo's display order: the first word is the given name
+    and the rest is the surname. A leading Maghrebi particle breaks it, and
+    the 2026-09-25 export shows both forms it takes:
+
+      - "El Lyazidi", "El Rabea" — a surname on its own. The naive split made
+        "El" the given name, so email generation built el.lyazidi@ and the
+        finders were queried with first="El": calls that cannot succeed and
+        that still cost a credit each. Returns ("", "El Lyazidi").
+      - "El Rabea Mohamed" — the administrative "SURNAME Firstname" form. The
+        particle and the word it binds to are the surname, the rest is the
+        given name. Requires at least two words after the particle: with only
+        one, the two-word reading above applies instead.
+
+    A particle anywhere but in first position already splits correctly
+    ("Mohamed El Amrani" -> "Mohamed" / "El Amrani") and is left alone.
+    """
+    words = (full_name or "").split()
+    if not words:
+        return "", ""
+    if len(words) == 1:
+        return words[0], ""
+
+    head = normalize_label(words[0])
+    if head in NAME_PARTICLES:
+        if len(words) >= 3:
+            return " ".join(words[2:]), " ".join(words[:2])
+        if head in _SURNAME_ONLY_PARTICLES:
+            return "", " ".join(words)
+
+    return words[0], " ".join(words[1:])
 
 
 # Text Apollo renders inside its result table that belongs to the interface,
@@ -208,8 +253,12 @@ _JS_EXTRACT = """() => {
         const row = tr || divRow || link.parentElement?.parentElement?.parentElement;
         if (!row) continue;
 
+        // The authoritative value is `full_name`: Python re-splits it (see
+        // split_person_name), because a leading Maghrebi particle makes this
+        // naive split hand back "El" as a given name.
         const parts = name.split(' ');
         const lead = {
+            full_name:    name,
             first_name:   parts[0] || '',
             last_name:    parts.slice(1).join(' '),
             job_title:    '',
@@ -488,6 +537,17 @@ async def _scrape_page(page: Page) -> list[dict]:
             lead["employee_count"] = parse_employee_count(lead.pop("employee_count_raw", None))
             lead["apollo_industry"] = (lead.get("apollo_industry") or "").strip() or None
             lead["location"] = plausible_location(lead.get("location"))
+            full_name = lead.pop("full_name", "") or \
+                f"{lead.get('first_name', '')} {lead.get('last_name', '')}"
+            lead["first_name"], lead["last_name"] = split_person_name(full_name)
+            lead["name_looks_like_company"] = name_looks_like_a_company(
+                full_name, lead.get("company") or ""
+            )
+            if lead["name_looks_like_company"]:
+                logger.info(
+                    f"Lead flagged: '{full_name}' reads as a company name, "
+                    f"not a person (company: {lead.get('company')!r})"
+                )
         if leads:
             logger.info(f"JS extraction found {len(leads)} leads on this page")
             # Log first lead details for debugging

@@ -239,6 +239,36 @@ def test_a_non_priority_lead_with_no_domain_at_all_stays_not_found(monkeypatch):
     assert lead["email_status"] == "not_found"
 
 
+def test_an_incomplete_name_never_reaches_the_finders(monkeypatch):
+    """Apollo sometimes supplies a surname alone ("El Lyazidi" in the
+    2026-09-25 export, split as first="El" by the old naive rule). Every
+    finder keys on (given name, surname, domain): the request is unanswerable
+    by construction and the credit is spent for nothing."""
+    def _never(*a, **k):
+        raise AssertionError("un nom incomplet ne consomme pas de crédit finder")
+    for provider in (email_cascade.prospeo, email_cascade.getprospect,
+                     email_cascade.hunter):
+        monkeypatch.setattr(provider, "find_email", _never)
+
+    lead = _lead(first_name="", last_name="El Lyazidi")
+    email_cascade.resolve_email(lead, is_priority=True)
+    assert lead.get("email") is None
+
+
+def test_a_complete_name_still_reaches_the_finders(monkeypatch):
+    """The guard above must not be the end of the cascade for everyone else."""
+    monkeypatch.setattr(email_cascade.getprospect, "verify_email",
+                        lambda e: EmailResult(email=e, status=NOT_FOUND,
+                                              provider="getprospect", billed=True, cost=1.0))
+    monkeypatch.setattr(email_cascade.prospeo, "find_email",
+                        lambda f, l, d: EmailResult(email=f"{f}@{d}", status=VALID,
+                                                    provider="prospeo", billed=True, cost=1.0))
+
+    lead = _lead()
+    email_cascade.resolve_email(lead, is_priority=True)
+    assert lead["email_source"] == "prospeo"
+
+
 def test_a_finder_returning_another_domain_is_flagged(monkeypatch):
     monkeypatch.setattr(email_cascade.getprospect, "verify_email",
                         lambda e: EmailResult(email=e, status=NOT_FOUND,

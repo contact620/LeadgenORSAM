@@ -3,6 +3,7 @@ import pytest
 from processors.coherence import (
     CoherenceResult,
     check_site_coherence,
+    name_looks_like_a_company,
     names_match,
     normalize_tokens,
     significant_tokens,
@@ -54,6 +55,43 @@ def test_names_match_with_only_generic_tokens_falls_back_to_exact_tokens():
 def test_names_match_handles_empty_input():
     assert names_match("", "Acme") is False
     assert names_match("Acme", "") is False
+
+
+# ── A "person" that is in fact a company ─────────────────────────────────────
+
+@pytest.mark.parametrize("full_name,company", [
+    ("Delta Btp", "CONSTRUCTION BATIMENT TRAVAUX PUBLICS ET DIVERS SARL"),
+    ("Stpv Voire", "STPV"),
+    ("Les Marrakech", "LES SENS DE MARRAKECH"),
+])
+def test_the_three_companies_of_the_demo_are_flagged(full_name, company):
+    """The exact rows of the 2026-09-25 export. Each one produced a generated
+    address (delta.btp@, les.marrakech@) and a finder query for a person who
+    does not exist."""
+    assert name_looks_like_a_company(full_name, company) is True
+
+
+@pytest.mark.parametrize("full_name,company", [
+    ("Salma Hili", "POWER FLEET"),
+    ("Rachid Attabi", "SkyCrew Recruitment, Training & Employment"),
+    ("Abdelmounaim Badri", "Ecole Hôtelière Privée de Marrakech -EHPM"),
+    ("Mohamed Morkane", "Maison D'Hote"),
+    ("Bilal Mohamed", "INEV"),
+])
+def test_the_real_people_of_the_demo_are_not_flagged(full_name, company):
+    assert name_looks_like_a_company(full_name, company) is False
+
+
+def test_an_eponymous_founder_is_not_flagged():
+    """A surname shared with the company is the normal case for an SME, not a
+    signal: containment runs name-into-company, never the reverse."""
+    assert name_looks_like_a_company("Jean Dupont", "Dupont") is False
+    assert name_looks_like_a_company("Pierre Lefevre", "Lefevre & Fils SARL") is False
+
+
+def test_an_empty_name_is_not_flagged():
+    assert name_looks_like_a_company("", "Acme") is False
+    assert name_looks_like_a_company("Salma Hili", "") is False
 
 
 def test_check_site_coherence_accepts_matching_title():

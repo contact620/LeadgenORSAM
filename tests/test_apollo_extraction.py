@@ -5,6 +5,7 @@ from scrapers.apollo_scraper import (
     _JS_EXTRACT,
     parse_employee_count,
     plausible_location,
+    split_person_name,
 )
 
 
@@ -67,6 +68,48 @@ def test_an_interface_label_with_a_comma_is_still_dropped():
 @pytest.mark.parametrize("raw", [None, "", "   ", "x" * 200])
 def test_empty_or_oversized_cells_are_dropped(raw):
     assert plausible_location(raw) is None
+
+
+# ── Names: a particle is not a given name ─────────────────────────────────────
+
+@pytest.mark.parametrize("full_name", ["El Lyazidi", "El Rabea"])
+def test_a_lone_maghrebi_surname_yields_no_given_name(full_name):
+    """Both exported by the demo as first="El". Email generation then built
+    el.lyazidi@ and the finders were queried with a given name belonging to
+    nobody."""
+    first, last = split_person_name(full_name)
+    assert (first, last) == ("", full_name)
+
+
+def test_a_two_word_name_starting_with_ben_keeps_the_default_split():
+    """"Ben" is an attested given name, so the two-word case stays untouched —
+    the surname-only reading applies to particles that never are one."""
+    assert split_person_name("Ben Smith") == ("Ben", "Smith")
+
+
+def test_a_leading_particle_followed_by_two_words_is_the_surname():
+    """Administrative "SURNAME Firstname" form."""
+    assert split_person_name("El Rabea Mohamed") == ("Mohamed", "El Rabea")
+
+
+@pytest.mark.parametrize("full_name,expected", [
+    ("Mohamed El Amrani", ("Mohamed", "El Amrani")),
+    ("Karim Ben Ali", ("Karim", "Ben Ali")),
+    ("Salma Hili", ("Salma", "Hili")),
+    ("Jean-Pierre Dupont", ("Jean-Pierre", "Dupont")),
+])
+def test_a_particle_away_from_the_first_position_is_left_alone(full_name, expected):
+    assert split_person_name(full_name) == expected
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("", ("", "")),
+    ("   ", ("", "")),
+    ("Madonna", ("Madonna", "")),
+    ("  Salma   Hili  ", ("Salma", "Hili")),
+])
+def test_degenerate_name_cells(raw, expected):
+    assert split_person_name(raw) == expected
 
 
 def test_the_browser_side_extractor_shares_the_same_label_list():

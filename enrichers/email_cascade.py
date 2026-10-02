@@ -210,6 +210,16 @@ def _finders(lead: dict, first: str, last: str, domain: str,
         return lead
     if not domain:
         return lead
+    if not first or not last:
+        # Every finder keys on (given name, surname, domain). Apollo sometimes
+        # supplies only one of the two — a surname alone ("El Lyazidi"), or a
+        # company name where the person should be — and the request is then
+        # unanswerable by construction while still costing a credit.
+        logger.info(
+            f"Finders skipped for '{first} {last}'@{domain}: "
+            f"an incomplete name cannot be resolved"
+        )
+        return lead
 
     quota_seen = False
     for provider, fn, cost in FINDER_ORDER:

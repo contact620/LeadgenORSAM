@@ -8,6 +8,11 @@ in api/pipeline_runner.py, which guarantees divergence over time.
 CSV_COLUMNS: list[str] = [
     # Identity
     "first_name", "last_name", "company", "job_title", "location",
+    # True when the contact row holds a legal entity instead of a person
+    # ("Delta Btp", "Stpv Voire", "Les Marrakech" in the 2026-09-25 demo).
+    # A flag, never a removal: the operator decides whether to keep the row,
+    # but no longer discovers the problem by reading an email nobody owns.
+    "name_looks_like_company",
     # Contact
     "email", "email_status", "email_confidence", "phone",
     "linkedin_url", "website", "website_coherent", "website_rejected",

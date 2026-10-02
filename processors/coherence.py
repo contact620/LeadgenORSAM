@@ -80,6 +80,45 @@ def title_names_a_company(page_title: str) -> bool:
     return bool(significant_tokens(page_title) - PAGE_TITLE_NOISE)
 
 
+_VOWELS = frozenset("aeiouy")
+
+
+def name_looks_like_a_company(full_name: str, company: str = "") -> bool:
+    """True when an Apollo "person" row in fact repeats a legal entity.
+
+    Three of the twenty leads of the 2026-09-25 demo were companies, not
+    people: "Delta Btp" (CONSTRUCTION BATIMENT TRAVAUX PUBLICS ET DIVERS
+    SARL), "Stpv Voire" (STPV), "Les Marrakech" (LES SENS DE MARRAKECH). Email
+    generation built delta.btp@ and les.marrakech@, and the finders were asked
+    for a person nobody ever hired — calls that cannot succeed and that cost a
+    credit each as soon as more leads reach the cascade.
+
+    Two signals, both cheap and both conservative:
+
+      1. Containment, not overlap: every significant token of the name already
+         appears in the company's. A real person's surname is almost never a
+         subset of their employer's name; a truncated company name always is.
+         Catches "Les Marrakech".
+      2. A vowel-less token of three letters or more — an acronym, which no
+         Latin-script given name or surname carries. Catches "Delta Btp" and
+         "Stpv Voire", whose company cells share no usable token with them
+         ("STPV" is a single acronym, and "Delta Btp" shares nothing with the
+         spelled-out legal name).
+
+    The result is a flag, never a deletion: a lead wrongly flagged still ships
+    with everything else it has.
+    """
+    name_tokens = significant_tokens(full_name)
+    if not name_tokens:
+        return False
+
+    if any(len(t) >= 3 and not (set(t) & _VOWELS) for t in name_tokens):
+        return True
+
+    company_tokens = significant_tokens(company)
+    return bool(company_tokens) and name_tokens <= company_tokens
+
+
 def names_match(candidate: str, reference: str, min_overlap: float = 0.5) -> bool:
     """
     True when both names plausibly designate the same company.
