@@ -242,7 +242,7 @@ APPOINTMENT_TYPES = frozenset({"nouveau_poste", "nouvelle_entreprise"})
 
 # How each type reads in the export, for an operator who will not open
 # facts_json. French: operator-facing text.
-_APPOINTMENT_LABELS = {
+APPOINTMENT_LABELS = {
     "nouveau_poste": "nouveau poste dans la même entreprise",
     "nouvelle_entreprise": "arrivée dans une nouvelle entreprise",
 }
@@ -254,7 +254,7 @@ def _as_month(value) -> Optional[str]:
     """Normalise a date to "YYYY-MM", or drop it.
 
     A year alone ("2026") is refused: the whole point of this fact is whether
-    the appointment is recent, and processors/icp_scorer._months_between needs
+    the appointment is recent, and processors/icp_scorer.months_between needs
     a month to answer. An undated appointment is not a weaker fact, it is a
     different claim — and one no source made.
     """
@@ -295,7 +295,7 @@ def appointment_label(appointment: Optional[dict]) -> Optional[str]:
     """
     if not isinstance(appointment, dict):
         return None
-    kind = _APPOINTMENT_LABELS.get(appointment.get("type"))
+    kind = APPOINTMENT_LABELS.get(appointment.get("type"))
     if not kind or not appointment.get("value"):
         return None
     return f"{appointment['value']} — {kind} (source : {appointment.get('source')})"

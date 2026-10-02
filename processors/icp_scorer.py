@@ -48,8 +48,12 @@ def _value(fact) -> object:
     return fact.get("value")
 
 
-def _months_between(older: Optional[str], reference: date) -> Optional[int]:
-    """Months from a 'YYYY-MM' (or 'YYYY-MM-DD') string to the reference date."""
+def months_between(older: Optional[str], reference: date) -> Optional[int]:
+    """Months from a 'YYYY-MM' (or 'YYYY-MM-DD') string to the reference date.
+
+    Public because enrichers/angle_writer reads it too, to tell a recent
+    appointment from an old one: one date parser for one notion of recency.
+    """
     if not older:
         return None
     try:
@@ -110,7 +114,7 @@ def _score_signals(facts: dict, rules: IcpRules, run_date: date) -> tuple[int, i
     count = len(signals)
 
     recent = any(
-        (age := _months_between(s.get("date"), run_date)) is not None
+        (age := months_between(s.get("date"), run_date)) is not None
         and 0 <= age <= rules.signal_recency_months
         for s in signals
     )

@@ -3,23 +3,33 @@ Step 8 — Commercial angle writing.
 
 Runs last, on validated facts only, and only for leads worth contacting.
 Separating this from evaluation is deliberate: a model asked to judge and to
-sell in the same breath will justify the sale it just wrote.
+sell in the same breath will justify the sale it just wrote. The same
+separation is why this step receives facts and never the raw sources — it
+cannot verify anything, so it is given nothing to verify.
+
+The angle consolidates the two halves of the research in one text: what the
+company does, and who the contact is. When the facts carry a recent
+appointment, that is where the angle starts — see recent_appointment.
 """
 import json
 import logging
 import time
+from datetime import date
 from typing import Optional
 
 import anthropic
 
 import config
 from api.provider_status import StepOutcome
+from enrichers.fact_extractor import APPOINTMENT_LABELS
 from enrichers.retry import (
     CREDIT_EXHAUSTED_MESSAGE,
     AuthError,
     CreditExhausted,
     retry_api_call,
 )
+from processors.icp_rules import IcpRules, load_rules
+from processors.icp_scorer import months_between
 
 logger = logging.getLogger(__name__)
 
@@ -28,19 +38,33 @@ communication digitale basée au Maroc (+10 ans d'expertise).
 
 Services : Marketing Digital, Contenu Créatif, Développement Web, Lead Generation.
 
-On te transmet des FAITS déjà vérifiés et sourcés. Tu n'as pas accès aux sources brutes.
+On te transmet des FAITS déjà vérifiés et sourcés, sur l'ENTREPRISE et sur la
+PERSONNE. Tu n'as pas accès aux sources brutes : tu ne peux donc rien vérifier,
+et tu n'ajoutes rien.
 
 Règles :
 1. Tu n'écris que ce que les faits contiennent. Aucun chiffre, aucune date, aucune
-   technologie qui ne figure pas dans les faits fournis.
+   technologie, aucun poste qui ne figure pas dans les faits fournis.
 2. Interdits : "leader du marché", "acteur de référence", "depuis X années",
    "équipe de X personnes" — sauf si présents dans les faits.
 3. Si les faits sont pauvres, écris un résumé court plutôt qu'un texte étoffé.
+4. Une seule accroche, qui tient la personne ET son entreprise : à qui tu
+   écris, ce que son entreprise fait, et le service BoxCom que ce rapprochement
+   appelle. Une accroche qui ne parle que de l'entreprise rate la moitié du
+   travail.
+5. PRIORITÉ ABSOLUE : si une prise de poste récente figure dans les faits,
+   l'accroche part de là. Quelqu'un qui vient d'arriver à son poste est au seul
+   moment où il remet en question les prestataires en place. Nomme le mouvement
+   tel que les faits le décrivent — nouveau poste dans la même entreprise, ou
+   arrivée dans l'entreprise — et sa date, puis enchaîne sur l'entreprise.
+6. Aucune prise de poste dans les faits ? N'en évoque aucune, même à mots
+   couverts : "félicitations pour votre nouveau rôle" est une invention comme
+   une autre.
 
 Produis :
 - "activity_summary" : 2-3 phrases décrivant l'activité de l'entreprise.
 - "conversion_angle" : une accroche personnalisée reliant un fait précis à un
-  service BoxCom nommé.
+  service BoxCom nommé, adressée à cette personne à son poste.
 
 Réponds UNIQUEMENT par ce JSON, sans markdown :
 {"activity_summary": "...", "conversion_angle": "..."}"""
@@ -49,8 +73,16 @@ USER_PROMPT_TEMPLATE = """Prospect : {first_name} {last_name}, {job_title} chez 
 
 Faits vérifiés :
 {facts_json}
-
+{appointment_note}
 Rédige le JSON demandé."""
+
+# What the priority instruction says when the facts carry a recent appointment.
+# The model is told the move and its date, never the source: the writer judges
+# nothing and verifies nothing, which is why it is kept away from the sources.
+APPOINTMENT_NOTICE = (
+    "\nSIGNAL PRIORITAIRE — prise de poste récente : {month}, {wording}.\n"
+    "L'accroche part de ce mouvement, sans rien y ajouter.\n"
+)
 
 _writer_disabled = False
 # Why the step gave up, in words the operator can act on (reaches the run's
@@ -94,7 +126,51 @@ def should_write(lead: dict) -> bool:
     return (lead.get("evidence_level") or "none") != "none"
 
 
-def _write_one(lead: dict, enrich_instructions: str = "") -> dict:
+def _facts_of(lead: dict) -> dict:
+    """The lead's validated facts, from the dict or from the stored JSON."""
+    facts = lead.get("facts")
+    if isinstance(facts, dict):
+        return facts
+    try:
+        parsed = json.loads(lead.get("facts_json") or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def recent_appointment(lead: dict, rules: IcpRules, today: date) -> Optional[dict]:
+    """The contact's appointment, when it is recent enough to lead the angle.
+
+    "Recent" is icp_rules.signal_recency_months, the same window the scorer
+    applies to a company signal: the operator tunes one number, not two. An
+    older appointment is not discarded — it stays a true fact in facts_json —
+    it simply stops being the hook, because "vous venez de prendre vos
+    fonctions" addressed to someone in post for three years reads as a form
+    letter.
+    """
+    appointment = _facts_of(lead).get("prise_de_poste")
+    if not isinstance(appointment, dict):
+        return None
+    if appointment.get("type") not in APPOINTMENT_LABELS:
+        return None
+    age = months_between(appointment.get("value"), today)
+    if age is None or not 0 <= age <= rules.signal_recency_months:
+        return None
+    return appointment
+
+
+def _appointment_note(appointment: Optional[dict]) -> str:
+    """The priority instruction for a recent appointment, or nothing."""
+    if not appointment:
+        return ""
+    return APPOINTMENT_NOTICE.format(
+        month=appointment.get("value"),
+        wording=APPOINTMENT_LABELS[appointment["type"]],
+    )
+
+
+def _write_one(lead: dict, enrich_instructions: str = "",
+               appointment: Optional[dict] = None) -> dict:
     global _writer_disabled, _disabled_reason
     global _calls_attempted, _calls_succeeded
     empty = {"activity_summary": None, "conversion_angle": None}
@@ -116,6 +192,7 @@ def _write_one(lead: dict, enrich_instructions: str = "") -> dict:
         job_title=lead.get("job_title", ""),
         company=lead.get("company", ""),
         facts_json=lead.get("facts_json") or json.dumps(lead.get("facts") or {}, ensure_ascii=False),
+        appointment_note=_appointment_note(appointment),
     )
     name = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
 
@@ -162,9 +239,21 @@ def _write_one(lead: dict, enrich_instructions: str = "") -> dict:
     return written
 
 
-def write_leads_angles(leads: list[dict], enrich_instructions: str = "", registry=None) -> list[dict]:
-    """Write summary and angle for every lead that qualifies."""
+def write_leads_angles(
+    leads: list[dict],
+    enrich_instructions: str = "",
+    registry=None,
+    rules: Optional[IcpRules] = None,
+    run_date: Optional[date] = None,
+) -> list[dict]:
+    """Write summary and angle for every lead that qualifies.
+
+    ``rules`` and ``run_date`` only arbitrate how recent an appointment has to
+    be to lead the angle; they are loaded once per run, not once per lead.
+    """
     _reset_state()
+    active_rules = rules or load_rules()
+    today = run_date or date.today()
 
     eligible = [l for l in leads if should_write(l)]
     skipped = len(leads) - len(eligible)
@@ -185,7 +274,10 @@ def write_leads_angles(leads: list[dict], enrich_instructions: str = "", registr
     for i, lead in enumerate(eligible, 1):
         name = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
         logger.info(f"Angle writing [{i}/{total}]: {name}")
-        result = _write_one(lead, enrich_instructions)
+        result = _write_one(
+            lead, enrich_instructions,
+            recent_appointment(lead, active_rules, today),
+        )
         lead["activity_summary"] = result["activity_summary"]
         lead["conversion_angle"] = result["conversion_angle"]
         if result["activity_summary"]:
