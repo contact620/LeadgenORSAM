@@ -11,6 +11,7 @@ from dotenv import set_key, load_dotenv
 
 import config as pipeline_config
 from config import _is_placeholder
+from enrichers.retry import CREDIT_EXHAUSTED_MESSAGE, is_credit_exhausted
 
 router = APIRouter()
 
@@ -164,11 +165,24 @@ async def validate_api_key(body: dict):
         elif key_type == "anthropic":
             import anthropic
             client = anthropic.Anthropic(api_key=key_value)
-            client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=5,
-                messages=[{"role": "user", "content": "hi"}],
-            )
+            try:
+                client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=5,
+                    messages=[{"role": "user", "content": "hi"}],
+                )
+            except Exception as e:
+                # Without these two branches the fallback below answered with
+                # repr(SDK error) truncated at 200 characters: an English
+                # payload dump in which a spent balance (HTTP 400) and a bad
+                # key (HTTP 401) look alike, although the operator has to do
+                # something different about each.
+                if is_credit_exhausted(e):
+                    return {"valid": False,
+                            "error": f"Clé valide, mais {CREDIT_EXHAUSTED_MESSAGE}."}
+                if getattr(e, "status_code", None) in (401, 403):
+                    return {"valid": False, "error": "Clé invalide"}
+                raise
             return {"valid": True}
 
         elif key_type == "perplexity":
