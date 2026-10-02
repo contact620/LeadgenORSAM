@@ -48,8 +48,11 @@ CSV_COLUMNS: list[str] = [
     # genuinely low-fit lead from a column Apollo never displayed. Both were
     # empty for the 20 leads of the 2026-09-25 demo, and nothing said so.
     "prescore", "apollo_industry", "employee_count",
-    # ICP scoring
-    "icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
+    # ICP verdict. The 0-100 score, its tier, its rationale ("Secteur 70/100,
+    # taille 40/100...") and its per-axis detail are computed but deliberately
+    # NOT exported: the client asked for the score to be removed, and a CSV
+    # that still carries it only moves the score out of sight of one screen.
+    # disqualification_reason stays: it is a factual reason, not a grade.
     "disqualification_reason", "evidence_level", "evidence_verified",
     # AI enrichment
     "activity_summary", "conversion_angle", "facts_json",
@@ -71,7 +74,6 @@ CSV_COLUMNS: list[str] = [
 
 # Fields produced by the enrichment phase, persisted per lead in the pool DB.
 ENRICH_FIELDS: list[str] = [
-    "icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
     "disqualification_reason", "evidence_level", "evidence_verified",
     "activity_summary", "conversion_angle", "facts_json", "prise_de_poste",
     "digital_maturity", "estimated_budget", "business_signals",

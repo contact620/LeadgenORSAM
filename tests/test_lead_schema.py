@@ -293,6 +293,22 @@ def test_pool_leads_expose_every_enrich_field(tmp_path, monkeypatch):
         assert field in lead, f"{field} missing from pool lead"
 
 
+def test_the_removed_score_is_not_exported_anywhere():
+    """The client asked for the 0-100 score to go. icp_rationale spells it out
+    ("Secteur 70/100, taille 40/100..."), so hiding one screen is not enough:
+    none of the four may reach the CSV or the pool's persisted fields."""
+    for column in ("icp_score", "icp_tier", "icp_rationale", "icp_scores_detail"):
+        assert column not in CSV_COLUMNS, f"{column} leaks the score into the CSV"
+        assert column not in ENRICH_FIELDS, f"{column} would be persisted in the pool"
+
+
+def test_the_factual_disqualification_reason_is_still_exported():
+    """A factual reason, not a grade: the operator needs it to know why a row
+    carries no angle."""
+    assert "disqualification_reason" in CSV_COLUMNS
+    assert "disqualification_reason" in ENRICH_FIELDS
+
+
 def test_the_person_research_is_exported():
     """The search is billed once per lead; a field the export drops is a credit
     spent for nothing."""
