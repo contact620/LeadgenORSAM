@@ -1,6 +1,10 @@
-import { X, Briefcase, MapPin, Mail, Phone, Linkedin, Globe, TrendingUp, DollarSign, Activity, Zap, Copy, ExternalLink, AlertTriangle } from 'lucide-react'
+import { useState } from 'react'
+import { createPortal } from 'react-dom'
+import { MessageSquare, X, Briefcase, MapPin, Mail, Phone, Linkedin, Globe, TrendingUp, DollarSign, Activity, Zap, Copy, ExternalLink, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
 import { EVIDENCE_LEVEL_STYLE, emailSourceLabel, evidenceLabel } from '@/lib/tiers'
+import { LinkedinMessageDialog, NO_ANGLE_REASON, hasAngle } from './LinkedinMessage'
 
 function copyToClipboard(text: string, label: string) {
   navigator.clipboard.writeText(text).then(() => toast.success(`${label} copié`))
@@ -28,6 +32,7 @@ interface LeadData {
   domain_mismatch?: boolean
   activity_summary?: string
   conversion_angle?: string
+  facts_json?: string
   digital_maturity?: string
   estimated_budget?: string
   business_signals?: string
@@ -45,6 +50,7 @@ interface Props {
 }
 
 export function LeadDetailModal({ lead, onClose }: Props) {
+  const [showMessage, setShowMessage] = useState(false)
   const fullName = [lead.first_name, lead.last_name].filter(Boolean).join(' ')
   const hasEnrichment = lead.activity_summary || lead.conversion_angle || lead.digital_maturity || lead.estimated_budget || lead.business_signals
 
@@ -56,7 +62,10 @@ export function LeadDetailModal({ lead, onClose }: Props) {
     { key: 'business_signals', label: 'Signaux business', icon: <Zap className="w-4 h-4" /> },
   ]
 
-  return (
+  // Portalled to <body>: rendered in place, an ancestor transform made this
+  // fixed overlay offset and slid the header (name, close button) under the
+  // app bar.
+  return createPortal(
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center p-4"
       style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}
@@ -164,6 +173,27 @@ export function LeadDetailModal({ lead, onClose }: Props) {
           )}
         </div>
 
+        {/* LinkedIn message — needs an angle, since that is where the sourced
+            facts are assembled. Without one the button is off and says why. */}
+        <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--th-border-default)' }}>
+          <button
+            onClick={() => setShowMessage(true)}
+            disabled={!hasAngle(lead)}
+            className={cn('inline-flex items-center gap-2 rounded-lg text-sm font-medium', hasAngle(lead) && 'btn-grad text-white')}
+            style={hasAngle(lead)
+              ? { padding: '8px 16px', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }
+              : { padding: '8px 16px', color: 'var(--th-text-ghost)', background: 'var(--th-glass-inset)', border: '1px solid var(--th-glass-sm-border)', cursor: 'not-allowed', fontFamily: 'inherit' }}
+          >
+            <MessageSquare className="w-4 h-4" />
+            Générer un message LinkedIn
+          </button>
+          {!hasAngle(lead) && (
+            <p className="text-xs mt-2" style={{ color: 'var(--th-text-faint)' }}>{NO_ANGLE_REASON}</p>
+          )}
+        </div>
+
+        {showMessage && <LinkedinMessageDialog lead={lead} onClose={() => setShowMessage(false)} />}
+
         {/* Where each contact came from */}
         {(lead.email_source || lead.domain_mx_provider != null || lead.domain_catch_all != null) && (
           <div className="p-6 space-y-2" style={{ borderBottom: '1px solid var(--th-border-default)' }}>
@@ -263,6 +293,7 @@ export function LeadDetailModal({ lead, onClose }: Props) {
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

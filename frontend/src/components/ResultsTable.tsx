@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react'
-import { Download, Search, ExternalLink, ChevronLeft, ChevronRight, SearchX, ArrowUpDown, ArrowUp, ArrowDown, Copy, CheckCircle2, XCircle, HelpCircle, Clock } from 'lucide-react'
+import { Download, Search, ExternalLink, MessageSquare, ChevronLeft, ChevronRight, SearchX, ArrowUpDown, ArrowUp, ArrowDown, Copy, CheckCircle2, XCircle, HelpCircle, Clock } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { getDownloadUrl, type Lead } from '@/lib/api'
 import { evidenceLabel } from '@/lib/tiers'
 import { LeadDetailModal } from './LeadDetailModal'
+import { LinkedinMessageDialog, NO_ANGLE_REASON, hasAngle } from './LinkedinMessage'
 
 // Visual style for each email_status value the cascade can produce
 // (enrichers/email_cascade.py::EMAIL_STATUSES).
@@ -48,6 +49,7 @@ export function ResultsTable({ leads, jobId }: Props) {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
+  const [messageLead, setMessageLead] = useState<Lead | null>(null)
   const [sortBy, setSortBy] = useState<SortKey>(null)
   const [sortDir, setSortDir] = useState<SortDir>('desc')
 
@@ -97,6 +99,10 @@ export function ResultsTable({ leads, jobId }: Props) {
       {/* Lead detail modal */}
       {selectedLead && (
         <LeadDetailModal lead={selectedLead} onClose={() => setSelectedLead(null)} />
+      )}
+      {/* Message dialog opened from a row's action button */}
+      {messageLead && (
+        <LinkedinMessageDialog lead={messageLead} onClose={() => setMessageLead(null)} />
       )}
 
       {/* Header */}
@@ -189,12 +195,13 @@ export function ResultsTable({ leads, jobId }: Props) {
             <thead>
               <tr style={{ borderBottom: '1px solid var(--th-border-default)', background: 'var(--th-surface-hover)' }}>
                 {([
-                  { key: 'name' as SortKey, label: 'Nom', width: '18%' },
-                  { key: 'company' as SortKey, label: 'Société', width: '15%' },
-                  { key: null, label: 'Email', width: '26%' },
-                  { key: null, label: 'Téléphone', width: '15%' },
+                  { key: 'name' as SortKey, label: 'Nom', width: '17%' },
+                  { key: 'company' as SortKey, label: 'Société', width: '14%' },
+                  { key: null, label: 'Email', width: '25%' },
+                  { key: null, label: 'Téléphone', width: '14%' },
                   { key: null, label: 'LinkedIn', width: '9%' },
-                  { key: null, label: 'Angle IA', width: '17%' },
+                  { key: null, label: 'Angle IA', width: '16%' },
+                  { key: null, label: 'Message', width: '5%' },
                 ]).map(h => (
                   <th
                     key={h.label}
@@ -203,7 +210,8 @@ export function ResultsTable({ leads, jobId }: Props) {
                     onClick={h.key ? () => handleSort(h.key) : undefined}
                   >
                     <span className="inline-flex items-center gap-1">
-                      {h.label}
+                      {/* The action column is an icon: its label is for screen readers. */}
+                      {h.label === 'Message' ? <span className="sr-only">{h.label}</span> : h.label}
                       {h.key && (
                         sortBy === h.key
                           ? (sortDir === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)
@@ -217,7 +225,7 @@ export function ResultsTable({ leads, jobId }: Props) {
             <tbody>
               {pageLeads.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center">
+                  <td colSpan={7} className="px-4 py-12 text-center">
                     <SearchX className="w-10 h-10 mx-auto mb-3" style={{ color: 'var(--th-text-ghost)' }} />
                     <p className="text-sm" style={{ color: 'var(--th-text-faint)' }}>Aucun lead trouvé</p>
                   </td>
@@ -321,6 +329,27 @@ export function ResultsTable({ leads, jobId }: Props) {
                         {lead.conversion_angle
                           ? <span className="block truncate text-xs" title={lead.conversion_angle} style={{ color: 'var(--th-text-quaternary)' }}>{lead.conversion_angle}</span>
                           : <span className="text-xs" title="Aucun angle : la recherche IA était désactivée ou n'a rien produit pour ce lead" style={{ color: 'var(--th-text-ghost)' }}>—</span>}
+                      </td>
+                      <td className="px-3 py-3">
+                        {/* The wrapper carries the tooltip: a disabled button does not
+                            reliably show its own title in every browser. */}
+                        <span title={hasAngle(lead) ? 'Générer un message LinkedIn' : NO_ANGLE_REASON} onClick={e => e.stopPropagation()} className="inline-flex">
+                          <button
+                            onClick={e => { e.stopPropagation(); setMessageLead(lead) }}
+                            disabled={!hasAngle(lead)}
+                            aria-label={hasAngle(lead) ? 'Générer un message LinkedIn' : NO_ANGLE_REASON}
+                            className="p-1.5 rounded-md transition-colors"
+                            style={{
+                              color: hasAngle(lead) ? 'var(--th-primary)' : 'var(--th-text-ghost)',
+                              background: hasAngle(lead) ? 'var(--th-primary-soft)' : 'none',
+                              border: 'none',
+                              cursor: hasAngle(lead) ? 'pointer' : 'not-allowed',
+                              opacity: hasAngle(lead) ? 1 : 0.5,
+                            }}
+                          >
+                            <MessageSquare className="w-4 h-4" />
+                          </button>
+                        </span>
                       </td>
                     </tr>
                 )

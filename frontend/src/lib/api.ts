@@ -93,6 +93,51 @@ export interface Lead {
   first_seen_at?: string
 }
 
+// ── LinkedIn message ─────────────────────────────────────────────────────────
+
+/** The lead fields the message route reads — nothing else leaves the browser. */
+export interface LinkedinMessageLead {
+  first_name?: string
+  last_name?: string
+  job_title?: string
+  company?: string
+  location?: string
+  conversion_angle?: string
+  facts_json?: string
+}
+
+export interface LinkedinMessage {
+  message: string
+  language: string
+  language_label: string
+  // What the language was deduced from: the country fact, the declared
+  // location, or the French default when neither gave a reliable hint.
+  language_basis: 'pays' | 'localisation' | 'defaut'
+}
+
+export async function generateLinkedinMessage(lead: LinkedinMessageLead): Promise<LinkedinMessage> {
+  const res = await fetch('/api/leads/linkedin-message', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      first_name: lead.first_name,
+      last_name: lead.last_name,
+      job_title: lead.job_title,
+      company: lead.company,
+      location: lead.location,
+      conversion_angle: lead.conversion_angle,
+      facts_json: lead.facts_json,
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => null)
+    // FastAPI sends detail as a string for our own errors, as a list for 422
+    // validation failures — only the string is fit for the operator.
+    throw new Error(typeof err?.detail === 'string' ? err.detail : 'La génération du message a échoué')
+  }
+  return res.json()
+}
+
 export interface RerunParams {
   url: string
   max_leads: number
