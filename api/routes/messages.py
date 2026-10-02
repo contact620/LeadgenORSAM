@@ -39,18 +39,19 @@ DEFAULT_LANGUAGE = "fr"
 LANGUAGE_LABELS = {
     "fr": "français",
     "en": "anglais",
-    "es": "espagnol",
+    "ar": "arabe",
     "pt": "portugais",
+    "es": "espagnol",
+    "nl": "néerlandais",
     "de": "allemand",
     "it": "italien",
-    "nl": "néerlandais",
 }
 
 # Language name used inside the prompt, written in that language's own
 # English name so the instruction is unambiguous to the model.
 _PROMPT_LANGUAGE_NAMES = {
-    "fr": "French", "en": "English", "es": "Spanish", "pt": "Portuguese",
-    "de": "German", "it": "Italian", "nl": "Dutch",
+    "fr": "French", "en": "English", "ar": "Arabic", "pt": "Portuguese",
+    "es": "Spanish", "nl": "Dutch", "de": "German", "it": "Italian",
 }
 
 # Country -> language of business correspondence. Only countries with a single
@@ -70,10 +71,21 @@ for _lang, _names in {
            "australie", "australia", "nouvelle-zelande", "new zealand",
            "emirats arabes unis", "united arab emirates", "uae", "arabie saoudite",
            "saudi arabia", "inde", "india", "nigeria", "kenya", "ghana",
-           "afrique du sud", "south africa", "singapour", "singapore"],
+           "afrique du sud", "south africa", "singapour", "singapore",
+           # Anglophone countries of the ICP's "rest of Africa" zone
+           # (config/icp_rules.json). Bilingual or ambiguous ones (Rwanda,
+           # Mauritius, Seychelles, Ethiopia...) are left out on purpose.
+           "tanzanie", "tanzania", "ouganda", "uganda", "zambie", "zambia",
+           "zimbabwe", "namibie", "namibia", "botswana", "malawi", "lesotho",
+           "eswatini", "sierra leone", "liberia", "gambie", "gambia",
+           "soudan du sud", "south sudan"],
     "es": ["espagne", "spain", "mexique", "mexico", "argentine", "argentina",
            "colombie", "colombia", "chili", "chile", "perou", "peru"],
-    "pt": ["portugal", "bresil", "brazil", "brasil"],
+    "pt": ["portugal", "bresil", "brazil", "brasil",
+           # Lusophone countries of the ICP's "rest of Africa" zone
+           "angola", "mozambique", "cap-vert", "cap vert", "cabo verde",
+           "cape verde", "guinee-bissau", "guinee bissau", "guinea-bissau",
+           "sao tome-et-principe", "sao tome et principe", "sao tome"],
     "de": ["allemagne", "germany", "deutschland", "autriche", "austria"],
     "it": ["italie", "italy", "italia"],
     "nl": ["pays-bas", "netherlands", "the netherlands"],
@@ -97,6 +109,9 @@ class LinkedinMessageRequest(BaseModel):
     # The lead's facts, as stored on the lead (JSON string) or already parsed.
     facts_json: Optional[str] = None
     facts: Optional[dict] = None
+    # Operator's explicit choice ("fr", "en", "ar"...). When given it is
+    # authoritative and the country/location deduction is skipped.
+    langue: Optional[str] = None
 
 
 def _normalize(text: str) -> str:
@@ -206,7 +221,8 @@ open question.
 4. Do not sign: the sender adds their own name. No placeholders such as \
 [Name].
 5. Never mention scores, "angle", "facts", or any automated analysis.
-6. Write the message in {language}.
+6. Write the whole message in {language}, whatever the language of the data \
+below. Write any number with Western digits (0-9).
 
 Reply with the message text only, no quotes, no preamble."""
 
@@ -222,7 +238,16 @@ Write the message."""
 
 
 def _numbers_in(text: str) -> set[str]:
-    return set(re.findall(r"\d+", text))
+    """Digit runs in the text, with every script mapped to 0-9.
+
+    The regex digit class matches Arabic-Indic digits too; without the mapping a
+    message that renders the source's "45" as "٤٥" would be rejected as
+    inventing a number.
+    """
+    return {
+        "".join(str(unicodedata.decimal(c)) for c in run)
+        for run in re.findall(r"\d+", text)
+    }
 
 
 def invented_numbers(message: str, source_text: str) -> set[str]:
@@ -246,6 +271,34 @@ def _call_model(system: str, user: str) -> str:
     return retry_api_call(_do_request, max_retries=2, operation_name="LinkedIn message")
 
 
+def _resolve_language(req: LinkedinMessageRequest, raw_facts: dict) -> tuple[str, str]:
+    """The operator's explicit choice wins; otherwise the deduction.
+
+    Returns (language code, basis); basis is "choix" for an explicit choice.
+    """
+    if req.langue is not None and req.langue.strip():
+        code = req.langue.strip().lower()
+        if code not in LANGUAGE_LABELS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Langue non prise en charge : « {req.langue.strip()} ».",
+            )
+        return code, "choix"
+    # Raw facts, not the filtered ones: detect_language does its own source check.
+    return detect_language(raw_facts, req.location)
+
+
+@router.post("/leads/linkedin-message/language")
+def suggest_linkedin_message_language(req: LinkedinMessageRequest):
+    """The language the deduction would pick, so the UI can pre-select it.
+
+    No model call and no API key needed: the operator sees what was deduced,
+    and why, before choosing.
+    """
+    code, basis = detect_language(_load_facts(req), req.location)
+    return {"language": code, "language_label": LANGUAGE_LABELS[code], "language_basis": basis}
+
+
 @router.post("/leads/linkedin-message")
 def generate_linkedin_message(req: LinkedinMessageRequest):
     angle = (req.conversion_angle or "").strip()
@@ -265,8 +318,7 @@ def generate_linkedin_message(req: LinkedinMessageRequest):
 
     raw_facts = _load_facts(req)
     facts = sourced_facts(raw_facts)
-    # Raw facts, not the filtered ones: detect_language does its own source check.
-    language, basis = detect_language(raw_facts, req.location)
+    language, basis = _resolve_language(req, raw_facts)
 
     system = SYSTEM_PROMPT.format(language=_PROMPT_LANGUAGE_NAMES[language])
     full_name = " ".join(p for p in (req.first_name, req.last_name) if p)

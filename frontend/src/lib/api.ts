@@ -106,28 +106,50 @@ export interface LinkedinMessageLead {
   facts_json?: string
 }
 
-export interface LinkedinMessage {
-  message: string
+/** What a language came from: the country fact, the declared location, the
+ *  French default when neither gave a reliable hint, or the operator's choice. */
+export type LanguageBasis = 'pays' | 'localisation' | 'defaut' | 'choix'
+
+export interface LinkedinLanguage {
   language: string
   language_label: string
-  // What the language was deduced from: the country fact, the declared
-  // location, or the French default when neither gave a reliable hint.
-  language_basis: 'pays' | 'localisation' | 'defaut'
+  language_basis: LanguageBasis
 }
 
-export async function generateLinkedinMessage(lead: LinkedinMessageLead): Promise<LinkedinMessage> {
+export interface LinkedinMessage extends LinkedinLanguage {
+  message: string
+}
+
+function linkedinBody(lead: LinkedinMessageLead, langue?: string) {
+  return JSON.stringify({
+    first_name: lead.first_name,
+    last_name: lead.last_name,
+    job_title: lead.job_title,
+    company: lead.company,
+    location: lead.location,
+    conversion_angle: lead.conversion_angle,
+    facts_json: lead.facts_json,
+    langue,
+  })
+}
+
+/** The language the backend would deduce — pre-selected, never imposed. */
+export async function suggestLinkedinLanguage(lead: LinkedinMessageLead): Promise<LinkedinLanguage> {
+  const res = await fetch('/api/leads/linkedin-message/language', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: linkedinBody(lead),
+  })
+  if (!res.ok) throw new Error('La langue n\'a pas pu être déduite')
+  return res.json()
+}
+
+/** `langue` is the operator's explicit choice; omitted, the backend deduces. */
+export async function generateLinkedinMessage(lead: LinkedinMessageLead, langue?: string): Promise<LinkedinMessage> {
   const res = await fetch('/api/leads/linkedin-message', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      first_name: lead.first_name,
-      last_name: lead.last_name,
-      job_title: lead.job_title,
-      company: lead.company,
-      location: lead.location,
-      conversion_angle: lead.conversion_angle,
-      facts_json: lead.facts_json,
-    }),
+    body: linkedinBody(lead, langue),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => null)

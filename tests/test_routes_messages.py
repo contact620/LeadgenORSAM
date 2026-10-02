@@ -217,3 +217,80 @@ def test_a_provider_failure_is_a_readable_502(client, stub, monkeypatch):
     response = client.post(ROUTE, json=_payload())
     assert response.status_code == 502
     assert "Réessayez" in response.json()["detail"]
+
+
+# ── Explicit language choice ("langue") ──────────────────────────────────────
+
+def test_an_explicit_language_overrides_the_deduction(client, stub):
+    # The facts say Morocco (fr) and the location says UAE (en): the choice wins.
+    body = _payload(langue="ar", location="Dubai, United Arab Emirates")
+    response = client.post(ROUTE, json=body).json()
+    assert response["language"] == "ar"
+    assert response["language_label"] == "arabe"
+    assert response["language_basis"] == "choix"
+    assert "Arabic" in stub.calls[0]["system"]
+
+
+def test_the_language_choice_is_case_and_space_tolerant(client, stub):
+    assert client.post(ROUTE, json=_payload(langue=" NL ")).json()["language"] == "nl"
+    assert "Dutch" in stub.calls[0]["system"]
+
+
+@pytest.mark.parametrize("langue", [None, "", "  "])
+def test_without_a_choice_the_deduction_still_applies(client, stub, langue):
+    response = client.post(ROUTE, json=_payload(langue=langue)).json()
+    assert response["language"] == "fr"
+    assert response["language_basis"] == "pays"
+
+
+def test_an_unknown_language_is_refused_without_a_model_call(client, stub):
+    response = client.post(ROUTE, json=_payload(langue="klingon"))
+    assert response.status_code == 422
+    assert "Langue non prise en charge" in response.json()["detail"]
+    assert stub.calls == []
+
+
+def test_the_suggestion_route_reports_the_deduction_without_a_model_call(client, stub):
+    body = _payload(location="Dubai, United Arab Emirates", facts_json=None)
+    response = client.post(ROUTE + "/language", json=body)
+    assert response.json() == {"language": "en", "language_label": "anglais",
+                               "language_basis": "localisation"}
+    assert stub.calls == []
+
+
+def test_the_suggestion_route_works_without_an_api_key(client, stub, monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "")
+    assert client.post(ROUTE + "/language", json=_payload()).status_code == 200
+
+
+@pytest.mark.parametrize("country,expected", [
+    ("Angola", "pt"), ("Mozambique", "pt"), ("Cap-Vert", "pt"),
+    ("Tanzanie", "en"), ("Zambie", "en"), ("Sierra Leone", "en"),
+    ("Canada", "fr"), ("Belgique", "fr"),
+])
+def test_icp_zone_countries_get_a_sensible_default(country, expected):
+    facts = {"pays": {"value": country, "source": "website"}}
+    assert messages.detect_language(facts, None)[0] == expected
+
+
+# ── The numeric guard holds across scripts ───────────────────────────────────
+
+def test_arabic_indic_digits_are_compared_as_numbers():
+    sources = "45 employés, site lancé en 2026"
+    assert messages.invented_numbers("لديكم ٤٥ موظفا", sources) == set()
+    assert messages.invented_numbers("منذ ٢٠٢٦", sources) == set()
+    assert messages.invented_numbers("لديكم ٤٥٠ موظفا", sources) == {"450"}
+
+
+def test_an_arabic_message_with_an_invented_number_is_rejected(client, stub):
+    stub.replies[:] = ["مرحبا سلمى، منذ ١٥ عاما نرافق الوكالات.",
+                       "مرحبا سلمى، منذ ١٥ عاما نرافق الوكالات."]
+    response = client.post(ROUTE, json=_payload(langue="ar"))
+    assert response.status_code == 502
+    assert len(stub.calls) == 2
+
+
+def test_a_dutch_message_with_an_invented_number_is_rejected(client, stub):
+    stub.replies[:] = ["Hallo Salma, al 15 jaar helpen wij bureaus.",
+                       "Hallo Salma, al 15 jaar helpen wij bureaus."]
+    assert client.post(ROUTE, json=_payload(langue="nl")).status_code == 502
