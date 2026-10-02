@@ -397,3 +397,64 @@ def test_a_run_with_no_leads_is_not_reported_as_degraded():
             fx._reset_state()
 
     assert reg.to_dict()["anthropic_facts"]["status"] == "ok"
+
+
+# ── Person material reaches the prompt (task 10) ──────────────────────────────
+
+def _capture_user_prompt(lead, enabled=frozenset({"website", "perplexity"})):
+    """Run one real extraction against a fake Anthropic client and return the
+    user prompt that was actually sent."""
+    from unittest.mock import MagicMock
+
+    sent = {}
+
+    def _create(**kwargs):
+        sent["prompt"] = kwargs["messages"][0]["content"]
+        block = MagicMock()
+        block.text = '{"identite_confirmee": true}'
+        message = MagicMock()
+        message.content = [block]
+        return message
+
+    client = MagicMock()
+    client.messages.create.side_effect = _create
+
+    fx._reset_state()
+    with patch("enrichers.fact_extractor.config.ANTHROPIC_API_KEY", "sk-test"), \
+         patch("enrichers.fact_extractor.anthropic.Anthropic", return_value=client), \
+         patch("enrichers.fact_extractor.time.sleep", return_value=None):
+        try:
+            extract_leads_facts([lead], enabled, registry=ProviderRegistry())
+        finally:
+            fx._reset_state()
+    return sent["prompt"]
+
+
+def test_the_person_research_reaches_the_extraction_prompt():
+    """The search is paid for per lead; a field the extractor never reads is a
+    credit spent for nothing."""
+    lead = dict(_leads(1)[0],
+                person_research="Poste actuel : directrice marketing depuis 2026-06",
+                digital_maturity="Score: 4/10")
+    prompt = _capture_user_prompt(lead)
+    assert "directrice marketing depuis 2026-06" in prompt
+    assert "Score: 4/10" in prompt
+
+
+def test_the_google_snippets_reach_the_extraction_prompt_as_a_linkedin_source():
+    """"linkedin" is in VALID_SOURCES but nothing in the prompt was ever
+    labelled that way, so the model could never legitimately use it."""
+    lead = dict(_leads(1)[0],
+                linkedin_snippets="- Amal Benali — Directrice marketing chez Acme "
+                                  "(https://www.linkedin.com/in/amal-b)")
+    prompt = _capture_user_prompt(lead)
+    assert 'SOURCE "linkedin"' in prompt
+    assert "Directrice marketing chez Acme" in prompt
+
+
+def test_a_lead_without_person_material_renders_an_explicit_absence():
+    """Not the word "None": a model reading "None" as content invents around
+    it."""
+    prompt = _capture_user_prompt(_leads(1)[0])
+    assert "None" not in prompt
+    assert prompt.count("Non disponible") >= 2

@@ -55,6 +55,11 @@ CSV_COLUMNS: list[str] = [
     "activity_summary", "conversion_angle", "facts_json",
     # Company intelligence
     "digital_maturity", "estimated_budget", "business_signals",
+    # Person intelligence — the contact, not their employer: current role and
+    # since when, scope, publicly attributed achievements, public appearances.
+    # Researched once per lead and never cached, see
+    # enrichers/perplexity_enricher.PERSON_PROMPT.
+    "person_research",
     # Deduplication
     "is_duplicate", "first_seen_at",
 ]
@@ -65,4 +70,5 @@ ENRICH_FIELDS: list[str] = [
     "disqualification_reason", "evidence_level", "evidence_verified",
     "activity_summary", "conversion_angle", "facts_json",
     "digital_maturity", "estimated_budget", "business_signals",
+    "person_research",
 ]

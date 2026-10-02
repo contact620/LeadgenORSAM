@@ -66,6 +66,9 @@ class LeadRecord(BaseModel):
     digital_maturity: Optional[str] = None
     estimated_budget: Optional[str] = None
     business_signals: Optional[str] = None
+    # The contact themselves, not their employer — role and tenure, scope,
+    # attributed achievements, public appearances.
+    person_research: Optional[str] = None
     icp_score: Optional[int] = None
     icp_tier: Optional[str] = None
     icp_rationale: Optional[str] = None

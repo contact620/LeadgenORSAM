@@ -48,9 +48,8 @@ async def collect_evidence_async(leads: list[dict], enrich_instructions: str = "
     if config._is_placeholder(config.PERPLEXITY_API_KEY):
         logger.info("PERPLEXITY_API_KEY not set — Perplexity excluded from evidence expectations.")
         for lead in leads:
-            lead.setdefault("digital_maturity", None)
-            lead.setdefault("estimated_budget", None)
-            lead.setdefault("business_signals", None)
+            for field, value in perplexity_enricher.blank_research().items():
+                lead.setdefault(field, value)
         if registry:
             registry.record(StepOutcome("perplexity", "skipped", "clé API absente", 0))
     else:

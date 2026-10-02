@@ -53,8 +53,25 @@ def _reset_state():
     _serper_disabled = False
 
 
-def _serper_search(query: str) -> list[str]:
-    """Search via Serper.dev (Google wrapper) with retry. Returns list of result URLs."""
+@dataclass(frozen=True)
+class SearchHit:
+    """One organic Serper result, title and snippet included.
+
+    Only `link` used to survive the call. The title and the snippet of a
+    `site:linkedin.com/in` search are Google's index of the profile and of the
+    person's posts — current role, employer, the headline of what they publish
+    — and they were thrown away on every lead. Keeping them is free: no extra
+    request, and no LinkedIn page is ever fetched (see
+    scrapers/website_scraper.py, which forces linkedin_text = "" so the account
+    does not get banned).
+    """
+    link: str = ""
+    title: str = ""
+    snippet: str = ""
+
+
+def _serper_search(query: str) -> list[SearchHit]:
+    """Search via Serper.dev (Google wrapper) with retry. Returns organic hits."""
     global _serper_disabled
     if config._is_placeholder(config.SERPER_API_KEY) or _serper_disabled:
         return []
@@ -68,7 +85,15 @@ def _serper_search(query: str) -> list[str]:
         )
         resp.raise_for_status()
         data = resp.json()
-        return [r.get("link", "") for r in data.get("organic", []) if r.get("link")]
+        return [
+            SearchHit(
+                link=r.get("link") or "",
+                title=(r.get("title") or "").strip(),
+                snippet=(r.get("snippet") or "").strip(),
+            )
+            for r in data.get("organic", []) or []
+            if r.get("link")
+        ]
 
     try:
         return retry_api_call(_do_request, max_retries=3, operation_name="Serper search")
@@ -79,6 +104,36 @@ def _serper_search(query: str) -> list[str]:
     except Exception as e:
         logger.warning(f"Serper search failed after retries: {e}")
         return []
+
+
+def _links(hits: list) -> list[str]:
+    """URLs of a result list, whatever the backend returned.
+
+    Serper yields SearchHit objects and DuckDuckGo yields bare strings; the two
+    pickers below only ever need the URL.
+    """
+    return [h.link if isinstance(h, SearchHit) else str(h) for h in hits if h]
+
+
+# Upper bound on the person material kept per lead. Google snippets run ~200
+# characters each and five results are requested; the bound exists so a
+# pathological answer cannot grow the fact-extraction prompt without limit.
+MAX_PERSON_SNIPPET_CHARS = 2000
+
+
+def person_snippets(hits: list[SearchHit], max_chars: int = MAX_PERSON_SNIPPET_CHARS) -> str:
+    """Lay out the LinkedIn search results as readable source text, or "".
+
+    Every line keeps its URL, because the fact extractor is required to source
+    each fact it reports and must be able to point at the page it read.
+    """
+    blocks = []
+    for hit in hits:
+        if not isinstance(hit, SearchHit) or not (hit.title or hit.snippet):
+            continue
+        parts = [p for p in (hit.title, hit.snippet) if p]
+        blocks.append(f"- {' — '.join(parts)} ({hit.link})")
+    return "\n".join(blocks)[:max_chars]
 
 
 # ── Clearbit Autocomplete (company website) ────────────────────────────────────
@@ -165,7 +220,7 @@ def _find_company_website(company: str, location: str = "") -> Optional[str]:
 
     if not config._is_placeholder(config.SERPER_API_KEY):
         logger.debug(f"Clearbit miss for '{company}', trying Serper...")
-        website = _pick_website(_serper_search(query))
+        website = _pick_website(_links(_serper_search(query)))
         if website:
             return website
 
@@ -283,21 +338,30 @@ def find_linkedin_and_website(lead: dict) -> dict:
     company = lead.get("company", "")
 
     # ── LinkedIn: skip if already scraped from Apollo ────────────────────────
+    # linkedin_snippets is the indexed text harvested from the search below,
+    # kept as source material on the person. It stays empty when Apollo already
+    # supplied the profile URL: no search runs in that case, and the point of
+    # this material is that it costs no extra call.
+    lead.setdefault("linkedin_snippets", "")
     linkedin_query = f'{first} {last} {company} site:linkedin.com/in'
     if lead.get("linkedin_url"):
         logger.debug(f"LinkedIn already set from Apollo for {first} {last}: {lead['linkedin_url']}")
     else:
         lead["linkedin_url"] = None
 
-        serper_urls = _serper_search(linkedin_query)
-        lead["linkedin_url"] = _pick_linkedin_url(serper_urls)
+        serper_hits = _serper_search(linkedin_query)
+        # Harvested whether or not a profile URL could be picked out of them:
+        # a search that returns the person's posts but no /in/ profile still
+        # says what they do.
+        lead["linkedin_snippets"] = person_snippets(serper_hits)
+        lead["linkedin_url"] = _pick_linkedin_url(_links(serper_hits))
         if lead["linkedin_url"]:
             logger.debug(f"LinkedIn (Serper) found for {first} {last}: {lead['linkedin_url']}")
 
         if not lead["linkedin_url"]:
             logger.debug(f"Serper miss for {first} {last}, trying DuckDuckGo...")
             ddg_urls = _ddg_search(f'{first} {last} {company} site:linkedin.com/in', max_results=5)
-            lead["linkedin_url"] = _pick_linkedin_url(ddg_urls)
+            lead["linkedin_url"] = _pick_linkedin_url(_links(ddg_urls))
             if lead["linkedin_url"]:
                 logger.debug(f"LinkedIn (DDG) found for {first} {last}: {lead['linkedin_url']}")
             else:

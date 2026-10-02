@@ -16,6 +16,7 @@ import anthropic
 
 import config
 from api.provider_status import StepOutcome
+from enrichers.perplexity_enricher import RESEARCH_FIELDS
 from enrichers.retry import (
     CREDIT_EXHAUSTED_MESSAGE,
     AuthError,
@@ -136,6 +137,13 @@ Localisation déclarée : {location}
 Maturité digitale : {digital_maturity}
 Taille / budget : {estimated_budget}
 Signaux business : {business_signals}
+Recherche sur la personne : {person_research}
+
+═══ SOURCE "linkedin" ═══
+Texte indexé par Google pour cette personne (titres et extraits de résultats,
+avec l'URL de la page lue). Aucune page LinkedIn n'a été visitée : ne cite rien
+d'autre que ce qui figure ci-dessous.
+{linkedin_snippets}
 
 Extrais les faits au format JSON demandé."""
 
@@ -319,6 +327,8 @@ def extract_facts(lead: dict, ev: Evidence, rules: Optional[IcpRules] = None) ->
         digital_maturity=perplexity.get("digital_maturity") or "Non disponible",
         estimated_budget=perplexity.get("estimated_budget") or "Non disponible",
         business_signals=perplexity.get("business_signals") or "Non disponible",
+        person_research=perplexity.get("person_research") or "Non disponible",
+        linkedin_snippets=ev.linkedin_snippets or "Non disponible",
     )
     name = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
 
@@ -389,11 +399,12 @@ def extract_leads_facts(
             website_text=lead.get("website_text", "") or "",
             website_coherent=lead.get("website_coherent") is not False,
             website_unreachable=lead.get("website_unreachable", False) is True,
-            perplexity_fields={
-                "digital_maturity": lead.get("digital_maturity"),
-                "estimated_budget": lead.get("estimated_budget"),
-                "business_signals": lead.get("business_signals"),
-            },
+            # person_research belongs here, not beside it: it is Perplexity
+            # output like the other three, so a lead whose company search came
+            # back empty but whose person search did must not be told the
+            # provider gave us nothing.
+            perplexity_fields={field: lead.get(field) for field in RESEARCH_FIELDS},
+            linkedin_snippets=lead.get("linkedin_snippets") or "",
             enabled_providers=enabled_providers,
         )
 

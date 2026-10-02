@@ -224,3 +224,134 @@ def test_entities_are_unescaped_after_the_tags_are_stripped():
         "cite dans la page</body></html>"
     )
     assert "<script>alert(1)</script>" in text
+
+
+# ── Serper titles and snippets (task 10) ─────────────────────────────────────
+
+def _serper_payload(organic):
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"organic": organic}
+
+    return _Resp()
+
+
+_ORGANIC = [
+    {"link": "https://www.linkedin.com/in/amal-b",
+     "title": "Amal Benali - Directrice marketing - Acme | LinkedIn",
+     "snippet": "Directrice marketing chez Acme depuis juin 2026. "
+                "Auparavant responsable acquisition."},
+    {"link": "https://www.linkedin.com/posts/amal-b_refonte",
+     "title": "Amal Benali on LinkedIn: notre nouveau site",
+     "snippet": "Nous venons de livrer la refonte complète du site."},
+]
+
+
+def test_serper_keeps_the_title_and_the_snippet_of_each_result():
+    """Only the URL used to survive the call. The title and the snippet of a
+    site:linkedin.com/in search are Google's index of the profile and of the
+    person's posts — free material on the contact, thrown away on every lead.
+    """
+    gs._reset_state()
+    with patch("enrichers.google_search.config.SERPER_API_KEY", "key"), \
+         patch("enrichers.google_search.requests.post",
+               return_value=_serper_payload(_ORGANIC)):
+        hits = gs._serper_search("Amal Benali Acme site:linkedin.com/in")
+
+    assert [h.link for h in hits] == [r["link"] for r in _ORGANIC]
+    assert "Directrice marketing" in hits[0].title
+    assert "depuis juin 2026" in hits[0].snippet
+
+
+def test_a_result_without_a_link_is_still_dropped():
+    gs._reset_state()
+    with patch("enrichers.google_search.config.SERPER_API_KEY", "key"), \
+         patch("enrichers.google_search.requests.post",
+               return_value=_serper_payload([{"title": "no link", "snippet": "x"}])):
+        assert gs._serper_search("q") == []
+
+
+def test_person_snippets_keep_the_url_of_every_line():
+    """The fact extractor has to source each fact it reports, so it must be
+    able to point at the page it read."""
+    text = gs.person_snippets([gs.SearchHit(**h) for h in _ORGANIC])
+    assert text.count("\n") == 1
+    assert "https://www.linkedin.com/in/amal-b" in text
+    assert "refonte complète" in text
+
+
+def test_person_snippets_are_bounded():
+    flood = [gs.SearchHit(link="https://x", title="t" * 900, snippet="s" * 900)
+             for _ in range(10)]
+    assert len(gs.person_snippets(flood)) <= gs.MAX_PERSON_SNIPPET_CHARS
+
+
+def test_person_snippets_of_an_empty_search_are_empty_not_none():
+    assert gs.person_snippets([]) == ""
+
+
+def test_the_linkedin_search_results_reach_the_lead():
+    gs._reset_state()
+    lead = {"first_name": "Amal", "last_name": "Benali", "company": "Acme",
+            "location": "Casablanca"}
+    with patch("enrichers.google_search._serper_search",
+               return_value=[gs.SearchHit(**h) for h in _ORGANIC]), \
+         patch("enrichers.google_search._ddg_search", return_value=[]), \
+         patch("enrichers.google_search._clearbit_domain", return_value=None), \
+         patch("enrichers.google_search.time.sleep", return_value=None):
+        gs.find_linkedin_and_website(lead)
+
+    assert lead["linkedin_url"] == "https://www.linkedin.com/in/amal-b"
+    assert "Directrice marketing" in lead["linkedin_snippets"]
+
+
+def test_snippets_are_kept_even_when_no_profile_url_could_be_picked():
+    """A search returning the person's posts but no /in/ profile still says
+    what they do."""
+    gs._reset_state()
+    posts_only = [gs.SearchHit(link="https://www.linkedin.com/posts/amal-b_refonte",
+                               title="Amal Benali on LinkedIn",
+                               snippet="Nous venons de livrer la refonte.")]
+    lead = {"first_name": "Amal", "last_name": "Benali", "company": "Acme"}
+    with patch("enrichers.google_search._serper_search", return_value=posts_only), \
+         patch("enrichers.google_search._ddg_search", return_value=[]), \
+         patch("enrichers.google_search._clearbit_domain", return_value=None), \
+         patch("enrichers.google_search.time.sleep", return_value=None):
+        gs.find_linkedin_and_website(lead)
+
+    assert lead["linkedin_url"] is None
+    assert "refonte" in lead["linkedin_snippets"]
+
+
+def test_an_apollo_profile_url_still_costs_no_search():
+    """The material is free precisely because it rides on a search we already
+    make. A lead whose URL came from Apollo triggers no search, so it gets no
+    snippets rather than an extra billed query."""
+    gs._reset_state()
+    lead = {"first_name": "Amal", "last_name": "Benali", "company": "Acme",
+            "linkedin_url": "https://www.linkedin.com/in/amal-b"}
+    with patch("enrichers.google_search._serper_search", return_value=[]) as mock_serper, \
+         patch("enrichers.google_search._ddg_search", return_value=[]), \
+         patch("enrichers.google_search._clearbit_domain", return_value=None), \
+         patch("enrichers.google_search.time.sleep", return_value=None):
+        gs.find_linkedin_and_website(lead)
+
+    queries = [c.args[0] for c in mock_serper.call_args_list]
+    assert not any("linkedin.com/in" in q for q in queries), (
+        "no person search must be billed for a profile Apollo already gave us"
+    )
+    assert lead["linkedin_snippets"] == ""
+
+
+def test_the_website_search_still_reads_links_only():
+    """_pick_website works on URLs; the hits must be unwrapped for it."""
+    gs._reset_state()
+    hits = [gs.SearchHit(link="https://www.linkedin.com/company/acme", title="t"),
+            gs.SearchHit(link="https://acme.ma", title="Acme")]
+    with patch("enrichers.google_search.config.SERPER_API_KEY", "key"), \
+         patch("enrichers.google_search._clearbit_domain", return_value=None), \
+         patch("enrichers.google_search._serper_search", return_value=hits):
+        assert gs._find_company_website("Acme", "Casablanca") == "https://acme.ma"

@@ -641,6 +641,8 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
             if skip_gpt:
                 for step in ("perplexity", "anthropic_facts", "anthropic_angles"):
                     registry.record(StepOutcome(step, "skipped", "recherche IA désactivée", 0))
+            from enrichers.perplexity_enricher import blank_research
+            unset_research = blank_research()
             for lead in reachable_leads:
                 lead.setdefault("icp_score", None)
                 lead.setdefault("icp_tier", None)
@@ -652,9 +654,8 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
                 lead.setdefault("facts_json", None)
                 lead.setdefault("activity_summary", None)
                 lead.setdefault("conversion_angle", None)
-                lead.setdefault("digital_maturity", None)
-                lead.setdefault("estimated_budget", None)
-                lead.setdefault("business_signals", None)
+                for field, value in unset_research.items():
+                    lead.setdefault(field, value)
 
         leads = reachable_leads + unreachable_leads + pending_leads
 

@@ -4,9 +4,14 @@ Evidence accounting for ICP scoring.
 `evidence_level` is measured, never declared by the model: a model that says
 it is confident has no bearing on whether sources actually exist.
 
-LinkedIn is deliberately absent — scrapers/website_scraper.py forces
-linkedin_text = "" to avoid getting the account banned, so it can never be
-a source.
+LinkedIn is deliberately absent from SOURCE_PROVIDERS — scrapers/website_scraper.py
+forces linkedin_text = "" to avoid getting the account banned, so no LinkedIn
+page is ever fetched. `Evidence.linkedin_snippets` is NOT an exception to that:
+it holds the titles and snippets Google returned for the person (see
+enrichers/google_search.person_snippets), material the fact extractor may read
+and cite but which must never raise a lead's evidence_level — a search-result
+excerpt is not the source answering, and counting it would let a lead reach
+"sufficient", and with it the hard disqualifications, on two lines of Google.
 """
 from dataclasses import dataclass, field
 
@@ -34,6 +39,9 @@ class Evidence:
     website_coherent: bool = False
     website_unreachable: bool = False
     perplexity_fields: dict[str, str | None] = field(default_factory=dict)
+    # Google's indexed text for the person. Readable by the fact extractor,
+    # never counted by usable_sources — see the module docstring.
+    linkedin_snippets: str = ""
     enabled_providers: frozenset[str] = frozenset()
 
 

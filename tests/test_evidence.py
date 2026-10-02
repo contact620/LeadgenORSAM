@@ -122,3 +122,39 @@ def test_unreachable_website_does_not_override_unconfirmed_identity():
     ev = _ev(website_text="", website_coherent=False, website_unreachable=True,
               perplexity_fields={"estimated_budget": "Effectif estimé: 35 employés"})
     assert compute_evidence_level(ev, identity_confirmed=False) == "none"
+
+
+# ── Person material (task 10) ────────────────────────────────────────────────
+
+def test_person_research_counts_as_perplexity_delivering():
+    """It is Perplexity output like the other three fields. A lead whose
+    company search came back empty but whose person search did not must not be
+    told the provider gave us nothing."""
+    ev = _ev(perplexity_fields={
+        "digital_maturity": None,
+        "person_research": "Poste actuel : directrice marketing depuis 2026-06 (Les Echos)",
+    })
+    assert usable_sources(ev) == {"perplexity"}
+
+
+def test_google_snippets_are_never_a_source_on_their_own():
+    """linkedin_snippets is search-result text, not LinkedIn answering. Counted
+    as a source it would let a lead reach "sufficient" — and with it the hard
+    disqualifications — on two lines of Google, while no LinkedIn page is ever
+    fetched (scrapers/website_scraper.py forces linkedin_text = "")."""
+    ev = _ev(linkedin_snippets="- Amal B. — Directrice marketing chez Acme "
+                               "(https://www.linkedin.com/in/amal-b)")
+    assert usable_sources(ev) == set()
+    assert compute_evidence_level(ev, identity_confirmed=True) == "none"
+
+
+def test_google_snippets_do_not_upgrade_a_weak_lead():
+    ev = _ev(website_text=LONG, website_coherent=True,
+             linkedin_snippets="- Amal B. — Directrice marketing chez Acme (url)")
+    assert compute_evidence_level(ev, identity_confirmed=True) == "weak"
+
+
+def test_linkedin_is_not_an_expected_source():
+    assert "linkedin" not in expected_sources(
+        _ev(enabled_providers=frozenset({"website", "perplexity", "linkedin"}))
+    )

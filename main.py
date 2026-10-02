@@ -243,11 +243,12 @@ async def run_pipeline(args):
     else:
         reason = "--skip-gpt flag set" if args.skip_gpt else "no reachable leads"
         logger.info(f"Steps 7-9 — Skipped ({reason})")
+        from enrichers.perplexity_enricher import RESEARCH_FIELDS
         for lead in hit_leads:
             for field in ("icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
                           "disqualification_reason", "evidence_level", "evidence_verified",
                           "facts_json", "activity_summary", "conversion_angle",
-                          "digital_maturity", "estimated_budget", "business_signals"):
+                          *RESEARCH_FIELDS):
                 lead.setdefault(field, None)
 
     leads = hit_leads + nohit_leads + pending_leads

@@ -1,10 +1,23 @@
 """
 Step 5c — Perplexity enrichment (Agent API) (hit leads only).
 
-For each hit lead, calls Perplexity Sonar API to research:
-  1. digital_maturity: score and assessment of the company's digital presence
-  2. estimated_budget: revenue/size/funding estimates
-  3. business_signals: hiring, fundraising, product launches, news
+Two distinct searches, because they have two different scopes:
+
+  COMPANY (SEARCH_PROMPT), cached per company — several leads of the same
+  company share one answer:
+    1. digital_maturity: score and assessment of the company's digital presence
+    2. estimated_budget: revenue/size/funding estimates
+    3. business_signals: hiring, fundraising, product launches, news
+
+  PERSON (PERSON_PROMPT), one call per lead and NEVER cached — a person is not
+  shared between leads:
+    4. person_research: current role and since when, scope inside the company,
+       publicly attributed achievements, public appearances.
+
+The person search is the only channel we have on the contact themselves:
+scrapers/website_scraper.py forces linkedin_text = "" on purpose so the
+account never gets banned, so LinkedIn is never scraped here either. The
+person prompt is given the profile URL only to tell homonyms apart.
 
 Perplexity is only called for hit leads to keep costs low.
 """
@@ -45,6 +58,46 @@ Recherche et retourne un JSON avec exactement ces 3 clés :
 3. "business_signals" : Liste les signaux business récents (6 derniers mois). Cherche : recrutements en cours, levées de fonds, lancements de produits, nouveaux partenariats, expansion géographique, changements de direction, actualités. Pour CHAQUE signal trouvé, indique sa date au format ISO "AAAA-MM" (année-mois) entre crochets en début de puce, par exemple "- [2026-05] Levée de fonds de 2M€". Si tu ne connais que le mois approximatif, donne ta meilleure estimation plutôt que d'omettre la date — un signal sans date ne peut pas être évalué comme récent en aval. Format: liste à puces datées, ou "Aucun signal récent identifié" si rien trouvé.
 
 Réponds UNIQUEMENT en JSON brut avec ces 3 clés. Pas de markdown, pas d'explication."""
+
+PERSON_PROMPT = """Tu es un analyste B2B. Recherche des informations publiques sur la PERSONNE ci-dessous — pas sur son entreprise.
+
+Personne : {first_name} {last_name}
+Poste déclaré (donnée non vérifiée) : {job_title}
+Entreprise : {company}
+Localisation : {location}
+Profil LinkedIn connu (sert uniquement à écarter les homonymes) : {linkedin_url}
+
+Recherche et retourne un JSON avec exactement ces 4 clés :
+
+1. "poste_actuel" : le poste occupé aujourd'hui et depuis quand, avec la date au format "AAAA-MM" si elle est trouvable. Précise explicitement s'il s'agit d'une prise de poste récente et laquelle des deux : promotion ou changement de poste dans la même entreprise, ou arrivée dans une nouvelle entreprise.
+2. "perimetre" : ce que cette personne pilote concrètement — équipes, budgets, zone géographique, fonctions rattachées.
+3. "realisations" : projets, lancements, refontes, recrutements ou résultats publiquement associés à CETTE personne. Une puce par élément, datée "[AAAA-MM]" en début de puce.
+4. "prises_de_parole" : interviews, conférences, articles, podcasts, publications. Une puce par élément, datée "[AAAA-MM]" en début de puce.
+
+Règles :
+- Chaque élément doit être attribuable à une source publique : nomme le média, le site ou la page entre parenthèses à la fin de la puce.
+- Pas de source, pas d'élément. Si tu ne trouves rien de sourçable pour une clé, mets "Non disponible". Une clé vide est un résultat correct et attendu ; une supposition est une faute.
+- Homonymes : si tu n'as pas la certitude qu'il s'agit bien de cette personne dans cette entreprise, mets "Non disponible" plutôt que de mélanger deux parcours.
+- Ne déduis rien du poste déclaré ci-dessus : il vient d'une base non vérifiée et c'est précisément ce que tu dois confirmer ou corriger.
+
+Réponds UNIQUEMENT en JSON brut avec ces 4 clés. Pas de markdown, pas d'explication."""
+
+# The company half of one lead's research, and the person half. Callers that
+# merely have to declare the research absent (provider skipped, --skip-gpt,
+# unreachable lead) read RESEARCH_FIELDS instead of repeating the field names:
+# the old 3-tuple contract was spelled out in four files, so every new field
+# had to be propagated by hand to all of them.
+COMPANY_RESEARCH_FIELDS: tuple[str, ...] = (
+    "digital_maturity", "estimated_budget", "business_signals",
+)
+PERSON_RESEARCH_FIELDS: tuple[str, ...] = ("person_research",)
+RESEARCH_FIELDS: tuple[str, ...] = COMPANY_RESEARCH_FIELDS + PERSON_RESEARCH_FIELDS
+
+
+def blank_research() -> dict:
+    """Every research field, unset — the shape of a lead Perplexity never saw."""
+    return {field: None for field in RESEARCH_FIELDS}
+
 
 _perplexity_disabled = False
 # Why the step gave up, in words the operator can act on (reaches the run's
@@ -93,28 +146,19 @@ def _reset_state():
     _calls_succeeded = 0
 
 
-def _call_perplexity(lead: dict, enrich_instructions: str = "") -> tuple[Optional[str], Optional[str], Optional[str]]:
-    """Call Perplexity Sonar for a single lead. Returns (digital_maturity, estimated_budget, business_signals)."""
+def _research(prompt: str, label: str) -> Optional[dict]:
+    """Send one research prompt and return the parsed JSON object, or None.
+
+    Single owner of the provider's failure modes, shared by the company and the
+    person search: a disabling error (spent quota, refused key, retired
+    endpoint) sets _perplexity_disabled once and every later call — of either
+    kind — short-circuits, instead of each search carrying its own idea of when
+    Perplexity has become unusable for this run.
+    """
     global _perplexity_disabled, _disabled_reason
     global _calls_attempted, _calls_succeeded
     if _perplexity_disabled:
-        return None, None, None
-
-    company = lead.get("company", "") or "Inconnue"
-    website = lead.get("website", "") or "Non disponible"
-    location = lead.get("location", "") or "Non disponible"
-    job_title = lead.get("job_title", "") or "Non disponible"
-    name = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
-
-    prompt = SEARCH_PROMPT.format(
-        company=company,
-        website=website,
-        location=location,
-        job_title=job_title,
-    )
-
-    if enrich_instructions:
-        prompt += f"\n\nINSTRUCTIONS SPÉCIFIQUES DE RECHERCHE :\n{enrich_instructions}\nConcentre ta recherche sur les signaux et déclencheurs mentionnés ci-dessus."
+        return None
 
     headers = {
         "Authorization": f"Bearer {config.PERPLEXITY_API_KEY}",
@@ -155,7 +199,7 @@ def _call_perplexity(lead: dict, enrich_instructions: str = "") -> tuple[Optiona
         data = resp.json()
 
         content = _output_text(data)
-        logger.debug(f"Raw Perplexity response for {company}: {content[:200]!r}")
+        logger.debug(f"Raw Perplexity response for {label}: {content[:200]!r}")
 
         # Parse JSON from response (handle markdown code blocks)
         if content.startswith("```"):
@@ -163,16 +207,12 @@ def _call_perplexity(lead: dict, enrich_instructions: str = "") -> tuple[Optiona
             content = re.sub(r"^```[a-z]*\n?", "", content)
             content = re.sub(r"\n?```$", "", content).strip()
 
-        result = json.loads(content)
-        return (
-            result.get("digital_maturity", "").strip() if result.get("digital_maturity") else None,
-            result.get("estimated_budget", "").strip() if result.get("estimated_budget") else None,
-            result.get("business_signals", "").strip() if isinstance(result.get("business_signals"), str) else json.dumps(result.get("business_signals"), ensure_ascii=False) if result.get("business_signals") else None,
-        )
+        parsed = json.loads(content)
+        return parsed if isinstance(parsed, dict) else None
 
     _calls_attempted += 1
     try:
-        result = retry_api_call(_do_request, max_retries=2, operation_name=f"Perplexity ({company})")
+        result = retry_api_call(_do_request, max_retries=2, operation_name=f"Perplexity ({label})")
     except QuotaExhausted as e:
         # retry_api_call maps 402/429 here and its contract says the balance
         # will not come back within this run. Honouring that contract means
@@ -182,28 +222,141 @@ def _call_perplexity(lead: dict, enrich_instructions: str = "") -> tuple[Optiona
         _perplexity_disabled = True
         _disabled_reason = "quota Perplexity épuisé"
         logger.error(f"Perplexity quota exhausted — disabled for this run: {e}")
-        return None, None, None
+        return None
     except AuthError as e:
         _perplexity_disabled = True
         _disabled_reason = "clé Perplexity refusée ou endpoint indisponible"
         logger.error(f"Perplexity unusable — disabled for this run: {e}")
-        return None, None, None
+        return None
     except json.JSONDecodeError as e:
-        logger.warning(f"Perplexity returned non-JSON for {company}: {e}")
-        return None, None, None
+        logger.warning(f"Perplexity returned non-JSON for {label}: {e}")
+        return None
     except Exception as e:
-        logger.error(f"Perplexity enrichment failed for {company}: {e}")
-        return None, None, None
+        logger.error(f"Perplexity enrichment failed for {label}: {e}")
+        return None
     _calls_succeeded += 1
     return result
 
 
+def _text(value) -> Optional[str]:
+    """Render one key of a research answer as operator-readable text, or None.
+
+    A model asked for prose sometimes answers with a list or an object; dropping
+    those would throw away a correct answer over its container, and passing the
+    raw Python repr downstream would put brackets and quotes in front of the
+    operator.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, list):
+        lines = [t for t in (_text(item) for item in value) if t]
+        return "\n".join(lines) or None
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False) or None
+    return str(value).strip() or None
+
+
+def _call_perplexity(lead: dict, enrich_instructions: str = "") -> dict:
+    """Company research for one lead, as a COMPANY_RESEARCH_FIELDS dict.
+
+    Returns a dict, not the former 3-tuple: the tuple's arity was duplicated in
+    every caller, so adding the person search would have meant editing each of
+    them. Keys are always present; a missing value is None.
+    """
+    company = lead.get("company", "") or "Inconnue"
+
+    prompt = SEARCH_PROMPT.format(
+        company=company,
+        website=lead.get("website", "") or "Non disponible",
+        location=lead.get("location", "") or "Non disponible",
+        job_title=lead.get("job_title", "") or "Non disponible",
+    )
+    if enrich_instructions:
+        prompt += f"\n\nINSTRUCTIONS SPÉCIFIQUES DE RECHERCHE :\n{enrich_instructions}\nConcentre ta recherche sur les signaux et déclencheurs mentionnés ci-dessus."
+
+    result = _research(prompt, company)
+    if result is None:
+        return {field: None for field in COMPANY_RESEARCH_FIELDS}
+    return {field: _text(result.get(field)) for field in COMPANY_RESEARCH_FIELDS}
+
+
+# Labels of the person answer, in the order they are laid out for the fact
+# extractor. French because this text is read by the operator in the export.
+_PERSON_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("poste_actuel", "Poste actuel"),
+    ("perimetre", "Périmètre"),
+    ("realisations", "Réalisations"),
+    ("prises_de_parole", "Prises de parole"),
+)
+
+
+def _call_perplexity_person(lead: dict) -> dict:
+    """Person research for one lead, as a PERSON_RESEARCH_FIELDS dict.
+
+    Never cached, unlike the company search: two leads of the same company are
+    two different people, and caching this would attribute one person's career
+    to their colleague.
+    """
+    empty = {field: None for field in PERSON_RESEARCH_FIELDS}
+    if not _is_a_person(lead):
+        return empty
+
+    name = f"{lead.get('first_name', '') or ''} {lead.get('last_name', '') or ''}".strip()
+    prompt = PERSON_PROMPT.format(
+        first_name=lead.get("first_name", "") or "",
+        last_name=lead.get("last_name", "") or "",
+        job_title=lead.get("job_title", "") or "Non disponible",
+        company=lead.get("company", "") or "Inconnue",
+        location=lead.get("location", "") or "Non disponible",
+        linkedin_url=lead.get("linkedin_url", "") or "Non disponible",
+    )
+
+    result = _research(prompt, name)
+    if result is None:
+        return empty
+
+    sections = []
+    for key, label in _PERSON_SECTIONS:
+        text = _text(result.get(key))
+        if text and not _says_nothing(text):
+            sections.append(f"{label} : {text}")
+    return {"person_research": "\n".join(sections) or None}
+
+
+# What the prompt tells the model to answer when it found nothing sourceable.
+# Kept verbatim, these lines pad the fact extractor's prompt with four
+# declarations of absence and make an empty answer look like a filled one.
+_NOTHING_FOUND = ("non disponible", "aucune information", "non trouvé", "non trouve")
+
+
+def _says_nothing(text: str) -> bool:
+    """Whether a section is the model's way of saying it found nothing."""
+    stripped = text.strip().strip(".").lower()
+    return stripped in _NOTHING_FOUND
+
+
+def _is_a_person(lead: dict) -> bool:
+    """Whether this row designates someone a person search can be run on.
+
+    Three of the twenty contacts in the 2026-09-25 demo were legal entities
+    ("Delta Btp", "Stpv Voire", "Les Marrakech"), flagged on the lead by
+    processors/coherence.name_looks_like_a_company. Asking Perplexity what
+    "Delta Btp" has achieved in their career cannot succeed, and the call is
+    billed all the same.
+    """
+    if lead.get("name_looks_like_company") is True:
+        return False
+    name = f"{lead.get('first_name', '') or ''} {lead.get('last_name', '') or ''}".strip()
+    return bool(name)
+
+
 def enrich_leads_perplexity(hit_leads: list[dict], enrich_instructions: str = "", registry=None) -> list[dict]:
     """
-    For each hit lead, call Perplexity Sonar and store:
-      lead["digital_maturity"]
-      lead["estimated_budget"]
-      lead["business_signals"]
+    For each hit lead, run both searches and store every RESEARCH_FIELDS key:
+    the three company fields (cached per company) and person_research (one
+    call per lead, never cached).
     """
     # Without this, _perplexity_disabled stayed true for the life of the
     # server process: one disabling error in run N silently skipped
@@ -214,45 +367,51 @@ def enrich_leads_perplexity(hit_leads: list[dict], enrich_instructions: str = ""
     if config._is_placeholder(config.PERPLEXITY_API_KEY):
         logger.warning("PERPLEXITY_API_KEY not set. Skipping Perplexity enrichment.")
         for lead in hit_leads:
-            lead["digital_maturity"] = None
-            lead["estimated_budget"] = None
-            lead["business_signals"] = None
+            lead.update(blank_research())
         if registry:
             registry.record(StepOutcome("perplexity", "skipped", "clé API absente", 0))
         return hit_leads
 
     total = len(hit_leads)
     success = 0
+    persons = 0
 
-    # Deduplicate: only call once per company
-    company_cache: dict[str, tuple] = {}
+    # Deduplicate: only call once per company. The person search is excluded
+    # from this cache on purpose — see _call_perplexity_person.
+    company_cache: dict[str, dict] = {}
 
     for i, lead in enumerate(hit_leads, 1):
         company = (lead.get("company") or "").strip().lower()
         name = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
         logger.info(f"Perplexity enrichment [{i}/{total}]: {name} ({lead.get('company', '')})")
 
-        if company and company in company_cache:
-            maturity, budget, signals = company_cache[company]
+        cached = company and company in company_cache
+        if cached:
+            company_research = company_cache[company]
             logger.debug(f"  Using cached Perplexity result for {lead.get('company', '')}")
         else:
-            maturity, budget, signals = _call_perplexity(lead, enrich_instructions)
+            company_research = _call_perplexity(lead, enrich_instructions)
             if company:
-                company_cache[company] = (maturity, budget, signals)
+                company_cache[company] = company_research
 
-        lead["digital_maturity"] = maturity
-        lead["estimated_budget"] = budget
-        lead["business_signals"] = signals
+        # Spread the two calls of one lead instead of firing them back to back.
+        if not cached and not _perplexity_disabled:
+            time.sleep(0.5)
 
-        if maturity:
+        person_research = _call_perplexity_person(lead)
+
+        lead.update(company_research)
+        lead.update(person_research)
+
+        if company_research.get("digital_maturity"):
             success += 1
+        if person_research.get("person_research"):
+            persons += 1
 
         if _perplexity_disabled:
             logger.warning(f"Perplexity disabled — skipping remaining {total - i} leads")
             for remaining in hit_leads[i:]:
-                remaining["digital_maturity"] = None
-                remaining["estimated_budget"] = None
-                remaining["business_signals"] = None
+                remaining.update(blank_research())
             break
 
         if i < total:
@@ -261,7 +420,8 @@ def enrich_leads_perplexity(hit_leads: list[dict], enrich_instructions: str = ""
     unique_companies = len(company_cache)
     logger.info(
         f"Perplexity enrichment complete. {success}/{total} leads enriched "
-        f"({unique_companies} unique companies queried)."
+        f"({unique_companies} unique companies queried), "
+        f"{persons}/{total} person profiles researched."
     )
     if registry:
         registry.record(StepOutcome("perplexity", *_health(), success))
@@ -271,8 +431,9 @@ def enrich_leads_perplexity(hit_leads: list[dict], enrich_instructions: str = ""
 def _health() -> tuple[str, Optional[str]]:
     """Status and reason for this run's Perplexity enrichment.
 
-    A run where every call failed used to report "ok": each lead got three
-    None fields, which is also what a skipped provider leaves behind.
+    A run where every call failed used to report "ok": each lead got its
+    research fields set to None, which is also what a skipped provider leaves
+    behind.
     """
     if _perplexity_disabled:
         return "degraded", _disabled_reason
