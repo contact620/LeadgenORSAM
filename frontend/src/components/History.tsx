@@ -327,6 +327,24 @@ export function History({ onBack, onRerun }: Props) {
                         </div>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
+                        {/* A run launched with the AI off produces empty AI
+                            columns and used to look, here, exactly like a run
+                            whose AI returned nothing. The flag was already
+                            persisted (job_history.skip_gpt); it was just never
+                            shown. */}
+                        {entry.skip_gpt && (
+                          <span
+                            className="inline-flex items-center px-2 py-0.5 mr-1.5 rounded-full text-xs font-medium"
+                            style={{
+                              background: 'var(--th-glass-inset)',
+                              color: 'var(--th-text-muted)',
+                              border: '1px solid var(--th-glass-sm-border)',
+                            }}
+                            title="Recherche IA désactivée sur ce run : preuves, faits, score ICP et angles non calculés."
+                          >
+                            IA coupée
+                          </span>
+                        )}
                         {(() => {
                           const badge = STATUS_BADGE[entry.status] ?? STATUS_BADGE.error
                           return (
