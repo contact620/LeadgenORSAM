@@ -49,11 +49,17 @@ VERIFIER_ORDER = (
     ("hunter", lambda email: hunter.verify_email(email), hunter.COST_PER_VERIFICATION),
 )
 
+# GetProspect first, Hunter last. Hunter was already last — the client's
+# premise that it ran first was wrong — so the only real change here is
+# GetProspect ahead of Prospeo, as asked. Its 50 searches a month make it the
+# narrower of the two, and now that a generic address no longer ends the
+# cascade many more leads reach this step: see the report shipped with this
+# change. The lambdas exist for the reason explained above VERIFIER_ORDER.
 FINDER_ORDER = (
-    ("prospeo", lambda first, last, domain: prospeo.find_email(first, last, domain),
-     prospeo.COST_PER_EMAIL),
     ("getprospect", lambda first, last, domain: getprospect.find_email(first, last, domain),
      getprospect.COST_PER_EMAIL),
+    ("prospeo", lambda first, last, domain: prospeo.find_email(first, last, domain),
+     prospeo.COST_PER_EMAIL),
     ("hunter", lambda first, last, domain: hunter.find_email(first, last, domain),
      hunter.COST_PER_EMAIL),
 )

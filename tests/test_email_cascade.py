@@ -24,6 +24,29 @@ def isolated(tmp_path, monkeypatch):
     email_cascade.domain_intel.reset_caches()
 
 
+@pytest.fixture(autouse=True)
+def offline(monkeypatch):
+    """Default every provider entry point to an offline "nothing found".
+
+    A developer .env holds real keys, so any entry point a test leaves alone
+    is a live HTTP call from inside the cascade — billed, slow and dependent
+    on a third party. Permuting FINDER_ORDER made that visible: half a dozen
+    tests had simply never exercised the provider that now runs first.
+
+    A test that cares about a provider still patches it explicitly; this only
+    decides what an unpatched one answers.
+    """
+    for name in ("prospeo", "getprospect", "hunter"):
+        module = getattr(email_cascade, name)
+        for entry_point in ("find_email", "verify_email"):
+            if hasattr(module, entry_point):
+                monkeypatch.setattr(
+                    module, entry_point,
+                    lambda *a, _provider=name, **k: EmailResult(
+                        status=NOT_FOUND, provider=_provider),
+                )
+
+
 def _lead(**over):
     base = {"first_name": "Karim", "last_name": "El Amrani",
             "company": "Acme", "website": "https://acme.ma",
@@ -277,6 +300,7 @@ def test_the_company_format_is_inferred_from_a_colleague(monkeypatch):
 # ── d. Finders ────────────────────────────────────────────────────────────────
 
 def test_finders_run_in_order_and_stop_at_the_first_hit(monkeypatch):
+    """GetProspect, puis Prospeo, puis Hunter — Hunter toujours en dernier."""
     calls = []
     monkeypatch.setattr(email_cascade.getprospect, "verify_email",
                         lambda e: EmailResult(email=e, status=NOT_FOUND,
@@ -284,21 +308,32 @@ def test_finders_run_in_order_and_stop_at_the_first_hit(monkeypatch):
     monkeypatch.setattr(email_cascade.hunter, "verify_email",
                         lambda e: EmailResult(email=e, status=NOT_FOUND,
                                               provider="hunter", billed=True, cost=0.5))
-    monkeypatch.setattr(email_cascade.prospeo, "find_email",
-                        lambda *a: calls.append("prospeo") or
-                        EmailResult(status=NOT_FOUND, provider="prospeo"))
     monkeypatch.setattr(email_cascade.getprospect, "find_email",
                         lambda *a: calls.append("getprospect") or
+                        EmailResult(status=NOT_FOUND, provider="getprospect"))
+    monkeypatch.setattr(email_cascade.prospeo, "find_email",
+                        lambda *a: calls.append("prospeo") or
                         EmailResult(email="k@acme.ma", status=VALID,
-                                    provider="getprospect", billed=True, cost=1.0))
+                                    provider="prospeo", billed=True, cost=1.0))
     monkeypatch.setattr(email_cascade.hunter, "find_email",
                         lambda *a: calls.append("hunter") or
                         EmailResult(status=NOT_FOUND, provider="hunter"))
 
     lead = _lead()
     email_cascade.resolve_email(lead, is_priority=True)
-    assert calls == ["prospeo", "getprospect"], "Hunter n'est jamais atteint"
-    assert lead["email_source"] == "getprospect"
+    assert calls == ["getprospect", "prospeo"], "Hunter n'est jamais atteint"
+    assert lead["email_source"] == "prospeo"
+
+
+def test_the_finder_order_puts_getprospect_first_and_hunter_last(monkeypatch):
+    """Point 1 du client. Sa premisse etait fausse — Hunter etait deja dernier
+    — mais GetProspect passe desormais avant Prospeo."""
+    assert [name for name, _fn, _cost in email_cascade.FINDER_ORDER] == [
+        "getprospect", "prospeo", "hunter"
+    ]
+    assert [name for name, _fn, _cost in email_cascade.VERIFIER_ORDER] == [
+        "getprospect_verify", "hunter"
+    ]
 
 
 def test_a_non_priority_lead_never_reaches_the_finders(monkeypatch):
@@ -349,6 +384,8 @@ def test_a_complete_name_still_reaches_the_finders(monkeypatch):
     monkeypatch.setattr(email_cascade.getprospect, "verify_email",
                         lambda e: EmailResult(email=e, status=NOT_FOUND,
                                               provider="getprospect", billed=True, cost=1.0))
+    monkeypatch.setattr(email_cascade.getprospect, "find_email",
+                        lambda *a: EmailResult(status=NOT_FOUND, provider="getprospect"))
     monkeypatch.setattr(email_cascade.prospeo, "find_email",
                         lambda f, l, d: EmailResult(email=f"{f}@{d}", status=VALID,
                                                     provider="prospeo", billed=True, cost=1.0))
@@ -362,6 +399,8 @@ def test_a_finder_returning_another_domain_is_flagged(monkeypatch):
     monkeypatch.setattr(email_cascade.getprospect, "verify_email",
                         lambda e: EmailResult(email=e, status=NOT_FOUND,
                                               provider="getprospect", billed=True, cost=1.0))
+    monkeypatch.setattr(email_cascade.getprospect, "find_email",
+                        lambda *a: EmailResult(status=NOT_FOUND, provider="getprospect"))
     monkeypatch.setattr(email_cascade.prospeo, "find_email",
                         lambda *a: EmailResult(email="karim@autre.ma", status=VALID,
                                                provider="prospeo", billed=True, cost=1.0,
@@ -394,14 +433,16 @@ def test_a_provider_raising_quota_exhausted_falls_through_to_the_next(monkeypatc
                         lambda e: EmailResult(email=e, status=NOT_FOUND,
                                               provider="getprospect", billed=True, cost=1.0))
     def _boom(*a, **k):
-        raise QuotaExhausted("prospeo: INSUFFICIENT_CREDITS")
-    monkeypatch.setattr(email_cascade.prospeo, "find_email", _boom)
-    monkeypatch.setattr(email_cascade.getprospect, "find_email",
+        raise QuotaExhausted("getprospect: INSUFFICIENT_CREDITS")
+    # GetProspect runs first since the finder order was permuted, so it is the
+    # one that must be able to collapse without taking the lead with it.
+    monkeypatch.setattr(email_cascade.getprospect, "find_email", _boom)
+    monkeypatch.setattr(email_cascade.prospeo, "find_email",
                         lambda *a: EmailResult(email="k@acme.ma", status=VALID,
-                                               provider="getprospect", billed=True, cost=1.0))
+                                               provider="prospeo", billed=True, cost=1.0))
     lead = _lead()
     email_cascade.resolve_email(lead, is_priority=True)
-    assert lead["email_source"] == "getprospect"
+    assert lead["email_source"] == "prospeo"
 
 
 # ── GetProspect balance ────────────────────────────────────────────────────────
