@@ -200,7 +200,7 @@ def _write_one(lead: dict, enrich_instructions: str = "",
         message = client.messages.create(
             model=config.LLM_MODEL,
             max_tokens=600,
-            temperature=0.3,
+            # temperature is not a parameter of messages.create in the 1.x SDK.
             system=system,
             messages=[{"role": "user", "content": user_prompt}],
         )

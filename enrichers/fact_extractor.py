@@ -412,7 +412,11 @@ def extract_facts(lead: dict, ev: Evidence, rules: Optional[IcpRules] = None) ->
         message = client.messages.create(
             model=MODEL,
             max_tokens=1000,
-            temperature=0,
+            # The 1.x Anthropic SDK removed temperature from messages.create:
+            # sampling parameters are gone from the current models' API, so
+            # there is no replacement to pass. Determinism now rests entirely
+            # on the prompt and on sanitize_facts, which drops any fact that
+            # arrives without a recognised source.
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )
