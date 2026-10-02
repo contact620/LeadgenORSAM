@@ -98,6 +98,12 @@ _LEAD_POOL_ADDED_COLUMNS = {
     # email_source for the same reason: the enrich-only flow exports from the
     # pool, so a column the pool drops reads as empty in half the exports.
     "email_verification_provider": "TEXT",
+    # Search-result text about the person, harvested by enrich_leads_google in
+    # the scrape job. /api/enrich restarts from the pool, so a snippet that is
+    # not stored here is gone by the time facts are extracted: the most likely
+    # source for dating a new appointment would exist only in the one-shot
+    # pipeline, not in the two-step flow. Older pools read it back as None.
+    "linkedin_snippets": "TEXT",
 }
 
 _CREATE_POOL_META = """
@@ -307,8 +313,9 @@ def create_pool(name: str, apollo_url: str, scrape_job_id: str, leads: list[dict
                     facebook_url, instagram_url, linkedin_company_url,
                     prescore, apollo_industry, employee_count,
                     name_looks_like_company, reachable, contact_level,
+                    linkedin_snippets,
                     hit_score, is_hit, is_duplicate, first_seen_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (pool_id, lead.get("first_name"), lead.get("last_name"),
                  lead.get("company"), lead.get("job_title"), lead.get("location"),
                  lead.get("email"), lead.get("phone"), lead.get("linkedin_url"), lead.get("website"),
@@ -324,6 +331,7 @@ def create_pool(name: str, apollo_url: str, scrape_job_id: str, leads: list[dict
                  lead.get("prescore"), lead.get("apollo_industry"),
                  lead.get("employee_count"), _bool_or_none("name_looks_like_company"),
                  _bool_or_none("reachable"), lead.get("contact_level"),
+                 lead.get("linkedin_snippets"),
                  lead.get("hit_score", 0), int(lead.get("is_hit", False)),
                  int(lead.get("is_duplicate", False)), lead.get("first_seen_at")),
             )

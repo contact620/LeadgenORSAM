@@ -190,6 +190,51 @@ def test_pool_round_trip_keeps_the_verification_provider(tmp_path, monkeypatch):
     assert stored == "getprospect", "the column itself must carry the value, not only enrich_data"
 
 
+def test_pool_round_trip_keeps_the_person_snippets(tmp_path, monkeypatch):
+    """/api/enrich restarts from the pool: snippets harvested during the scrape
+    job must survive the trip or the person search has nothing to date a new
+    appointment from."""
+    import api.leads_db as db
+
+    monkeypatch.setattr(db, "_DB_PATH", str(tmp_path / "snippets.db"))
+    db.init_leads_table()
+    pool_id = db.create_pool("test", "url", "job", [
+        {"first_name": "Amal", "last_name": "Benali", "company": "Acme",
+         "linkedin_snippets": "- Amal Benali, Directrice marketing chez Acme"},
+    ])
+    lead = db.get_pool_leads(pool_id)[0]
+    assert lead["linkedin_snippets"] == "- Amal Benali, Directrice marketing chez Acme"
+
+
+def test_pool_created_before_the_snippets_column_reads_none(tmp_path, monkeypatch):
+    """Additive migration: an old pool must keep loading, with no snippets."""
+    import sqlite3
+
+    import api.leads_db as db
+
+    path = tmp_path / "legacy_snippets.db"
+    monkeypatch.setattr(db, "_DB_PATH", str(path))
+    con = sqlite3.connect(str(path))
+    con.execute(
+        """CREATE TABLE lead_pool (
+               id INTEGER PRIMARY KEY AUTOINCREMENT, pool_id TEXT NOT NULL,
+               first_name TEXT, last_name TEXT, company TEXT, job_title TEXT,
+               location TEXT, email TEXT, phone TEXT, linkedin_url TEXT,
+               website TEXT, hit_score REAL, is_hit INTEGER DEFAULT 0,
+               is_duplicate INTEGER DEFAULT 0, first_seen_at TEXT,
+               enriched INTEGER DEFAULT 0, enrich_job_id TEXT,
+               enriched_at TEXT, enrich_data TEXT)"""
+    )
+    con.execute("INSERT INTO lead_pool (pool_id, first_name, company) VALUES ('old', 'A', 'Acme')")
+    con.commit()
+    con.close()
+
+    db.init_leads_table()
+    lead = db.get_pool_leads("old")[0]
+    assert "linkedin_snippets" in lead
+    assert lead["linkedin_snippets"] is None
+
+
 def test_pool_round_trip_keeps_unchecked_website_as_unknown(tmp_path, monkeypatch):
     """None means "not checked" and must not collapse into False.
 
