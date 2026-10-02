@@ -1,10 +1,26 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { MessageSquare, X, Briefcase, MapPin, Mail, Phone, Linkedin, Globe, TrendingUp, DollarSign, Activity, Zap, Copy, ExternalLink, AlertTriangle } from 'lucide-react'
+import { MessageSquare, X, Briefcase, MapPin, Mail, Phone, Linkedin, Globe, TrendingUp, DollarSign, Activity, Zap, Copy, ExternalLink, AlertTriangle, UserPlus, User } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { EVIDENCE_LEVEL_STYLE, emailSourceLabel, evidenceLabel } from '@/lib/tiers'
 import { LinkedinMessageDialog, NO_ANGLE_REASON, hasAngle } from './LinkedinMessage'
+
+const MONTHS_FR = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre']
+
+interface ParsedAppointment { month: string; kind: string; source: string }
+
+// The backend flattens the appointment into one export cell,
+// "2026-06 — <kind> (source : <where>)" (see appointment_label). Split it back
+// so the date and the type can carry their own emphasis; anything that does not
+// match is shown verbatim rather than guessed at.
+function parseAppointment(raw: string): ParsedAppointment | null {
+  const match = /^(\d{4})-(\d{2}) — (.+?) \(source : (.+)\)$/.exec(raw.trim())
+  if (!match) return null
+  const monthName = MONTHS_FR[Number(match[2]) - 1]
+  if (!monthName) return null
+  return { month: `${monthName} ${match[1]}`, kind: match[3], source: match[4] }
+}
 
 function copyToClipboard(text: string, label: string) {
   navigator.clipboard.writeText(text).then(() => toast.success(`${label} copié`))
@@ -36,6 +52,10 @@ interface LeadData {
   digital_maturity?: string
   estimated_budget?: string
   business_signals?: string
+  // Priority signal: the contact just took the job, so they are open to
+  // choosing a provider. Person-level, unlike the company fields above.
+  prise_de_poste?: string
+  person_research?: string
   disqualification_reason?: string
   evidence_level?: 'none' | 'weak' | 'sufficient'
   evidence_verified?: boolean
@@ -52,9 +72,11 @@ interface Props {
 export function LeadDetailModal({ lead, onClose }: Props) {
   const [showMessage, setShowMessage] = useState(false)
   const fullName = [lead.first_name, lead.last_name].filter(Boolean).join(' ')
-  const hasEnrichment = lead.activity_summary || lead.conversion_angle || lead.digital_maturity || lead.estimated_budget || lead.business_signals
+  const hasEnrichment = lead.activity_summary || lead.conversion_angle || lead.digital_maturity || lead.estimated_budget || lead.business_signals || lead.prise_de_poste || lead.person_research
 
   const sections = [
+    { key: 'prise_de_poste', label: 'Prise de poste', icon: <UserPlus className="w-4 h-4" />, highlight: true },
+    { key: 'person_research', label: 'Recherche sur la personne', icon: <User className="w-4 h-4" />, highlight: false },
     { key: 'activity_summary', label: 'Résumé d\'activité', icon: <Activity className="w-4 h-4" /> },
     { key: 'conversion_angle', label: 'Angle de conversion recommandé', icon: <TrendingUp className="w-4 h-4" /> },
     { key: 'digital_maturity', label: 'Maturité digitale', icon: <Globe className="w-4 h-4" /> },
@@ -266,9 +288,41 @@ export function LeadDetailModal({ lead, onClose }: Props) {
             <h3 className="text-xs font-semibold" style={{ color: 'var(--th-text-faint)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
               Données d'enrichissement IA
             </h3>
-            {sections.map(({ key, label, icon }) => {
+            {sections.map(({ key, label, icon, highlight }) => {
               const value = (lead as Record<string, unknown>)[key] as string | undefined
               if (!value) return null
+              if (highlight) {
+                const appointment = parseAppointment(value)
+                return (
+                  <div
+                    key={key}
+                    className="rounded-lg p-4"
+                    style={{ background: 'var(--th-warning-soft)', border: '1px solid var(--th-warning-border)', borderLeft: '4px solid var(--th-warning)' }}
+                  >
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      <span style={{ color: 'var(--th-warning)' }}>{icon}</span>
+                      <span className="text-sm font-bold" style={{ color: 'var(--th-text-primary)' }}>{label}</span>
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                            style={{ background: 'var(--th-warning-soft)', color: 'var(--th-warning)', border: '1px solid var(--th-warning-border)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        À saisir maintenant
+                      </span>
+                    </div>
+                    {appointment ? (
+                      <>
+                        <div className="text-base font-semibold" style={{ color: 'var(--th-text-primary)' }}>
+                          {appointment.month[0].toUpperCase() + appointment.month.slice(1)} — {appointment.kind}
+                        </div>
+                        <div className="text-xs mt-1" style={{ color: 'var(--th-text-muted)' }}>Source : {appointment.source}</div>
+                      </>
+                    ) : (
+                      <div className="text-sm leading-relaxed" style={{ color: 'var(--th-text-primary)' }}>{value}</div>
+                    )}
+                    <p className="text-xs mt-2" style={{ color: 'var(--th-text-tertiary)' }}>
+                      Une personne qui vient de prendre un nouveau poste a souvent envie de monter sa team, de choisir son agence.
+                    </p>
+                  </div>
+                )
+              }
               return (
                 <div key={key}>
                   <div className="flex items-center gap-2 mb-2">
