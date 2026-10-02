@@ -5,18 +5,21 @@ Every address found here is free and already verified by the fact that the
 company published it. The cascade tries this before spending a single credit,
 so the quality of this module decides how much of a 50-credit month survives.
 """
+import html as html_entities
 import logging
 import re
 import time
 import unicodedata
 import urllib.robotparser
 from dataclasses import dataclass
+from typing import Iterator, Optional
 from urllib.parse import urljoin, urlparse
 
 import requests
 
 import config
 from api.quota_db import normalize_name
+from enrichers import email_patterns
 from enrichers.phone_extractor import ExtractedPhone, extract_phones
 
 logger = logging.getLogger(__name__)
@@ -228,6 +231,97 @@ def classify_email(email: str, first_name: str, last_name: str, domain: str) -> 
     return "nominatif_lead" if matches else "nominatif_autre"
 
 
+# ── Company format, read off a colleague's published address ──────────────────
+
+# How far either side of the address to look for the name that owns it. A
+# team card, a signature block or a "Nom — Fonction — email" line all keep the
+# two within a couple of hundred characters; past that the page has moved on
+# to somebody else, and the pair would be a guess.
+NEIGHBOURHOOD = 200
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_SCRIPT_RE = re.compile(r"(?is)<(script|style)\b.*?</\1>")
+
+# Two adjacent capitalised words. "Sara Bennani" and "Sara BENNANI" both
+# qualify; a single word never does, since one word cannot tell us whether the
+# format uses the given name, the surname or both.
+_PERSON_RE = re.compile(
+    r"\b([A-Z][A-Za-zÀ-ÿ'’\-]{1,24})\s+([A-Z][A-Za-zÀ-ÿ'’\-]{1,24})\b"
+)
+
+# Capitalised words that start a phrase rather than a person. The company's own
+# name is added to this at call time: "Groupe Atlas" next to contact@atlas.ma
+# is the company signing its page, not a colleague.
+_NOT_A_PERSON = frozenset({
+    "contact", "contactez", "contacteznous", "nous", "notre", "nos", "votre",
+    "equipe", "team", "membre", "membres", "email", "mail", "adresse", "tel",
+    "telephone", "fax", "mobile", "portable", "whatsapp", "horaires",
+    "service", "services", "direction", "departement", "siege", "social",
+    "mentions", "legales", "legal", "politique", "confidentialite", "cookies",
+    "tous", "droits", "reserves", "copyright", "accueil", "propos", "qui",
+    "sommes", "plan", "site", "lire", "suite", "envoyer", "message",
+    "societe", "groupe", "entreprise", "agence", "cabinet", "sarl", "sas",
+    "sa", "eurl", "sarlau", "snc", "holding",
+    "directeur", "directrice", "responsable", "president", "presidente",
+    "gerant", "gerante", "fondateur", "fondatrice", "manager", "chef",
+    "ingenieur", "commercial", "commerciale", "assistant", "assistante",
+    "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+})
+
+
+def _visible_text(fragment: str) -> str:
+    """Flatten one HTML fragment to the words a reader would see."""
+    text = _SCRIPT_RE.sub(" ", fragment)
+    text = _TAG_RE.sub(" ", text)
+    return html_entities.unescape(text)
+
+
+def _person_names(text: str, banned: frozenset[str]) -> Iterator[tuple[str, str]]:
+    """Yield every capitalised pair in `text` that could name a person."""
+    for match in _PERSON_RE.finditer(text):
+        first, last = match.group(1), match.group(2)
+        if any(normalize_name(word).replace(" ", "") in banned
+               for word in (first, last)):
+            continue
+        yield first, last
+
+
+def find_colleague(html: str, emails: list[ExtractedEmail],
+                   company: str = "") -> Optional[dict]:
+    """Tie one colleague's published address to the name that owns it.
+
+    This is what feeds email_patterns.infer_format, which collapses three paid
+    verifications into one. Until now nothing ever filled it: addresses were
+    classified one by one, so a page reading "Sara Bennani — s.bennani@acme.ma"
+    yielded the address and threw away the only thing that explained it.
+
+    The association is only returned when the name actually reproduces the
+    local part under one of the known formats. That test is the whole safety
+    margin: a wrong pairing would hand the cascade a candidate in the wrong
+    format and spend a verification on an address nobody owns, so a pair that
+    explains nothing is discarded rather than reported.
+    """
+    if not html:
+        return None
+    haystack = _unmask(decode_cloudflare(html))
+    banned = frozenset(_NOT_A_PERSON | {
+        word for word in normalize_name(company).split() if word
+    })
+
+    for email in emails:
+        if email.kind != "nominatif_autre":
+            continue
+        match = re.search(re.escape(email.value), haystack, re.IGNORECASE)
+        if match is None:
+            continue   # found on another page of the same site
+        window = _visible_text(haystack[max(0, match.start() - NEIGHBOURHOOD):
+                                        match.end() + NEIGHBOURHOOD])
+        for first, last in _person_names(window, banned):
+            if email_patterns.infer_format(email.value, first, last):
+                return {"email": email.value, "first_name": first, "last_name": last}
+    return None
+
+
 def internal_contact_links(html: str, base_url: str) -> list[str]:
     """Same-host links whose path matches a contact-page slug, capped at MAX_PAGES."""
     if not html:
@@ -316,6 +410,9 @@ def harvest_contacts(lead: dict, page) -> dict:
     collected: dict[str, ExtractedEmail] = {}
     collected_phones: dict[str, ExtractedPhone] = {}
     social = extract_social(page.html)
+    # Kept so the colleague search can run once the addresses are classified:
+    # it needs the page a given address was found on, not just the address.
+    documents: list[str] = [page.html]
     home_url = page.url or website
     for found in extract_emails(page.html, home_url, company_domain=domain):
         collected[found.value] = found
@@ -335,6 +432,7 @@ def harvest_contacts(lead: dict, page) -> dict:
             logger.debug(f"Contact page unreachable {url}: {exc}")
             continue
         pages += 1
+        documents.append(resp.text)
         for found in extract_emails(resp.text, url, company_domain=domain):
             collected.setdefault(found.value, found)
         for found in extract_phones(resp.text, location, source_url=url):
@@ -352,9 +450,19 @@ def harvest_contacts(lead: dict, page) -> dict:
                        source_url=e.source_url)
         for e in collected.values()
     ]
+
+    company = lead.get("company") or ""
+    colleague = None
+    for document in documents:
+        colleague = find_colleague(document, classified, company=company)
+        if colleague:
+            break
+
     return {
         "emails": classified,
         "phones": list(collected_phones.values()),
         "social": social,
         "pages_crawled": pages,
+        # Consumed by email_cascade step (b) through email_patterns.
+        "colleague": colleague,
     }

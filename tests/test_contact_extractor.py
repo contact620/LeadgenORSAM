@@ -6,7 +6,8 @@ from enrichers.contact_extractor import (
     extract_emails,
 )
 from enrichers.contact_extractor import (
-    MAX_PAGES, extract_social, internal_contact_links,
+    MAX_PAGES, ExtractedEmail, extract_social, find_colleague,
+    harvest_contacts, internal_contact_links,
 )
 
 
@@ -255,3 +256,102 @@ def test_share_widgets_are_not_company_profiles():
     """Share buttons point at facebook.com/sharer, not at a page we can use."""
     html = '<a href="https://www.facebook.com/sharer/sharer.php?u=https://acme.ma">Partager</a>'
     assert extract_social(html)["facebook_url"] is None
+
+
+# ── Format d'entreprise déduit d'un collègue ──────────────────────────────────
+
+def _autre(value):
+    return ExtractedEmail(value=value, kind="nominatif_autre",
+                          source_url="https://acme.ma/equipe")
+
+
+def test_a_team_card_ties_the_address_to_its_owner():
+    """What infer_format needs and never received: the name that explains the
+    local part. Three paid verifications become one."""
+    html = """
+      <div class="card">
+        <h3>Sara Bennani</h3>
+        <p>Directrice commerciale</p>
+        <a href="mailto:s.bennani@acme.ma">s.bennani@acme.ma</a>
+      </div>
+    """
+    assert find_colleague(html, [_autre("s.bennani@acme.ma")], "Acme") == {
+        "email": "s.bennani@acme.ma", "first_name": "Sara", "last_name": "Bennani",
+    }
+
+
+def test_the_name_is_found_after_the_address_too():
+    html = '<p>s.bennani@acme.ma — Sara Bennani, direction commerciale</p>'
+    colleague = find_colleague(html, [_autre("s.bennani@acme.ma")], "Acme")
+    assert colleague["first_name"] == "Sara"
+
+
+def test_a_name_the_address_does_not_match_is_discarded():
+    """The safety margin: a pair that explains nothing about the local part is
+    not reported. Guessing would hand the cascade a candidate in the wrong
+    format and spend a verification on an address nobody owns."""
+    html = '<p>Sara Bennani</p><p>sb2024@acme.ma</p>'
+    assert find_colleague(html, [_autre("sb2024@acme.ma")], "Acme") is None
+
+
+def test_a_name_too_far_from_the_address_is_not_its_owner():
+    html = ("<p>Sara Bennani</p>" + "<p>texte de remplissage. </p>" * 40
+            + "<p>s.bennani@acme.ma</p>")
+    assert find_colleague(html, [_autre("s.bennani@acme.ma")], "Acme") is None
+
+
+def test_the_company_name_is_never_taken_for_a_person():
+    """"Atlas Maroc" next to a.maroc@ reproduces the p.nom format exactly, so
+    the format test alone would accept it. The company signing its own page is
+    not a colleague, and the address is not built from its name."""
+    html = '<footer>Atlas Maroc<br>a.maroc@atlas.ma</footer>'
+    assert find_colleague(html, [_autre("a.maroc@atlas.ma")], "Atlas Maroc") is None
+
+
+def test_the_lead_own_address_is_not_a_colleague():
+    """A nominatif_lead address is the contact itself: the cascade takes it
+    outright at step (a) and has no format to deduce."""
+    html = '<p>Karim El Amrani — k.elamrani@acme.ma</p>'
+    own = ExtractedEmail(value="k.elamrani@acme.ma", kind="nominatif_lead",
+                         source_url="https://acme.ma/equipe")
+    assert find_colleague(html, [own], "Acme") is None
+
+
+def test_a_cloudflare_protected_colleague_is_still_associated():
+    """The address only exists once decoded, so the association has to run on
+    the decoded page or the whole feature misses every protected site."""
+    # "s.bennani@acme.ma" XOR'd against key 0x7a, as Cloudflare encodes it.
+    plain = "s.bennani@acme.ma"
+    blob = "7a" + "".join(f"{ord(c) ^ 0x7a:02x}" for c in plain)
+    html = (f'<h3>Sara Bennani</h3><a class="__cf_email__" '
+            f'data-cfemail="{blob}">[email&#160;protected]</a>')
+    colleague = find_colleague(html, [_autre(plain)], "Acme")
+    assert colleague["last_name"] == "Bennani"
+
+
+def test_harvest_contacts_publishes_the_colleague_it_found():
+    """End to end: the key email_cascade step (b) reads."""
+    class _Page:
+        url = "https://acme.ma/"
+        html = """
+          <h3>Sara Bennani</h3>
+          <a href="mailto:s.bennani@acme.ma">Écrire</a>
+        """
+
+    lead = {"first_name": "Karim", "last_name": "El Amrani", "company": "Acme",
+            "website": "https://acme.ma", "location": "Casablanca, Maroc"}
+    contacts = harvest_contacts(lead, _Page())
+
+    assert contacts["colleague"] == {
+        "email": "s.bennani@acme.ma", "first_name": "Sara", "last_name": "Bennani",
+    }
+
+
+def test_harvest_contacts_reports_no_colleague_rather_than_a_guess():
+    class _Page:
+        url = "https://acme.ma/"
+        html = '<p>Nous Contacter : contact@acme.ma</p>'
+
+    lead = {"first_name": "Karim", "last_name": "El Amrani", "company": "Acme",
+            "website": "https://acme.ma", "location": "Casablanca, Maroc"}
+    assert harvest_contacts(lead, _Page())["colleague"] is None

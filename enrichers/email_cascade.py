@@ -219,7 +219,10 @@ def resolve_email(lead: dict, is_priority: bool, registry=None) -> dict:
             _finders(lead, first, last, domain, is_priority, registry), generic)
 
     # ── b. Candidates, collapsed to one when a colleague reveals the format ──
-    colleague = lead.get("_site_colleague") or {}
+    # _site_colleague stays the explicit override; the harvester now fills the
+    # same shape under _site_contacts["colleague"], which is what the pool's
+    # enrich-only path rebuilds (see pipeline_runner._refresh_site_contacts).
+    colleague = lead.get("_site_colleague") or contacts.get("colleague") or {}
     candidates = email_patterns.generate(
         first, last, domain,
         known_email=colleague.get("email"),

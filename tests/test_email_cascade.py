@@ -298,6 +298,26 @@ def test_the_company_format_is_inferred_from_a_colleague(monkeypatch):
     assert seen == ["k.elamrani@acme.ma"]
 
 
+def test_the_colleague_harvested_from_the_site_is_used(monkeypatch):
+    """Same saving, without anyone setting _site_colleague by hand: the
+    harvester now publishes the association it found under _site_contacts.
+    Before that it was filled by nothing in the whole repository, so
+    infer_format was dead code."""
+    seen = []
+    monkeypatch.setattr(email_cascade.getprospect, "verify_email",
+                        lambda e: seen.append(e) or
+                        EmailResult(email=e, status=VALID, provider="getprospect",
+                                    billed=True, cost=1.0))
+    contacts = _site(("s.bennani@acme.ma", "nominatif_autre"))
+    contacts["colleague"] = {"email": "s.bennani@acme.ma",
+                             "first_name": "Sara", "last_name": "Bennani"}
+    lead = _lead(_site_contacts=contacts)
+    email_cascade.resolve_email(lead, is_priority=True)
+
+    assert seen == ["k.elamrani@acme.ma"], "une seule vérification payante"
+    assert lead["email"] == "k.elamrani@acme.ma"
+
+
 # ── d. Finders ────────────────────────────────────────────────────────────────
 
 def test_finders_run_in_order_and_stop_at_the_first_hit(monkeypatch):

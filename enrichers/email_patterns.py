@@ -14,8 +14,14 @@ from api.quota_db import normalize_name
 
 MAX_CANDIDATES = 3
 
+# Ordered by how often each format is the house rule. "nom" sits last on
+# purpose: it is a common enough format that infer_format must recognise it —
+# before this it could not, and a colleague's "bennani@" taught us nothing —
+# but MAX_CANDIDATES stops the generator at three, so it is never guessed
+# blindly. It only ever produces an address when a colleague's published
+# address proves the company uses it.
 DEFAULT_ORDER: tuple[str, ...] = (
-    "prenom.nom", "pnom", "prenom", "nom.prenom", "prenomnom", "p.nom",
+    "prenom.nom", "pnom", "prenom", "nom.prenom", "prenomnom", "p.nom", "nom",
 )
 
 _BUILDERS = {
@@ -25,6 +31,7 @@ _BUILDERS = {
     "nom.prenom": lambda f, l: f"{l}.{f}",
     "prenomnom": lambda f, l: f"{f}{l}",
     "p.nom": lambda f, l: f"{f[0]}.{l}",
+    "nom": lambda f, l: l,
 }
 
 

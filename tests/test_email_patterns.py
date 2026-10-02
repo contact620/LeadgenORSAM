@@ -98,3 +98,19 @@ def test_an_uninferable_colleague_address_falls_back_to_the_default_order():
 
 def test_inference_handles_a_colleague_with_a_particle():
     assert infer_format("y.elidrissi@acme.ma", "Youssef", "El Idrissi") == "p.nom"
+
+
+def test_the_surname_alone_is_a_recognised_format():
+    """A common house format the list could not even name, so a colleague's
+    "bennani@" taught us nothing at all."""
+    assert infer_format("bennani@acme.ma", "Sara", "Bennani") == "nom"
+    assert generate("Karim", "El Amrani", "acme.ma",
+                    known_email="bennani@acme.ma",
+                    known_first="Sara", known_last="Bennani") == ["elamrani@acme.ma"]
+
+
+def test_the_surname_alone_is_never_guessed_blind():
+    """It is recognised, not generated: MAX_CANDIDATES stops at three, so the
+    format only ever produces an address when a colleague's published address
+    proves the company uses it."""
+    assert "elamrani@acme.ma" not in generate("Karim", "El Amrani", "acme.ma")
