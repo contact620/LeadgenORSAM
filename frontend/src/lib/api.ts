@@ -260,6 +260,23 @@ export async function saveConfig(data: ConfigUpdate): Promise<void> {
   }
 }
 
+export interface KeyValidation {
+  valid: boolean
+  error?: string
+}
+
+/** Test one API key against its provider. The backend route already knows
+ *  every provider, including the Anthropic branch behind "Tester la clé". */
+export async function validateApiKey(type: string, value: string): Promise<KeyValidation> {
+  const res = await fetch('/api/config/validate-key', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type, value }),
+  })
+  if (!res.ok) throw new Error('Le test de la clé a échoué')
+  return res.json()
+}
+
 // ── History endpoints ────────────────────────────────────────────────────────
 
 export interface HistoryEntry {

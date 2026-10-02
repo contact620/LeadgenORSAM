@@ -6,7 +6,7 @@ import {
   ArrowLeft, AlertCircle, Gauge, ShieldOff, Trash2, FileUp,
 } from 'lucide-react'
 import {
-  getConfig, saveConfig, uploadCookies, type ConfigStatus,
+  getConfig, saveConfig, uploadCookies, validateApiKey, type ConfigStatus,
   getSuppressionList, importSuppressionCsv, deleteSuppressionEntry, type SuppressionEntry,
 } from '@/lib/api'
 
@@ -214,6 +214,8 @@ export function Settings({ onBack, onConfigChange }: Props) {
   const [showKey, setShowKey] = useState({ serper: false, anthropic: false, perplexity: false, hunter: false, prospeo: false, getprospect: false })
   const [savingKeys, setSavingKeys] = useState(false)
   const [keysStatus, setKeysStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
+  const [testingKey, setTestingKey] = useState(false)
+  const [keyTest, setKeyTest] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
   const [pipeline, setPipeline] = useState({ hitThreshold: 50, services: [] as string[] })
   const [newService, setNewService] = useState('')
   const [savingPipeline, setSavingPipeline] = useState(false)
@@ -274,6 +276,18 @@ export function Settings({ onBack, onConfigChange }: Props) {
     } catch (e: unknown) {
       setKeysStatus({ type: 'error', msg: e instanceof Error ? e.message : 'Erreur' })
     } finally { setSavingKeys(false) }
+  }
+
+  const handleTestKey = async (type: string, value: string) => {
+    setTestingKey(true); setKeyTest(null)
+    try {
+      const res = await validateApiKey(type, value)
+      setKeyTest(res.valid
+        ? { type: 'success', msg: 'Clé acceptée — appel de test réussi' }
+        : { type: 'error', msg: res.error ?? 'Clé refusée' })
+    } catch (e: unknown) {
+      setKeyTest({ type: 'error', msg: e instanceof Error ? e.message : 'Erreur' })
+    } finally { setTestingKey(false) }
   }
 
   const handleSavePipeline = async () => {
@@ -381,6 +395,45 @@ export function Settings({ onBack, onConfigChange }: Props) {
                 </button>
               </div>
               {hint && <p className="mt-1 text-xs" style={{ color: 'var(--th-text-faint)' }}>{hint}</p>}
+
+              {/* The Quotas panel below counts email-finder credits only;
+                  nothing there says whether the AI key still works. The
+                  Anthropic API publishes no credit-balance endpoint, so the
+                  only honest answer is a real call — which is what
+                  /api/config/validate-key already makes. */}
+              {id === 'anthropic' && (
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleTestKey('anthropic', keys.anthropic)}
+                    disabled={testingKey || !keys.anthropic}
+                    title={keys.anthropic
+                      ? 'Envoie un appel minimal à Claude avec cette clé'
+                      : 'Collez la clé à tester dans le champ ci-dessus'}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium"
+                    style={{
+                      color: 'var(--th-primary)', background: 'var(--th-primary-soft)',
+                      border: '1px solid var(--th-primary-border)', fontFamily: 'inherit',
+                      opacity: (testingKey || !keys.anthropic) ? 0.4 : 1,
+                      cursor: (testingKey || !keys.anthropic) ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {testingKey ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Gauge className="w-3 h-3" />}
+                    Tester la clé
+                  </button>
+                  {keyTest && (
+                    <span
+                      className="inline-flex items-center gap-1.5 text-xs"
+                      style={{ color: keyTest.type === 'success' ? 'var(--th-success)' : 'var(--th-error)' }}
+                    >
+                      {keyTest.type === 'success'
+                        ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                        : <XCircle className="w-3.5 h-3.5 shrink-0" />}
+                      {keyTest.msg}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           ))}
 
@@ -412,10 +465,11 @@ export function Settings({ onBack, onConfigChange }: Props) {
 
       {/* Quotas */}
       {config && config.quotas && Object.keys(config.quotas).length > 0 && (
-        <SectionCard title="Quotas fournisseurs" icon={<Gauge className="w-4 h-4" />}>
+        <SectionCard title="Quotas des outils email gratuits" icon={<Gauge className="w-4 h-4" />}>
           <div className="space-y-4">
             <p className="text-xs" style={{ color: 'var(--th-text-muted)' }}>
               Crédits restants sur l'allocation mensuelle de chaque fournisseur de la cascade email.
+              Ces compteurs ne disent rien de la clé Anthropic : utilisez « Tester la clé » ci-dessus.
             </p>
             {Object.entries(config.quotas).map(([provider, quota]) => (
               <QuotaBar key={provider} label={PROVIDER_QUOTA_LABEL[provider] ?? provider} quota={quota} />

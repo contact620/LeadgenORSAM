@@ -38,7 +38,13 @@ export function StatsBar({ result }: Props) {
   const { total_leads, hit_leads, nohit_leads, pending_quota_leads, stats } = result
   const hitRate = total_leads > 0 ? Math.round((hit_leads / total_leads) * 100) : 0
   const topSource = Object.entries(stats.email_by_source ?? {}).sort((a, b) => b[1] - a[1])[0]
-  const totalCredits = Object.values(stats.provider_credits ?? {}).reduce((s, q) => s + q.remaining, 0)
+  // Finder credits only. getprospect_verify is also in provider_credits, but
+  // it counts verifications, not searches: adding it produced a single number
+  // out of two different units — and one that contradicted this tile's own
+  // "Prospeo + GetProspect + Hunter" caption.
+  const EMAIL_FINDERS = ['prospeo', 'getprospect', 'hunter']
+  const totalCredits = EMAIL_FINDERS.reduce(
+    (s, name) => s + (stats.provider_credits?.[name]?.remaining ?? 0), 0)
 
   return (
     <div className="w-full max-w-5xl mx-auto">
@@ -58,7 +64,7 @@ export function StatsBar({ result }: Props) {
         <StatCard icon={<Phone className="w-4 h-4" style={{ color: 'var(--th-cyan)' }} />} accentColor="#22d3ee" glowColor="rgba(34,211,238,0.15)" label="Téléphones" value={`${stats.phone_pct}%`} sub={`${stats.phone_count ?? 0} / ${total_leads} · Site: ${stats.website_count ?? 0} / ${total_leads}`} />
         <StatCard icon={<Smartphone className="w-4 h-4" style={{ color: '#22d3ee' }} />} accentColor="#22d3ee" glowColor="rgba(34,211,238,0.15)" label="Mobiles" value={stats.mobile_count ?? 0} sub={`sur ${total_leads} leads`} />
         <StatCard icon={<MessageCircle className="w-4 h-4" style={{ color: '#34d399' }} />} accentColor="#34d399" glowColor="rgba(52,211,153,0.15)" label="WhatsApp" value={stats.whatsapp_count ?? 0} sub="lien publié sur le site" />
-        <StatCard icon={<Wallet className="w-4 h-4" style={{ color: '#fbbf24' }} />} accentColor="#fbbf24" glowColor="rgba(251,191,36,0.15)" label="Crédits restants" value={Math.round(totalCredits)} sub="Prospeo + GetProspect + Hunter" />
+        <StatCard icon={<Wallet className="w-4 h-4" style={{ color: '#fbbf24' }} />} accentColor="#fbbf24" glowColor="rgba(251,191,36,0.15)" label="Crédits email restants" value={Math.round(totalCredits)} sub="Prospeo + GetProspect + Hunter" />
       </div>
 
       {/* Email sources */}
