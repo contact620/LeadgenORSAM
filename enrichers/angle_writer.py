@@ -8,12 +8,18 @@ sell in the same breath will justify the sale it just wrote.
 import json
 import logging
 import time
+from typing import Optional
 
 import anthropic
 
 import config
 from api.provider_status import StepOutcome
-from enrichers.retry import retry_api_call, AuthError
+from enrichers.retry import (
+    CREDIT_EXHAUSTED_MESSAGE,
+    AuthError,
+    CreditExhausted,
+    retry_api_call,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +56,21 @@ Faits vérifiés :
 Rédige le JSON demandé."""
 
 _writer_disabled = False
+# Why the step gave up, in words the operator can act on (reaches the run's
+# provider panel). None while the step is healthy.
+_disabled_reason: Optional[str] = None
+# Calls actually sent and calls that came back with text.
+_calls_attempted = 0
+_calls_succeeded = 0
 
 
 def _reset_state():
-    global _writer_disabled
+    global _writer_disabled, _disabled_reason
+    global _calls_attempted, _calls_succeeded
     _writer_disabled = False
+    _disabled_reason = None
+    _calls_attempted = 0
+    _calls_succeeded = 0
 
 
 def should_write(lead: dict) -> bool:
@@ -65,7 +81,8 @@ def should_write(lead: dict) -> bool:
 
 
 def _write_one(lead: dict, enrich_instructions: str = "") -> dict:
-    global _writer_disabled
+    global _writer_disabled, _disabled_reason
+    global _calls_attempted, _calls_succeeded
     empty = {"activity_summary": None, "conversion_angle": None}
     if _writer_disabled:
         return empty
@@ -110,15 +127,28 @@ def _write_one(lead: dict, enrich_instructions: str = "") -> dict:
             "conversion_angle": (data.get("conversion_angle") or "").strip() or None,
         }
 
+    _calls_attempted += 1
     try:
-        return retry_api_call(_do_request, max_retries=3, operation_name=f"Angle writing ({name})")
+        written = retry_api_call(
+            _do_request, max_retries=3, operation_name=f"Angle writing ({name})"
+        )
+    except CreditExhausted as e:
+        # Caught before AuthError, which it subclasses: the operator has to
+        # top up a balance here, not fix a key.
+        _writer_disabled = True
+        _disabled_reason = CREDIT_EXHAUSTED_MESSAGE
+        logger.error(f"Angle writing stopped — disabled for this run: {e}")
+        return empty
     except AuthError as e:
         _writer_disabled = True
+        _disabled_reason = "clé Anthropic refusée"
         logger.error(f"Angle writing auth failed — disabled for this run: {e}")
         return empty
     except Exception as e:
         logger.error(f"Angle writing failed for {name}: {e}")
         return empty
+    _calls_succeeded += 1
+    return written
 
 
 def write_leads_angles(leads: list[dict], enrich_instructions: str = "", registry=None) -> list[dict]:
@@ -157,5 +187,19 @@ def write_leads_angles(leads: list[dict], enrich_instructions: str = "", registr
 
     logger.info(f"Angle writing complete. {written}/{total} written.")
     if registry:
-        registry.record(StepOutcome("anthropic_angles", "degraded" if _writer_disabled else "ok", None, written))
+        registry.record(StepOutcome("anthropic_angles", *_health(), written))
     return leads
+
+
+def _health() -> tuple[str, Optional[str]]:
+    """Status and reason for this run's angle writing.
+
+    A run where every call failed used to report "ok": each lead got a pair
+    of empty fields, which is also what an unevidenced lead gets, so total
+    failure and nothing-to-say were indistinguishable.
+    """
+    if _writer_disabled:
+        return "degraded", _disabled_reason
+    if _calls_attempted and not _calls_succeeded:
+        return "degraded", f"aucun appel abouti sur {_calls_attempted}"
+    return "ok", None

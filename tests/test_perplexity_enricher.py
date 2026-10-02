@@ -2,7 +2,13 @@ import json
 from unittest.mock import MagicMock, patch
 
 import enrichers.perplexity_enricher as px
-from enrichers.perplexity_enricher import _call_perplexity, _reset_state
+from api.provider_status import ProviderRegistry
+from enrichers.perplexity_enricher import (
+    _call_perplexity,
+    _reset_state,
+    enrich_leads_perplexity,
+)
+from enrichers.retry import QuotaExhausted
 
 
 def _lead():
@@ -137,3 +143,111 @@ def test_401_response_disables_provider():
 
     assert result == (None, None, None), "401 should degrade gracefully"
     assert px._perplexity_disabled is True, "401 must disable the provider"
+
+
+# ── Honest run status (§8d) ──────────────────────────────────────────────────
+
+def test_quota_exhausted_disables_the_provider():
+    """retry_api_call maps 402/429 to QuotaExhausted and its contract says the
+    balance will not come back within the run. Before, that exception landed
+    in the generic branch: one doomed call per remaining company, then "ok"."""
+    _reset_state()
+    with patch("enrichers.perplexity_enricher.config.PERPLEXITY_API_KEY", "key"), \
+         patch("enrichers.perplexity_enricher.retry_api_call",
+               side_effect=QuotaExhausted("Perplexity: HTTP 429")):
+        result = _call_perplexity(_lead())
+
+    assert result == (None, None, None)
+    assert px._perplexity_disabled is True
+    _reset_state()
+
+
+def test_quota_exhausted_is_recorded_as_degraded_with_its_reason():
+    _reset_state()
+    reg = ProviderRegistry()
+    leads = [dict(_lead(), company=f"Acme{i}") for i in range(4)]
+
+    with patch("enrichers.perplexity_enricher.config.PERPLEXITY_API_KEY", "key"), \
+         patch("enrichers.perplexity_enricher.retry_api_call",
+               side_effect=QuotaExhausted("Perplexity: HTTP 429")), \
+         patch("enrichers.perplexity_enricher.time.sleep", return_value=None):
+        try:
+            enrich_leads_perplexity(leads, registry=reg)
+        finally:
+            _reset_state()
+
+    outcome = reg.to_dict()["perplexity"]
+    assert outcome["status"] == "degraded"
+    assert "quota" in outcome["reason"]
+
+
+def test_every_call_failing_is_recorded_as_degraded_not_ok():
+    """A transient-looking error is not AuthError, so the provider stayed
+    enabled, every lead came back with three None fields, and the step
+    recorded "ok" — indistinguishable from a provider that was never used."""
+    _reset_state()
+    reg = ProviderRegistry()
+    leads = [dict(_lead(), company=f"Acme{i}") for i in range(3)]
+
+    with patch("enrichers.perplexity_enricher.config.PERPLEXITY_API_KEY", "key"), \
+         patch("enrichers.perplexity_enricher.retry_api_call",
+               side_effect=RuntimeError("boom")), \
+         patch("enrichers.perplexity_enricher.time.sleep", return_value=None):
+        try:
+            enrich_leads_perplexity(leads, registry=reg)
+        finally:
+            _reset_state()
+
+    outcome = reg.to_dict()["perplexity"]
+    assert outcome["status"] == "degraded"
+    assert "3" in (outcome["reason"] or ""), "say how many calls were lost"
+
+
+def test_a_missing_key_is_recorded_as_skipped_not_absent():
+    """An unconfigured provider is not an outage, but it is not silence
+    either: without a record, the IA group has no member to report on."""
+    _reset_state()
+    reg = ProviderRegistry()
+
+    with patch("enrichers.perplexity_enricher.config.PERPLEXITY_API_KEY", ""):
+        enrich_leads_perplexity([_lead()], registry=reg)
+
+    assert reg.to_dict()["perplexity"]["status"] == "skipped"
+
+
+def test_a_successful_run_is_recorded_as_ok():
+    _reset_state()
+    reg = ProviderRegistry()
+
+    with patch("enrichers.perplexity_enricher.config.PERPLEXITY_API_KEY", "key"), \
+         patch("enrichers.perplexity_enricher.requests.post",
+               return_value=_mock_response()), \
+         patch("enrichers.perplexity_enricher.time.sleep", return_value=None):
+        try:
+            enrich_leads_perplexity([_lead()], registry=reg)
+        finally:
+            _reset_state()
+
+    assert reg.to_dict()["perplexity"]["status"] == "ok"
+
+
+def test_a_disabling_error_does_not_leak_into_the_next_run():
+    """_perplexity_disabled is module state and enrich_leads_perplexity never
+    reset it: one 401 in run N skipped Perplexity in every later run of the
+    same server process, and would now report run N's outage as run N+1's."""
+    _reset_state()
+    px._perplexity_disabled = True
+    px._disabled_reason = "clé Perplexity refusée ou endpoint indisponible"
+    reg = ProviderRegistry()
+
+    with patch("enrichers.perplexity_enricher.config.PERPLEXITY_API_KEY", "key"), \
+         patch("enrichers.perplexity_enricher.requests.post",
+               return_value=_mock_response()), \
+         patch("enrichers.perplexity_enricher.time.sleep", return_value=None):
+        try:
+            leads = enrich_leads_perplexity([_lead()], registry=reg)
+        finally:
+            _reset_state()
+
+    assert reg.to_dict()["perplexity"]["status"] == "ok"
+    assert leads[0]["digital_maturity"], "the new run must actually be enriched"

@@ -16,7 +16,12 @@ import anthropic
 
 import config
 from api.provider_status import StepOutcome
-from enrichers.retry import retry_api_call, AuthError
+from enrichers.retry import (
+    CREDIT_EXHAUSTED_MESSAGE,
+    AuthError,
+    CreditExhausted,
+    retry_api_call,
+)
 from processors.evidence import Evidence, compute_evidence_level
 from processors.icp_rules import IcpRules, load_rules
 
@@ -145,11 +150,23 @@ _EMPTY_FACTS = {
 }
 
 _extractor_disabled = False
+# Why the step gave up, in words the operator can act on (reaches the run's
+# provider panel). None while the step is healthy.
+_disabled_reason: Optional[str] = None
+# Calls actually sent and calls that came back with facts. Confirmed
+# identities are not a usable health signal on their own: a working model
+# legitimately confirms none when the evidence is thin.
+_calls_attempted = 0
+_calls_succeeded = 0
 
 
 def _reset_state():
-    global _extractor_disabled
+    global _extractor_disabled, _disabled_reason
+    global _calls_attempted, _calls_succeeded
     _extractor_disabled = False
+    _disabled_reason = None
+    _calls_attempted = 0
+    _calls_succeeded = 0
 
 
 def _sourced(fact) -> Optional[dict]:
@@ -281,7 +298,8 @@ def extract_facts(lead: dict, ev: Evidence, rules: Optional[IcpRules] = None) ->
     prompt (see build_system_prompt); the caller loads it once per run rather
     than once per lead.
     """
-    global _extractor_disabled
+    global _extractor_disabled, _disabled_reason
+    global _calls_attempted, _calls_succeeded
     if _extractor_disabled:
         return dict(_EMPTY_FACTS)
 
@@ -311,15 +329,28 @@ def extract_facts(lead: dict, ev: Evidence, rules: Optional[IcpRules] = None) ->
         )
         return sanitize_facts(_parse_json(message.content[0].text.strip()))
 
+    _calls_attempted += 1
     try:
-        return retry_api_call(_do_request, max_retries=3, operation_name=f"Fact extraction ({name})")
+        facts = retry_api_call(
+            _do_request, max_retries=3, operation_name=f"Fact extraction ({name})"
+        )
+    except CreditExhausted as e:
+        # Caught before AuthError, which it subclasses: the operator has to
+        # top up a balance here, not fix a key.
+        _extractor_disabled = True
+        _disabled_reason = CREDIT_EXHAUSTED_MESSAGE
+        logger.error(f"Fact extraction stopped — disabled for this run: {e}")
+        return dict(_EMPTY_FACTS)
     except AuthError as e:
         _extractor_disabled = True
+        _disabled_reason = "clé Anthropic refusée"
         logger.error(f"Fact extraction auth failed — disabled for this run: {e}")
         return dict(_EMPTY_FACTS)
     except Exception as e:
         logger.error(f"Fact extraction failed for {name}: {e}")
         return dict(_EMPTY_FACTS)
+    _calls_succeeded += 1
+    return facts
 
 
 def extract_leads_facts(
@@ -382,6 +413,19 @@ def extract_leads_facts(
 
     logger.info(f"Fact extraction complete. {extracted}/{total} identities confirmed.")
     if registry:
-        status = "degraded" if _extractor_disabled else "ok"
-        registry.record(StepOutcome("anthropic_facts", status, None, extracted))
+        registry.record(StepOutcome("anthropic_facts", *_health(), extracted))
     return leads
+
+
+def _health() -> tuple[str, Optional[str]]:
+    """Status and reason for this run's fact extraction.
+
+    A run where every single call failed used to report "ok": the step
+    returned empty facts for each lead and nothing distinguished it from a
+    run whose leads simply carried no evidence.
+    """
+    if _extractor_disabled:
+        return "degraded", _disabled_reason
+    if _calls_attempted and not _calls_succeeded:
+        return "degraded", f"aucun appel abouti sur {_calls_attempted}"
+    return "ok", None

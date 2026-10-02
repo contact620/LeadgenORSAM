@@ -17,7 +17,7 @@ import requests
 
 import config
 from api.provider_status import StepOutcome
-from enrichers.retry import retry_api_call, AuthError
+from enrichers.retry import AuthError, QuotaExhausted, retry_api_call
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,13 @@ Recherche et retourne un JSON avec exactement ces 3 clés :
 Réponds UNIQUEMENT en JSON brut avec ces 3 clés. Pas de markdown, pas d'explication."""
 
 _perplexity_disabled = False
+# Why the step gave up, in words the operator can act on (reaches the run's
+# provider panel). None while the step is healthy.
+_disabled_reason: Optional[str] = None
+# Calls actually sent and calls that came back with data. Cached hits are not
+# counted: they are not evidence that the API still answers.
+_calls_attempted = 0
+_calls_succeeded = 0
 
 
 class PerplexityUnavailable(AuthError):
@@ -78,13 +85,18 @@ def _output_text(data: dict) -> str:
 
 def _reset_state():
     """Reset module state between pipeline runs."""
-    global _perplexity_disabled
+    global _perplexity_disabled, _disabled_reason
+    global _calls_attempted, _calls_succeeded
     _perplexity_disabled = False
+    _disabled_reason = None
+    _calls_attempted = 0
+    _calls_succeeded = 0
 
 
 def _call_perplexity(lead: dict, enrich_instructions: str = "") -> tuple[Optional[str], Optional[str], Optional[str]]:
     """Call Perplexity Sonar for a single lead. Returns (digital_maturity, estimated_budget, business_signals)."""
-    global _perplexity_disabled
+    global _perplexity_disabled, _disabled_reason
+    global _calls_attempted, _calls_succeeded
     if _perplexity_disabled:
         return None, None, None
 
@@ -158,10 +170,22 @@ def _call_perplexity(lead: dict, enrich_instructions: str = "") -> tuple[Optiona
             result.get("business_signals", "").strip() if isinstance(result.get("business_signals"), str) else json.dumps(result.get("business_signals"), ensure_ascii=False) if result.get("business_signals") else None,
         )
 
+    _calls_attempted += 1
     try:
-        return retry_api_call(_do_request, max_retries=2, operation_name=f"Perplexity ({company})")
+        result = retry_api_call(_do_request, max_retries=2, operation_name=f"Perplexity ({company})")
+    except QuotaExhausted as e:
+        # retry_api_call maps 402/429 here and its contract says the balance
+        # will not come back within this run. Honouring that contract means
+        # stopping now: the generic branch below used to swallow this one
+        # error per company, so an exhausted plan still cost one doomed call
+        # per remaining company and the step reported "ok" at the end.
+        _perplexity_disabled = True
+        _disabled_reason = "quota Perplexity épuisé"
+        logger.error(f"Perplexity quota exhausted — disabled for this run: {e}")
+        return None, None, None
     except AuthError as e:
         _perplexity_disabled = True
+        _disabled_reason = "clé Perplexity refusée ou endpoint indisponible"
         logger.error(f"Perplexity unusable — disabled for this run: {e}")
         return None, None, None
     except json.JSONDecodeError as e:
@@ -170,6 +194,8 @@ def _call_perplexity(lead: dict, enrich_instructions: str = "") -> tuple[Optiona
     except Exception as e:
         logger.error(f"Perplexity enrichment failed for {company}: {e}")
         return None, None, None
+    _calls_succeeded += 1
+    return result
 
 
 def enrich_leads_perplexity(hit_leads: list[dict], enrich_instructions: str = "", registry=None) -> list[dict]:
@@ -179,12 +205,20 @@ def enrich_leads_perplexity(hit_leads: list[dict], enrich_instructions: str = ""
       lead["estimated_budget"]
       lead["business_signals"]
     """
+    # Without this, _perplexity_disabled stayed true for the life of the
+    # server process: one disabling error in run N silently skipped
+    # Perplexity in every later run. _reset_state existed but nothing but
+    # the tests ever called it.
+    _reset_state()
+
     if config._is_placeholder(config.PERPLEXITY_API_KEY):
         logger.warning("PERPLEXITY_API_KEY not set. Skipping Perplexity enrichment.")
         for lead in hit_leads:
             lead["digital_maturity"] = None
             lead["estimated_budget"] = None
             lead["business_signals"] = None
+        if registry:
+            registry.record(StepOutcome("perplexity", "skipped", "clé API absente", 0))
         return hit_leads
 
     total = len(hit_leads)
@@ -230,6 +264,18 @@ def enrich_leads_perplexity(hit_leads: list[dict], enrich_instructions: str = ""
         f"({unique_companies} unique companies queried)."
     )
     if registry:
-        status = "degraded" if _perplexity_disabled else "ok"
-        registry.record(StepOutcome("perplexity", status, None, success))
+        registry.record(StepOutcome("perplexity", *_health(), success))
     return hit_leads
+
+
+def _health() -> tuple[str, Optional[str]]:
+    """Status and reason for this run's Perplexity enrichment.
+
+    A run where every call failed used to report "ok": each lead got three
+    None fields, which is also what a skipped provider leaves behind.
+    """
+    if _perplexity_disabled:
+        return "degraded", _disabled_reason
+    if _calls_attempted and not _calls_succeeded:
+        return "degraded", f"aucun appel abouti sur {_calls_attempted}"
+    return "ok", None

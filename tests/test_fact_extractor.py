@@ -9,7 +9,11 @@ from enrichers.fact_extractor import (
     extract_leads_facts,
     sanitize_facts,
 )
-from enrichers.retry import AuthError
+from enrichers.retry import (
+    CREDIT_EXHAUSTED_MESSAGE,
+    AuthError,
+    CreditExhausted,
+)
 from processors.icp_rules import load_rules
 
 
@@ -298,3 +302,98 @@ def test_missing_api_key_is_recorded_as_skipped():
         leads = extract_leads_facts(_leads(2), frozenset({"website"}), registry=reg)
     assert reg.to_dict()["anthropic_facts"]["status"] == "skipped"
     assert all(l["evidence_level"] == "none" for l in leads)
+
+
+# ── Honest run status (§8d) ──────────────────────────────────────────────────
+
+def test_every_call_failing_is_recorded_as_degraded_not_ok():
+    """The silent failure this closes: transient errors are not AuthError, so
+    the step stayed enabled, returned empty facts for all 20 leads and then
+    recorded "ok". The run came out green with no AI columns at all."""
+    fx._reset_state()
+    reg = ProviderRegistry()
+
+    with patch("enrichers.fact_extractor.config.ANTHROPIC_API_KEY", "sk-test"), \
+         patch("enrichers.fact_extractor.retry_api_call",
+               side_effect=RuntimeError("overloaded")), \
+         patch("enrichers.fact_extractor.time.sleep", return_value=None):
+        try:
+            extract_leads_facts(_leads(3), frozenset({"website"}), registry=reg)
+        finally:
+            fx._reset_state()
+
+    outcome = reg.to_dict()["anthropic_facts"]
+    assert outcome["status"] == "degraded"
+    assert "3" in (outcome["reason"] or ""), "say how many calls were lost"
+
+
+def test_a_spent_credit_balance_is_named_in_the_recorded_reason():
+    """"clé Anthropic refusée" would send the operator to the wrong screen."""
+    fx._reset_state()
+    reg = ProviderRegistry()
+
+    with patch("enrichers.fact_extractor.config.ANTHROPIC_API_KEY", "sk-test"), \
+         patch("enrichers.fact_extractor.retry_api_call",
+               side_effect=CreditExhausted(CREDIT_EXHAUSTED_MESSAGE)), \
+         patch("enrichers.fact_extractor.time.sleep", return_value=None):
+        try:
+            extract_leads_facts(_leads(5), frozenset({"website"}), registry=reg)
+        finally:
+            fx._reset_state()
+
+    outcome = reg.to_dict()["anthropic_facts"]
+    assert outcome["status"] == "degraded"
+    assert "crédits" in outcome["reason"]
+
+
+def test_a_spent_credit_balance_stops_after_the_first_lead():
+    fx._reset_state()
+    calls = []
+
+    def _record(*args, **kwargs):
+        calls.append(1)
+        raise CreditExhausted(CREDIT_EXHAUSTED_MESSAGE)
+
+    with patch("enrichers.fact_extractor.config.ANTHROPIC_API_KEY", "sk-test"), \
+         patch("enrichers.fact_extractor.retry_api_call", side_effect=_record), \
+         patch("enrichers.fact_extractor.time.sleep", return_value=None):
+        try:
+            extract_leads_facts(_leads(10), frozenset({"website"}),
+                                registry=ProviderRegistry())
+        finally:
+            fx._reset_state()
+
+    assert len(calls) == 1
+
+
+def test_a_working_run_that_confirms_no_identity_is_still_ok():
+    """Zero confirmed identities is not a fault: thin evidence legitimately
+    produces it. Only a failed call is a fault, which is why the health
+    verdict counts calls and not confirmations."""
+    fx._reset_state()
+    reg = ProviderRegistry()
+
+    with patch("enrichers.fact_extractor.config.ANTHROPIC_API_KEY", "sk-test"), \
+         patch("enrichers.fact_extractor.retry_api_call",
+               return_value=dict(_EMPTY_FACTS)), \
+         patch("enrichers.fact_extractor.time.sleep", return_value=None):
+        try:
+            extract_leads_facts(_leads(3), frozenset({"website"}), registry=reg)
+        finally:
+            fx._reset_state()
+
+    assert reg.to_dict()["anthropic_facts"]["status"] == "ok"
+
+
+def test_a_run_with_no_leads_is_not_reported_as_degraded():
+    """Nothing was asked of the API, so nothing failed."""
+    fx._reset_state()
+    reg = ProviderRegistry()
+
+    with patch("enrichers.fact_extractor.config.ANTHROPIC_API_KEY", "sk-test"):
+        try:
+            extract_leads_facts([], frozenset({"website"}), registry=reg)
+        finally:
+            fx._reset_state()
+
+    assert reg.to_dict()["anthropic_facts"]["status"] == "ok"
