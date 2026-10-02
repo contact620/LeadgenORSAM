@@ -156,7 +156,14 @@ def test_a_lead_without_an_appointment_gets_no_priority_instruction():
     an invention like any other."""
     prompt = _capture_user_prompt(_lead_with(None))
     assert "SIGNAL PRIORITAIRE" not in prompt
+    # Two spellings on purpose: the instruction says "prise de poste" (spaces),
+    # while the facts JSON carries the key "prise_de_poste" (underscores). The
+    # assertion used to check only the first, which the JSON can never contain,
+    # so it was true whatever the prompt held.
     assert "prise de poste" not in prompt
+    assert '"prise_de_poste": null' in prompt, "the key is sent, and sent empty"
+    assert "nouvelle_entreprise" not in prompt
+    assert "nouveau_poste" not in prompt
 
 
 def test_an_unsourced_or_malformed_appointment_never_reaches_the_instruction():

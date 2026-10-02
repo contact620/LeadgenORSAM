@@ -133,10 +133,25 @@ def test_no_hint_defaults_to_french():
     assert messages.detect_language({}, "Paris") == ("fr", "defaut")
 
 
-def test_the_name_never_decides_the_language():
-    # Both routes see an English-sounding and a German-sounding name with no
-    # country data: the answer must be the French default either way.
-    assert messages.detect_language({}, None)[0] == "fr"
+def test_the_name_never_decides_the_language(client, stub):
+    """detect_language has no name parameter, so this goes through the route,
+    the only place a name and a country meet. Two leads that differ only by an
+    English-sounding and a German-sounding name, with no country data at all,
+    must both get the French default; and a name must not override a country
+    that is known."""
+    reply = "Bonjour, votre refonte d'avril m'a interpellé."
+    no_data = {"facts_json": None, "location": None}
+    for first, last in (("John", "Smith"), ("Hans", "Müller")):
+        stub.replies.append(reply)
+        body = client.post(ROUTE, json=_payload(first_name=first, last_name=last, **no_data)).json()
+        assert (body["language"], body["language_basis"]) == ("fr", "defaut"), (first, last)
+
+    spanish = {"pays": {"value": "Espagne", "source": "website"}}
+    stub.replies.append(reply)
+    body = client.post(ROUTE, json=_payload(
+        first_name="John", last_name="Smith", facts_json=json.dumps(spanish), location=None,
+    )).json()
+    assert (body["language"], body["language_basis"]) == ("es", "pays")
 
 
 def test_location_match_is_by_whole_segment():

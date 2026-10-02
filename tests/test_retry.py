@@ -174,9 +174,16 @@ def test_a_credit_balance_message_without_a_400_is_not_a_spent_balance():
     assert not isinstance(excinfo.value, CreditExhausted)
 
 
-def test_spent_balance_detected_through_a_requests_response():
-    """Some callers wrap the same payload in a requests error, where the
-    status lives on .response instead of .status_code."""
+def test_is_credit_exhausted_reads_the_status_from_a_requests_response():
+    """Unit test of the helper only: it reads the status from .response when
+    the exception has no .status_code of its own.
+
+    It does NOT cover retry_api_call. There, a requests HTTPError is caught by
+    the dedicated clause before the generic branch that calls
+    is_credit_exhausted, so a spent balance wrapped in an HTTPError is not
+    turned into CreditExhausted by the retry loop. The Anthropic SDK never
+    raises HTTPError, so this has no practical effect; the test used to claim
+    otherwise through its name."""
     response = requests.Response()
     response.status_code = 400
     exc = requests.exceptions.HTTPError(_SPENT_BALANCE, response=response)
