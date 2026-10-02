@@ -133,8 +133,6 @@ export interface PoolLead {
   phone?: string
   linkedin_url?: string
   website?: string
-  hit_score?: number
-  is_hit: boolean
   is_duplicate: boolean
   enriched: boolean
   enriched_at?: string

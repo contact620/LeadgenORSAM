@@ -1,8 +1,6 @@
-import { X, Briefcase, MapPin, Mail, Phone, Linkedin, Globe, Target, TrendingUp, DollarSign, Activity, Zap, Copy, ExternalLink, AlertTriangle } from 'lucide-react'
+import { X, Briefcase, MapPin, Mail, Phone, Linkedin, Globe, TrendingUp, DollarSign, Activity, Zap, Copy, ExternalLink, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
-import {
-  EVIDENCE_LEVEL_STYLE, TIER_ICON, TIER_STYLE, emailSourceLabel, evidenceLabel, tierOf,
-} from '@/lib/tiers'
+import { EVIDENCE_LEVEL_STYLE, emailSourceLabel, evidenceLabel } from '@/lib/tiers'
 
 function copyToClipboard(text: string, label: string) {
   navigator.clipboard.writeText(text).then(() => toast.success(`${label} copié`))
@@ -28,10 +26,6 @@ interface LeadData {
   domain_catch_all?: boolean | null
   domain_mx_provider?: string
   domain_mismatch?: boolean
-  icp_score?: number
-  icp_tier?: string
-  icp_rationale?: string
-  icp_scores_detail?: string
   activity_summary?: string
   conversion_angle?: string
   digital_maturity?: string
@@ -52,10 +46,9 @@ interface Props {
 
 export function LeadDetailModal({ lead, onClose }: Props) {
   const fullName = [lead.first_name, lead.last_name].filter(Boolean).join(' ')
-  const hasEnrichment = lead.activity_summary || lead.conversion_angle || lead.digital_maturity || lead.estimated_budget || lead.business_signals || lead.icp_rationale
+  const hasEnrichment = lead.activity_summary || lead.conversion_angle || lead.digital_maturity || lead.estimated_budget || lead.business_signals
 
   const sections = [
-    { key: 'icp_rationale', label: 'Analyse ICP', icon: <Target className="w-4 h-4" /> },
     { key: 'activity_summary', label: 'Résumé d\'activité', icon: <Activity className="w-4 h-4" /> },
     { key: 'conversion_angle', label: 'Angle de conversion recommandé', icon: <TrendingUp className="w-4 h-4" /> },
     { key: 'digital_maturity', label: 'Maturité digitale', icon: <Globe className="w-4 h-4" /> },
@@ -215,17 +208,6 @@ export function LeadDetailModal({ lead, onClose }: Props) {
             <span className="text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pré-score</span>
             <span className="font-mono font-bold text-lg" style={{ color: (lead.prescore ?? 0) >= 30 ? 'var(--th-success)' : 'var(--th-text-quaternary)' }}>{lead.prescore ?? 0}</span>
           </div>
-          {lead.icp_score != null && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>ICP</span>
-              <span
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold"
-                style={TIER_STYLE[tierOf(lead.icp_tier)]}
-              >
-                {TIER_ICON[tierOf(lead.icp_tier)]} {lead.icp_score}
-              </span>
-            </div>
-          )}
           {lead.evidence_level && (
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold" style={{ color: 'var(--th-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -276,7 +258,7 @@ export function LeadDetailModal({ lead, onClose }: Props) {
         ) : (
           <div className="p-6 text-center">
             <p className="text-sm" style={{ color: 'var(--th-text-muted)' }}>
-              Ce lead n'a pas encore été enrichi par l'IA.
+              Aucune donnée IA pour ce lead (recherche IA désactivée ou sans résultat).
             </p>
           </div>
         )}

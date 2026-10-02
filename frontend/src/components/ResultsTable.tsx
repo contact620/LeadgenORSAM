@@ -3,7 +3,7 @@ import { Download, Search, ExternalLink, ChevronLeft, ChevronRight, SearchX, Arr
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { getDownloadUrl, type Lead } from '@/lib/api'
-import { TIER_ICON, TIER_STYLE, emailSourceLabel, evidenceLabel, tierOf } from '@/lib/tiers'
+import { emailSourceLabel, evidenceLabel } from '@/lib/tiers'
 import { LeadDetailModal } from './LeadDetailModal'
 
 // Visual style for each email_status value the cascade can produce
@@ -26,7 +26,7 @@ interface Props {
 }
 
 type Tab = 'all' | 'reachable' | 'unreachable' | 'pending'
-type SortKey = 'name' | 'company' | 'prescore' | 'icp' | null
+type SortKey = 'name' | 'company' | 'prescore' | null
 type SortDir = 'asc' | 'desc'
 
 function copyToClipboard(text: string, label: string) {
@@ -40,7 +40,6 @@ function getSortValue(lead: Lead, key: SortKey): string | number {
     case 'name': return `${lead.first_name ?? ''} ${lead.last_name ?? ''}`.toLowerCase()
     case 'company': return (lead.company ?? '').toLowerCase()
     case 'prescore': return lead.prescore ?? 0
-    case 'icp': return lead.icp_score ?? -1
     default: return 0
   }
 }
@@ -52,7 +51,6 @@ export function ResultsTable({ leads, jobId }: Props) {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
   const [sortBy, setSortBy] = useState<SortKey>(null)
   const [sortDir, setSortDir] = useState<SortDir>('desc')
-  const [icpFilter, setIcpFilter] = useState<'all' | 'hot' | 'warm' | 'cold' | 'disqualified'>('all')
 
   const handleSort = (key: SortKey) => {
     if (sortBy === key) {
@@ -71,7 +69,6 @@ export function ResultsTable({ leads, jobId }: Props) {
     if (tab === 'reachable')   list = leads.filter(l => l.reachable === true)
     if (tab === 'unreachable') list = leads.filter(l => l.reachable === false)
     if (tab === 'pending')     list = leads.filter(l => l.reachable == null)
-    if (icpFilter !== 'all') list = list.filter(l => l.icp_tier === icpFilter)
     if (search.trim()) {
       const q = search.toLowerCase()
       list = list.filter(l =>
@@ -80,16 +77,6 @@ export function ResultsTable({ leads, jobId }: Props) {
     }
     if (sortBy) {
       list = [...list].sort((a, b) => {
-        if (sortBy === 'icp') {
-          // A disqualified lead keeps its raw (uncapped) icp_score when evidence was
-          // sufficient — a rejected competitor can still score 90+. Sorting by score
-          // alone would put it above genuinely qualified leads. Tier is the primary
-          // sort key so disqualified leads always sink to the bottom, independent of
-          // sort direction; score only breaks ties within the same tier.
-          const aDisq = tierOf(a.icp_tier) === 'disqualified'
-          const bDisq = tierOf(b.icp_tier) === 'disqualified'
-          if (aDisq !== bDisq) return aDisq ? 1 : -1
-        }
         const va = getSortValue(a, sortBy)
         const vb = getSortValue(b, sortBy)
         const cmp = va < vb ? -1 : va > vb ? 1 : 0
@@ -97,7 +84,7 @@ export function ResultsTable({ leads, jobId }: Props) {
       })
     }
     return list
-  }, [leads, tab, search, sortBy, sortDir, icpFilter])
+  }, [leads, tab, search, sortBy, sortDir])
 
   const pageCount = Math.ceil(filtered.length / PAGE_SIZE)
   const pageLeads = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
@@ -181,33 +168,6 @@ export function ResultsTable({ leads, jobId }: Props) {
           ))}
         </div>
 
-        {/* ICP filter */}
-        <div className="flex gap-1 p-1 rounded-lg" style={{ background: 'var(--th-glass-inset)', border: '1px solid var(--th-glass-sm-border)' }}>
-          {([
-            { key: 'all', label: 'ICP: Tous' },
-            { key: 'hot', label: '🔥 Hot' },
-            { key: 'warm', label: '🟡 Warm' },
-            { key: 'cold', label: '❄️ Cold' },
-            { key: 'disqualified', label: '⛔ Disqualifié' },
-          ] as { key: typeof icpFilter; label: string }[]).map(f => (
-            <button
-              key={f.key}
-              onClick={() => { setIcpFilter(f.key); setPage(0) }}
-              className="px-2 py-1 rounded-md text-xs font-medium transition-all"
-              style={icpFilter === f.key ? {
-                background: 'var(--th-border-strong)',
-                color: 'var(--th-text-primary)',
-                border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-              } : {
-                color: 'var(--th-text-quaternary)',
-                background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-              }}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-
         <div className="relative flex-1 sm:max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--th-text-faint)' }} />
           <input
@@ -236,7 +196,6 @@ export function ResultsTable({ leads, jobId }: Props) {
                   { key: null, label: 'LinkedIn' },
                   { key: 'prescore' as SortKey, label: 'Pré-score' },
                   { key: null, label: 'Source' },
-                  { key: 'icp' as SortKey, label: 'ICP' },
                   { key: null, label: 'Angle IA' },
                 ]).map(h => (
                   <th
@@ -260,7 +219,7 @@ export function ResultsTable({ leads, jobId }: Props) {
             <tbody>
               {pageLeads.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-12 text-center">
+                  <td colSpan={9} className="px-4 py-12 text-center">
                     <SearchX className="w-10 h-10 mx-auto mb-3" style={{ color: 'var(--th-text-ghost)' }} />
                     <p className="text-sm" style={{ color: 'var(--th-text-faint)' }}>Aucun lead trouvé</p>
                   </td>
@@ -283,12 +242,14 @@ export function ResultsTable({ leads, jobId }: Props) {
                             <span
                               // The tooltip names the evidence level: "none" and
                               // "weak" both land here, but only one of them means
-                              // nothing at all was found.
+                              // nothing at all was found. The sentence is fixed on
+                              // purpose: icp_rationale carries "Secteur 70/100…",
+                              // which would bring the 0-100 score back via hover.
                               title={[
                                 lead.evidence_level
                                   ? `Niveau de preuve : ${evidenceLabel(lead.evidence_level)}`
                                   : null,
-                                lead.icp_rationale || 'Preuves insuffisantes',
+                                'Preuves insuffisantes — qualification manuelle nécessaire',
                               ].filter(Boolean).join('\n')}
                               className="text-xs px-1.5 py-0.5 rounded"
                               style={{ background: 'rgba(148,163,184,0.12)', color: '#94a3b8' }}
@@ -366,28 +327,6 @@ export function ResultsTable({ leads, jobId }: Props) {
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-xs" style={{ color: 'var(--th-text-tertiary)' }}>
                         {lead.email_source ? emailSourceLabel(lead.email_source) : <span style={{ color: 'var(--th-text-ghost)' }}>—</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        {lead.icp_score != null ? (
-                          <div className="max-w-[160px]">
-                            <span
-                              title={lead.disqualification_reason || undefined}
-                              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap"
-                              style={TIER_STYLE[tierOf(lead.icp_tier)]}
-                            >
-                              {TIER_ICON[tierOf(lead.icp_tier)]} {lead.icp_score}
-                            </span>
-                            {lead.disqualification_reason && (
-                              <p
-                                title={lead.disqualification_reason}
-                                className="text-xs mt-0.5 truncate"
-                                style={{ color: 'var(--th-text-faint)' }}
-                              >
-                                {lead.disqualification_reason}
-                              </p>
-                            )}
-                          </div>
-                        ) : <span style={{ color: 'var(--th-text-ghost)' }}>—</span>}
                       </td>
                       <td className="px-4 py-3 max-w-[200px]">
                         {lead.conversion_angle
