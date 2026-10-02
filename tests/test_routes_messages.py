@@ -76,6 +76,13 @@ def _payload(**overrides):
     return body
 
 
+def test_the_route_is_registered_on_the_application(stub):
+    from api.server import app
+    response = TestClient(app).post(ROUTE, json=_payload(conversion_angle=""))
+    assert response.status_code == 422  # reached the handler, not a 404
+    assert "angle" in response.json()["detail"].lower()
+
+
 # ── No angle: a readable refusal, never a model call ─────────────────────────
 
 @pytest.mark.parametrize("angle", [None, "", "   "])

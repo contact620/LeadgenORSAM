@@ -18,6 +18,7 @@ from api.routes.config import router as config_router
 from api.routes.history import router as history_router
 from api.routes.templates import router as templates_router
 from api.routes.suppression import router as suppression_router
+from api.routes.messages import router as messages_router
 from api import history
 from api import templates
 from api import leads_db
@@ -48,6 +49,7 @@ app.include_router(config_router, prefix="/api")
 app.include_router(history_router, prefix="/api")
 app.include_router(templates_router, prefix="/api")
 app.include_router(suppression_router, prefix="/api")
+app.include_router(messages_router, prefix="/api")
 
 # ── Serve built frontend (production) ─────────────────────────────────────────
 _dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
