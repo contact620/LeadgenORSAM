@@ -56,12 +56,16 @@ def normalize_label(value: str) -> str:
 _NON_WORD_RE = re.compile(r"[^a-z0-9]+")
 
 
-def _padded_words(value: str) -> str:
+def padded_words(value: str) -> str:
     """Normalize to a space-padded word sequence, e.g. "  Maroc (Casablanca) " -> " maroc casablanca ".
 
     Padding both ends lets a plain ``in`` test act as a word-boundary match:
     " niger " is not contained in " nigeria ", while " maroc " is contained in
     " maroc casablanca ".
+
+    Public because scrapers/apollo_scraper.py needs the same word-boundary
+    test to tell a location cell from an interface label, and a substring
+    test there would read the city "Fes" inside "Professional Services".
     """
     cleaned = _NON_WORD_RE.sub(" ", normalize_label(value)).strip()
     return f" {cleaned} " if cleaned else ""
@@ -154,14 +158,14 @@ class IcpRules:
         # 2. Alias lookup. The longest matching alias wins so that
         #    "democratic republic of the congo" resolves to RDC rather than to
         #    Congo, independently of dictionary order.
-        haystack = _padded_words(country)
+        haystack = padded_words(country)
         if not haystack:
             return None
         best_label: str | None = None
         best_length = 0
         for canonical, aliases in self.country_aliases.items():
             for alias in (canonical, *aliases):
-                needle = _padded_words(alias)
+                needle = padded_words(alias)
                 if needle and needle in haystack and len(needle) > best_length:
                     best_label, best_length = canonical, len(needle)
         return best_label

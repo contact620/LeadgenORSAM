@@ -102,6 +102,34 @@ def test_ranking_is_descending_and_stable(rules):
     assert [l["company"] for l in ranked] == ["Fort", "Moyen", "Faible"]
 
 
+def test_apollo_interface_labels_flatten_the_whole_ranking(rules):
+    """The 2026-09-25 demo, reproduced: `location` held "Fair" / "Not a fit"
+    on all 20 rows, every prescore came out 0 and the spending queue ranked a
+    column of zeros — is_priority = position < budget then selected leads in
+    scrape order. Sanitising the cell (scrapers/apollo_scraper) is what gives
+    the ranking something to rank.
+    """
+    from scrapers.apollo_scraper import plausible_location
+
+    raw = [
+        _lead(company="Maroc", location="Fair", employee_count=None,
+              apollo_industry=None),
+        _lead(company="France", location="Not a fit", employee_count=None,
+              apollo_industry=None),
+    ]
+    assert [compute_prescore(l, rules) for l in raw] == [0, 0]
+
+    sane = [
+        _lead(company="Maroc", location=plausible_location("Casablanca, Maroc"),
+              employee_count=None, apollo_industry=None),
+        _lead(company="France", location=plausible_location("Paris, France"),
+              employee_count=None, apollo_industry=None),
+    ]
+    ranked = rank_for_spending(sane, rules)
+    assert [l["company"] for l in ranked] == ["Maroc", "France"]
+    assert ranked[0]["prescore"] > ranked[1]["prescore"] > 0
+
+
 def test_ranking_does_not_mutate_the_input_order(rules):
     leads = [_lead(company="A", location="Paris, France"),
              _lead(company="B", location="Casablanca, Maroc")]

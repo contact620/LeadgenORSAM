@@ -34,7 +34,11 @@ CSV_COLUMNS: list[str] = [
     "phone_type", "phone_source", "whatsapp",
     "facebook_url", "instagram_url", "linkedin_company_url",
     # Pass-1 spending prioritisation. NEVER a verdict — see processors/prescore.py.
-    "prescore",
+    # The two raw Apollo cells the prescore reads travel with it: without them
+    # in the export, an operator reading prescore=0 on every row cannot tell a
+    # genuinely low-fit lead from a column Apollo never displayed. Both were
+    # empty for the 20 leads of the 2026-09-25 demo, and nothing said so.
+    "prescore", "apollo_industry", "employee_count",
     # ICP scoring
     "icp_score", "icp_tier", "icp_rationale", "icp_scores_detail",
     "disqualification_reason", "evidence_level", "evidence_verified",

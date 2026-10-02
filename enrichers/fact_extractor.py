@@ -311,7 +311,10 @@ def extract_facts(lead: dict, ev: Evidence, rules: Optional[IcpRules] = None) ->
         last_name=lead.get("last_name", ""),
         job_title=lead.get("job_title", ""),
         company=lead.get("company", ""),
-        location=lead.get("location", ""),
+        # `or ""`, not a dict default: an implausible Apollo cell is now stored
+        # as None (see scrapers/apollo_scraper.plausible_location), and the key
+        # being present would otherwise render the word "None" in the prompt.
+        location=lead.get("location") or "",
         website_text=(ev.website_text or "Non disponible")[:4000],
         digital_maturity=perplexity.get("digital_maturity") or "Non disponible",
         estimated_budget=perplexity.get("estimated_budget") or "Non disponible",

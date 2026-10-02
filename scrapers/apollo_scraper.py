@@ -6,6 +6,7 @@ the user has 120 seconds to log in manually. The scraper then takes over.
 No cookie injection issues — the browser behaves like a real user session.
 """
 import asyncio
+import json
 import logging
 import os
 import re
@@ -13,6 +14,8 @@ import re
 from playwright.async_api import async_playwright, Page, BrowserContext
 
 import config
+from enrichers.phone_extractor import COUNTRY_HINTS
+from processors.icp_rules import IcpRules, load_rules, normalize_label, padded_words
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +58,99 @@ def parse_employee_count(raw) -> int | None:
         return _digits(match.group(1))
 
     return None
+
+
+# Text Apollo renders inside its result table that belongs to the interface,
+# not to the lead: the verdicts of the "fit" column and the row action
+# buttons. The demo export carried one of these in `location` on 20 rows out
+# of 20 ("Fair", "Not a fit", "Good", "Save contact").
+#
+# Matched on the whole cell, never as a substring, unlike the SKIP list inside
+# _JS_EXTRACT: "fair" as a substring would also drop a company named
+# "Fairmont" and "good" a title containing "Good Practices".
+APOLLO_UI_LABELS: frozenset[str] = frozenset({
+    "fit", "not a fit", "good fit", "not a good fit", "poor fit",
+    "fair", "good", "great", "best", "poor", "bad", "maybe", "unknown",
+    "save", "saved", "save contact", "save to list", "saved contact",
+    "select", "selected", "add to list", "add to sequence",
+    "view profile", "show more", "show less", "verified", "unverified",
+})
+
+# An Apollo location cell is at most "City, State, Country".
+_LOCATION_MAX_CHARS = 60
+
+_rules_cache: IcpRules | None = None
+
+
+def _cached_rules() -> IcpRules | None:
+    """Load the ICP rule table once, and never let its absence stop a scrape."""
+    global _rules_cache
+    if _rules_cache is None:
+        try:
+            _rules_cache = load_rules()
+        except Exception as exc:  # pragma: no cover - rules ship with the code
+            logger.warning(f"ICP rules unavailable for location filtering: {exc}")
+            return None
+    return _rules_cache
+
+
+def _names_a_known_place(text: str) -> bool:
+    """True when the text contains a country or city we actually recognise.
+
+    Two tables are consulted because they were built for the two consumers of
+    this field: processors.icp_rules.country_aliases drives the prescore zone,
+    enrichers.phone_extractor.COUNTRY_HINTS drives the dialling code. A value
+    either of them can resolve is a location worth keeping.
+    """
+    haystack = padded_words(text)
+    if not haystack:
+        return False
+
+    rules = _cached_rules()
+    if rules is not None and rules.canonical_country(text) is not None:
+        return True
+
+    return any(padded_words(hint) in haystack for hint in COUNTRY_HINTS)
+
+
+def plausible_location(raw) -> str | None:
+    """Keep an Apollo location cell only when it plausibly names a place.
+
+    The positional fallbacks in _JS_EXTRACT take the first cell after the name
+    that is not obviously junk, and Apollo's "fit" verdict sits exactly there.
+    The wrong value then travels three floors down:
+
+      - enrichers/google_search.py pastes it into the company website query
+        ("MTCom Not a fit site officiel" returned notfit.io, "INEV Fair"
+        returned northfloridafair.com);
+      - processors/prescore.py reads it as a country, so the localisation axis
+        scored 0 for every lead of the demo and the spending queue ranked a
+        column of zeros;
+      - enrichers/phone_extractor.py reads it to pick a dialling code.
+
+    All three treat an absent location as "unknown" and stay correct. None is
+    therefore the safe answer whenever the text is not recognisable as a
+    place: accepted only when it names a known country or city, or when it
+    carries Apollo's own "City, Country" comma form.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text or len(text) > _LOCATION_MAX_CHARS:
+        return None
+    if normalize_label(text) in APOLLO_UI_LABELS:
+        return None
+
+    if _names_a_known_place(text):
+        return text
+
+    if "," in text:
+        parts = [normalize_label(p) for p in text.split(",")]
+        if all(p and p not in APOLLO_UI_LABELS for p in parts):
+            return text
+
+    return None
+
 
 _STEALTH_JS = """() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -132,7 +228,12 @@ _JS_EXTRACT = """() => {
             'click to run', 'add to sequence', 'access', 'unlock',
             'view profile', 'request mobile',
         ];
-        const isJunk = (t) => !t || SKIP.some(p => t.toLowerCase().includes(p));
+        // Interface labels matched on the whole cell (see APOLLO_UI_LABELS):
+        // substring matching would drop legitimate values containing them.
+        const UI_LABELS = __APOLLO_UI_LABELS__;
+        const isJunk = (t) => !t
+            || SKIP.some(p => t.toLowerCase().includes(p))
+            || UI_LABELS.includes(t.trim().toLowerCase());
 
         // --- Extract from table cells (<td>) if in a table ---
         if (tr) {
@@ -271,6 +372,12 @@ _JS_EXTRACT = """() => {
     return results;
 }"""
 
+# One source of truth for the interface labels: the browser-side extractor and
+# the Python-side plausible_location must agree on what is not data.
+_JS_EXTRACT = _JS_EXTRACT.replace(
+    "__APOLLO_UI_LABELS__", json.dumps(sorted(APOLLO_UI_LABELS))
+)
+
 
 def _is_login_page(url: str) -> bool:
     return any(k in url for k in ["login", "sign_in", "signin", "auth"])
@@ -380,6 +487,7 @@ async def _scrape_page(page: Page) -> list[dict]:
         for lead in leads:
             lead["employee_count"] = parse_employee_count(lead.pop("employee_count_raw", None))
             lead["apollo_industry"] = (lead.get("apollo_industry") or "").strip() or None
+            lead["location"] = plausible_location(lead.get("location"))
         if leads:
             logger.info(f"JS extraction found {len(leads)} leads on this page")
             # Log first lead details for debugging
