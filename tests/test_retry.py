@@ -2,10 +2,13 @@ import pytest
 import requests
 
 from enrichers.retry import (
+    CREDIT_EXHAUSTED_MESSAGE,
     AuthError,
+    CreditExhausted,
     QuotaExhausted,
     RateLimited,
     RetryableRemoteFailure,
+    is_credit_exhausted,
     retry_api_call,
 )
 
@@ -97,3 +100,84 @@ def test_retryable_failure_is_actually_retried_then_succeeds():
 
     assert retry_api_call(fn, max_retries=3, base_delay=0, operation_name="test") == "ok"
     assert len(attempts) == 3
+
+
+class _FakeAnthropicBadRequest(Exception):
+    """Stand-in for anthropic.BadRequestError: an SDK error exposes the HTTP
+    status as .status_code and stringifies to the provider's payload."""
+
+    status_code = 400
+
+    def __init__(self, message: str):
+        super().__init__(message)
+
+
+_SPENT_BALANCE = (
+    "Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', "
+    "'message': 'Your credit balance is too low to access the Anthropic API. "
+    "Please go to Plans & Billing to upgrade or purchase credits.'}}"
+)
+
+
+def test_spent_anthropic_balance_is_a_hard_error_not_a_retry():
+    """The symptom this closes: a spent balance was neither a 401 nor a 429,
+    so it fell to the generic branch, was retried four times per lead, and
+    then returned as an empty result — a green run with no AI columns."""
+    calls = []
+
+    def fn():
+        calls.append(1)
+        raise _FakeAnthropicBadRequest(_SPENT_BALANCE)
+
+    with pytest.raises(CreditExhausted):
+        retry_api_call(fn, max_retries=3, base_delay=0.1, operation_name="test")
+    assert len(calls) == 1, "a spent credit balance must never be retried"
+
+
+def test_spent_balance_error_carries_a_readable_message():
+    def fn():
+        raise _FakeAnthropicBadRequest(_SPENT_BALANCE)
+
+    with pytest.raises(CreditExhausted) as excinfo:
+        retry_api_call(fn, max_retries=0, operation_name="test")
+    assert CREDIT_EXHAUSTED_MESSAGE in str(excinfo.value)
+
+
+def test_credit_exhausted_is_an_auth_error_so_steps_disable_themselves():
+    """Every AI step disables itself for the rest of the run on AuthError.
+    Keeping CreditExhausted inside that hierarchy is what stops the pipeline
+    from calling a keyless-balance API once per remaining lead."""
+    assert issubclass(CreditExhausted, AuthError)
+
+
+def test_an_unrelated_400_is_not_read_as_a_spent_balance():
+    """Only a 400 that names the credit balance is a spent balance; other
+    400s stay retryable-or-generic and must not disable the step."""
+    def fn():
+        raise _FakeAnthropicBadRequest(
+            "Error code: 400 - {'error': {'message': 'max_tokens is too large'}}"
+        )
+
+    with pytest.raises(Exception) as excinfo:
+        retry_api_call(fn, max_retries=0, base_delay=0, operation_name="test")
+    assert not isinstance(excinfo.value, CreditExhausted)
+
+
+def test_a_credit_balance_message_without_a_400_is_not_a_spent_balance():
+    """The marker alone is not enough: the status has to agree, or any text
+    quoting the phrase would disable the step."""
+    def fn():
+        raise RuntimeError("the docs mention a credit balance somewhere")
+
+    with pytest.raises(Exception) as excinfo:
+        retry_api_call(fn, max_retries=0, base_delay=0, operation_name="test")
+    assert not isinstance(excinfo.value, CreditExhausted)
+
+
+def test_spent_balance_detected_through_a_requests_response():
+    """Some callers wrap the same payload in a requests error, where the
+    status lives on .response instead of .status_code."""
+    response = requests.Response()
+    response.status_code = 400
+    exc = requests.exceptions.HTTPError(_SPENT_BALANCE, response=response)
+    assert is_credit_exhausted(exc) is True
