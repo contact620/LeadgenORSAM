@@ -3,7 +3,7 @@ import { Download, Search, ExternalLink, ChevronLeft, ChevronRight, SearchX, Arr
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { getDownloadUrl, type Lead } from '@/lib/api'
-import { emailSourceLabel, evidenceLabel } from '@/lib/tiers'
+import { evidenceLabel } from '@/lib/tiers'
 import { LeadDetailModal } from './LeadDetailModal'
 
 // Visual style for each email_status value the cascade can produce
@@ -26,7 +26,7 @@ interface Props {
 }
 
 type Tab = 'all' | 'reachable' | 'unreachable' | 'pending'
-type SortKey = 'name' | 'company' | 'prescore' | null
+type SortKey = 'name' | 'company' | null
 type SortDir = 'asc' | 'desc'
 
 function copyToClipboard(text: string, label: string) {
@@ -39,7 +39,6 @@ function getSortValue(lead: Lead, key: SortKey): string | number {
   switch (key) {
     case 'name': return `${lead.first_name ?? ''} ${lead.last_name ?? ''}`.toLowerCase()
     case 'company': return (lead.company ?? '').toLowerCase()
-    case 'prescore': return lead.prescore ?? 0
     default: return 0
   }
 }
@@ -183,25 +182,24 @@ export function ResultsTable({ leads, jobId }: Props) {
 
       {/* Table */}
       <div className="glass-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
+        {/* table-fixed + percentage widths: the table always fits its card, so
+            there is no horizontal scroll. Long cells truncate with a title. */}
+        <div>
+          <table className="w-full text-sm table-fixed" style={{ borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--th-border-default)', background: 'var(--th-surface-hover)' }}>
                 {([
-                  { key: 'name' as SortKey, label: 'Nom' },
-                  { key: null, label: 'Poste' },
-                  { key: 'company' as SortKey, label: 'Entreprise' },
-                  { key: null, label: 'Email' },
-                  { key: null, label: 'Téléphone' },
-                  { key: null, label: 'LinkedIn' },
-                  { key: 'prescore' as SortKey, label: 'Pré-score' },
-                  { key: null, label: 'Source' },
-                  { key: null, label: 'Angle IA' },
+                  { key: 'name' as SortKey, label: 'Nom', width: '18%' },
+                  { key: 'company' as SortKey, label: 'Société', width: '15%' },
+                  { key: null, label: 'Email', width: '26%' },
+                  { key: null, label: 'Téléphone', width: '15%' },
+                  { key: null, label: 'LinkedIn', width: '9%' },
+                  { key: null, label: 'Angle IA', width: '17%' },
                 ]).map(h => (
                   <th
                     key={h.label}
-                    className={cn('text-left px-4 py-3 text-xs font-semibold whitespace-nowrap', h.key && 'cursor-pointer select-none')}
-                    style={{ color: sortBy === h.key ? 'var(--th-primary)' : 'var(--th-text-muted)', letterSpacing: '0.05em', textTransform: 'uppercase' }}
+                    className={cn('text-left px-3 py-3 text-xs font-semibold whitespace-nowrap overflow-hidden', h.key && 'cursor-pointer select-none')}
+                    style={{ width: h.width, color: sortBy === h.key ? 'var(--th-primary)' : 'var(--th-text-muted)', letterSpacing: '0.05em', textTransform: 'uppercase' }}
                     onClick={h.key ? () => handleSort(h.key) : undefined}
                   >
                     <span className="inline-flex items-center gap-1">
@@ -219,7 +217,7 @@ export function ResultsTable({ leads, jobId }: Props) {
             <tbody>
               {pageLeads.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center">
+                  <td colSpan={6} className="px-4 py-12 text-center">
                     <SearchX className="w-10 h-10 mx-auto mb-3" style={{ color: 'var(--th-text-ghost)' }} />
                     <p className="text-sm" style={{ color: 'var(--th-text-faint)' }}>Aucun lead trouvé</p>
                   </td>
@@ -235,9 +233,12 @@ export function ResultsTable({ leads, jobId }: Props) {
                       className="cursor-pointer transition-colors row-hoverable"
                       style={{ borderBottom: '1px solid var(--th-border-subtle)' }}
                     >
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <span className="inline-flex items-center gap-1.5">
-                          <span className="font-medium" style={{ color: 'var(--th-text-primary)' }}>{fullName || '—'}</span>
+                      <td className="px-3 py-3 overflow-hidden">
+                        <span className="block font-medium truncate" title={fullName || undefined} style={{ color: 'var(--th-text-primary)' }}>{fullName || '—'}</span>
+                        {/* Second line: the evidence badge, then the job title. They
+                            ride under the name so they cost no column. */}
+                        {(lead.evidence_verified === false || lead.job_title) && (
+                        <span className="flex items-center gap-1.5 min-w-0 mt-0.5">
                           {lead.evidence_verified === false && (
                             <span
                               // The tooltip names the evidence level: "none" and
@@ -251,28 +252,30 @@ export function ResultsTable({ leads, jobId }: Props) {
                                   : null,
                                 'Preuves insuffisantes — qualification manuelle nécessaire',
                               ].filter(Boolean).join('\n')}
-                              className="text-xs px-1.5 py-0.5 rounded"
+                              className="text-xs px-1.5 py-0.5 rounded shrink-0"
                               style={{ background: 'rgba(148,163,184,0.12)', color: '#94a3b8' }}
                             >
                               non vérifié
                             </span>
                           )}
+                          {lead.job_title && (
+                            <span className="truncate text-xs" title={lead.job_title} style={{ color: 'var(--th-text-muted)' }}>
+                              {lead.job_title}
+                            </span>
+                          )}
                         </span>
-                        {lead.location && <span className="block text-xs mt-0.5" style={{ color: 'var(--th-text-muted)' }}>{lead.location}</span>}
+                        )}
                       </td>
-                      <td className="px-4 py-3 max-w-[160px] truncate whitespace-nowrap" style={{ color: 'var(--th-text-tertiary)' }}>
-                        {lead.job_title || '—'}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap" style={{ color: 'var(--th-text-tertiary)' }}>
+                      <td className="px-3 py-3 overflow-hidden" style={{ color: 'var(--th-text-tertiary)' }}>
                         {lead.website ? (
-                          <a href={lead.website} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className="flex items-center gap-1" style={{ color: 'var(--th-primary)' }}>
-                            {lead.company || '—'}<ExternalLink className="w-3 h-3" />
+                          <a href={lead.website} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} title={lead.company || undefined} className="flex items-center gap-1 min-w-0" style={{ color: 'var(--th-primary)' }}>
+                            <span className="truncate">{lead.company || '—'}</span><ExternalLink className="w-3 h-3 shrink-0" />
                           </a>
-                        ) : (lead.company || '—')}
+                        ) : <span className="block truncate" title={lead.company || undefined}>{lead.company || '—'}</span>}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
+                      <td className="px-3 py-3 overflow-hidden">
                         {lead.email ? (
-                          <span className="inline-flex items-center gap-1.5">
+                          <span className="flex items-center gap-1.5 min-w-0">
                             {lead.email_status && EMAIL_STATUS_STYLE[lead.email_status] && (() => {
                               const s = EMAIL_STATUS_STYLE[lead.email_status]
                               const Icon = s.icon
@@ -280,58 +283,44 @@ export function ResultsTable({ leads, jobId }: Props) {
                               return (
                                 <span
                                   title={tooltip}
-                                  className="inline-flex items-center"
+                                  className="inline-flex items-center shrink-0"
                                   style={{ color: s.color }}
                                 >
                                   <Icon className="w-3.5 h-3.5" />
                                 </span>
                               )
                             })()}
-                            <a href={`mailto:${lead.email}`} onClick={e => e.stopPropagation()} className="font-mono text-xs" style={{ color: 'var(--th-primary)' }}>
+                            <a href={`mailto:${lead.email}`} onClick={e => e.stopPropagation()} title={lead.email} className="font-mono text-xs truncate min-w-0" style={{ color: 'var(--th-primary)' }}>
                               {lead.email}
                             </a>
-                            <button onClick={e => { e.stopPropagation(); copyToClipboard(lead.email!, 'Email') }} className="p-0.5 rounded transition-colors" style={{ color: 'var(--th-text-ghost)', background: 'none', border: 'none', cursor: 'pointer' }} title="Copier"><Copy className="w-3 h-3" /></button>
+                            <button onClick={e => { e.stopPropagation(); copyToClipboard(lead.email!, 'Email') }} className="p-0.5 rounded transition-colors shrink-0" style={{ color: 'var(--th-text-ghost)', background: 'none', border: 'none', cursor: 'pointer' }} title="Copier"><Copy className="w-3 h-3" /></button>
                           </span>
                         ) : <span style={{ color: 'var(--th-text-ghost)' }}>—</span>}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
+                      <td className="px-3 py-3 overflow-hidden">
                         {lead.phone ? (
-                          <span className="inline-flex items-center gap-1">
-                            <a href={`tel:${lead.phone}`} onClick={e => e.stopPropagation()} className="font-mono text-xs" style={{ color: 'var(--th-primary)' }}>
+                          <span className="flex items-center gap-1 min-w-0">
+                            <a href={`tel:${lead.phone}`} onClick={e => e.stopPropagation()} title={lead.phone} className="font-mono text-xs truncate min-w-0" style={{ color: 'var(--th-primary)' }}>
                               {lead.phone}
                             </a>
-                            <button onClick={e => { e.stopPropagation(); copyToClipboard(lead.phone!, 'Téléphone') }} className="p-0.5 rounded transition-colors" style={{ color: 'var(--th-text-ghost)', background: 'none', border: 'none', cursor: 'pointer' }} title="Copier"><Copy className="w-3 h-3" /></button>
+                            <button onClick={e => { e.stopPropagation(); copyToClipboard(lead.phone!, 'Téléphone') }} className="p-0.5 rounded transition-colors shrink-0" style={{ color: 'var(--th-text-ghost)', background: 'none', border: 'none', cursor: 'pointer' }} title="Copier"><Copy className="w-3 h-3" /></button>
                           </span>
                         ) : <span style={{ color: 'var(--th-text-ghost)' }}>—</span>}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
+                      <td className="px-3 py-3 overflow-hidden">
                         {lead.linkedin_url ? (
-                          <span className="inline-flex items-center gap-1">
+                          <span className="flex items-center gap-1 min-w-0">
                             <a href={lead.linkedin_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className="inline-flex items-center gap-1 text-xs" style={{ color: 'var(--th-primary)' }}>
                               Profil <ExternalLink className="w-3 h-3" />
                             </a>
-                            <button onClick={e => { e.stopPropagation(); copyToClipboard(lead.linkedin_url!, 'LinkedIn') }} className="p-0.5 rounded transition-colors" style={{ color: 'var(--th-text-ghost)', background: 'none', border: 'none', cursor: 'pointer' }} title="Copier"><Copy className="w-3 h-3" /></button>
+                            <button onClick={e => { e.stopPropagation(); copyToClipboard(lead.linkedin_url!, 'LinkedIn') }} className="p-0.5 rounded transition-colors shrink-0" style={{ color: 'var(--th-text-ghost)', background: 'none', border: 'none', cursor: 'pointer' }} title="Copier"><Copy className="w-3 h-3" /></button>
                           </span>
                         ) : <span style={{ color: 'var(--th-text-ghost)' }}>—</span>}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="flex items-center gap-2">
-                          <div className="w-12 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--th-border-default)' }}>
-                            <div
-                              className="h-full rounded-full"
-                              style={{ width: `${((lead.prescore ?? 0) / 60) * 100}%`, background: (lead.prescore ?? 0) >= 30 ? 'var(--th-success)' : 'var(--th-text-ghost)' }}
-                            />
-                          </div>
-                          <span className="font-mono text-xs" style={{ color: 'var(--th-text-tertiary)' }}>{lead.prescore ?? 0}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-xs" style={{ color: 'var(--th-text-tertiary)' }}>
-                        {lead.email_source ? emailSourceLabel(lead.email_source) : <span style={{ color: 'var(--th-text-ghost)' }}>—</span>}
-                      </td>
-                      <td className="px-4 py-3 max-w-[200px]">
+                      <td className="px-3 py-3 overflow-hidden">
                         {lead.conversion_angle
-                          ? <span className="text-xs line-clamp-2" style={{ color: 'var(--th-text-quaternary)' }}>{lead.conversion_angle}</span>
-                          : <span className="text-xs" style={{ color: 'var(--th-text-ghost)' }}>—</span>}
+                          ? <span className="block truncate text-xs" title={lead.conversion_angle} style={{ color: 'var(--th-text-quaternary)' }}>{lead.conversion_angle}</span>
+                          : <span className="text-xs" title="Aucun angle : la recherche IA était désactivée ou n'a rien produit pour ce lead" style={{ color: 'var(--th-text-ghost)' }}>—</span>}
                       </td>
                     </tr>
                 )
