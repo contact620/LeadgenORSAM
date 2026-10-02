@@ -15,9 +15,15 @@ from typing import Optional
 # would be as misleading as reporting it green.
 PROVIDER_GROUPS: dict[str, frozenset[str]] = {
     "email": frozenset({"prospeo", "getprospect", "hunter"}),
+    # The AI half of the pipeline. Until this group existed, none of its three
+    # steps belonged to any group, and impaired_groups() only iterates groups:
+    # no AI failure of any size could colour a run.
+    "ia": frozenset({"perplexity", "anthropic_facts", "anthropic_angles"}),
 }
 
 # Groups whose total failure invalidates the run's core deliverable.
+# "ia" is deliberately out: a dead AI still leaves the contacts, which is what
+# the operator came for. It degrades a run, it does not invalidate it.
 CRITICAL_GROUPS = frozenset({"email"})
 
 

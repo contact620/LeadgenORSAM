@@ -27,7 +27,7 @@ from api.models import JobResult, JobStats, ProgressEvent
 # Imported at module level, not inside the run functions: the `except
 # ProviderFailure` clauses below must resolve the name even when the failure
 # happens before the function body reaches its own imports.
-from api.provider_status import ProviderFailure, ProviderRegistry
+from api.provider_status import ProviderFailure, ProviderRegistry, StepOutcome
 from lead_schema import CSV_COLUMNS, ENRICH_FIELDS
 
 # ── In-memory job store ────────────────────────────────────────────────────────
@@ -635,6 +635,12 @@ def _run_pipeline_sync(job_id: str, url: str, max_leads: int, skip_gpt: bool,
             reachable_leads = write_leads_angles(reachable_leads, enrich_instructions, registry=registry)
             handler.set_explicit_progress(9, 1.0, "Rédaction terminée")
         else:
+            # An AI half that never ran must say so. Left unrecorded, the
+            # three steps were simply absent from provider_status, which reads
+            # the same as a run where they all worked.
+            if skip_gpt:
+                for step in ("perplexity", "anthropic_facts", "anthropic_angles"):
+                    registry.record(StepOutcome(step, "skipped", "recherche IA désactivée", 0))
             for lead in reachable_leads:
                 lead.setdefault("icp_score", None)
                 lead.setdefault("icp_tier", None)

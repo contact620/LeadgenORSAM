@@ -1,6 +1,7 @@
 import pytest
 
 from api.provider_status import (
+    CRITICAL_GROUPS,
     ProviderFailure,
     ProviderRegistry,
     StepOutcome,
@@ -186,3 +187,55 @@ def test_group_status_empty_registry_returns_skipped():
     registry = ProviderRegistry()
     assert registry.group_status("email") == "skipped"
     assert registry.has_critical_failure() is False
+
+
+# ── The "ia" group (§8d) ────────────────────────────────────────────────────
+
+def test_the_ai_steps_belong_to_a_group():
+    """Before this group existed, perplexity, anthropic_facts and
+    anthropic_angles were in no group at all. impaired_groups() iterates
+    groups, so no AI failure of any size could ever colour a run."""
+    assert PROVIDER_GROUPS["ia"] == frozenset(
+        {"perplexity", "anthropic_facts", "anthropic_angles"}
+    )
+
+
+def test_a_dead_ai_degrades_the_run_without_invalidating_it():
+    """The contacts are the deliverable; the AI enriches them. A total AI
+    outage must be visible and must not turn the run red."""
+    registry = ProviderRegistry()
+    for name in PROVIDER_GROUPS["ia"]:
+        registry.record(StepOutcome(name, "degraded", "crédits épuisés", 0))
+    assert registry.group_status("ia") == "failed"
+    assert registry.has_critical_failure() is False
+    assert registry.impaired_groups()["ia"] == "failed"
+
+
+def test_ia_is_not_a_critical_group():
+    assert "ia" not in CRITICAL_GROUPS
+
+
+def test_one_failing_ai_step_degrades_the_group():
+    registry = ProviderRegistry()
+    registry.record(StepOutcome("perplexity", "degraded", "quota épuisé", 0))
+    registry.record(StepOutcome("anthropic_facts", "ok", None, 12))
+    registry.record(StepOutcome("anthropic_angles", "ok", None, 8))
+    assert registry.group_status("ia") == "degraded"
+
+
+def test_an_ai_switched_off_is_skipped_not_impaired():
+    """A run launched with the AI off is not an outage: nothing was asked to
+    work, so the group must stay out of impaired_groups()."""
+    registry = ProviderRegistry()
+    for name in PROVIDER_GROUPS["ia"]:
+        registry.record(StepOutcome(name, "skipped", "recherche IA désactivée", 0))
+    assert registry.group_status("ia") == "skipped"
+    assert registry.impaired_groups() == {}
+
+
+def test_a_healthy_ai_group_reports_ok():
+    registry = ProviderRegistry()
+    for name in PROVIDER_GROUPS["ia"]:
+        registry.record(StepOutcome(name, "ok", None, 10))
+    assert registry.group_status("ia") == "ok"
+    assert registry.impaired_groups() == {}
