@@ -109,6 +109,10 @@ class LinkedinMessageRequest(BaseModel):
     company: Optional[str] = None
     location: Optional[str] = None
     conversion_angle: Optional[str] = None
+    # The sourced research on the contact themselves. Without it the writer
+    # knows nothing personal but the job title, and a message whose only
+    # personal note is the recipient's own title reads as a mailing.
+    person_research: Optional[str] = None
     # The lead's facts, as stored on the lead (JSON string) or already parsed.
     facts_json: Optional[str] = None
     facts: Optional[dict] = None
@@ -232,36 +236,31 @@ def detect_language(facts: dict, location: Optional[str]) -> tuple[str, str]:
     return DEFAULT_LANGUAGE, "defaut"
 
 
-SYSTEM_PROMPT = """You write the first LinkedIn message of a cold outreach for \
-BoxCom, a digital communication agency based in Morocco (services: digital \
-marketing, creative content, web development, lead generation).
+SYSTEM_PROMPT = """You write the first LinkedIn message of a cold outreach for BoxCom, a digital communication agency based in Morocco (services: digital marketing, creative content, web development, lead generation).
 
-You are given a prospect, verified FACTS with their source, and a recommended \
-ANGLE.
+You are given a prospect, the sourced RESEARCH on that person, verified FACTS with their source, and a recommended ANGLE.
+
+The message is answered or it is wasted. A message that could have been sent to a hundred people gets no reply, so everything below serves one end: that this person recognises themselves in the first line.
 
 Rules:
-1. Write only what the facts and the angle contain. No number, no date, no \
-client name, no technology, no news item that is not in the data provided. \
-No source, no fact.
-2. No superlatives or filler ("leader", "reference", "since X years", \
-"team of X people") unless they appear in the data.
-3. Short: 3 to 4 sentences, 80 words maximum. Greet the prospect by first \
-name, connect one precise fact to one BoxCom service, end with one simple \
-open question.
-4. Do not sign: the sender adds their own name. No placeholders such as \
-[Name].
-5. Never mention scores, "angle", "facts", or any automated analysis.
-6. Write the whole message in {language}, whatever the language of the data \
-below. Write any number with Western digits (0-9).
-7. If the facts carry a "prise_de_poste", open on that move, described exactly \
-as the fact words it and dated as the fact dates it: someone who has just \
-taken a post is at the one moment they reconsider their providers. If there is \
-no "prise_de_poste" in the facts, do not mention one, not even obliquely — \
-"congratulations on your new role" is an invention like any other.
+1. Write only what the research, the facts and the angle contain. No number, no date, no client name, no technology, no news item that is not in the data provided. No source, no fact.
+2. No superlatives or filler ("leader", "reference", "since X years", "team of X people") unless they appear in the data.
+3. Short: 3 to 4 sentences, 80 words maximum. Greet the prospect by first name.
+4. Build the message in this order:
+   - Open on the single most specific thing the data holds about this person: their move into the post if there is one, else the research on them, else a dated company signal. Never open by stating their job title and employer back at them. They know both, and it is the clearest mark of a message sent to a list.
+   - Then one sentence connecting that specific thing to BoxCom. Name at most one service, the one that actually fits it. Never list what BoxCom does.
+   - Close on one question only this person can answer about their own situation, and that they can answer in a line. Not "is this on your agenda", not "would you be open to a call" — those are asked of everyone and answered by no one.
+5. Do not sign: the sender adds their own name. No placeholders such as [Name].
+6. Never mention scores, "angle", "facts", "research", or any automated analysis.
+7. Write the whole message in {language}. Compose it directly in that language: do not write it in another language and then translate, which is how calqued word order and broken grammar get in. It has to read as a native business writer of {language} would write it. Translate common nouns, the job title included; keep only company, product and brand names as they are. Write any number with Western digits (0-9).
+8. If the facts carry a "prise_de_poste", open on that move, described exactly as the fact words it and dated as the fact dates it: someone who has just taken a post is at the one moment they reconsider their providers. If there is no "prise_de_poste" in the facts, do not mention one, not even obliquely — "congratulations on your new role" is an invention like any other.
 
 Reply with the message text only, no quotes, no preamble."""
 
 USER_PROMPT_TEMPLATE = """Prospect: {profile}
+
+Research on this person (sourced):
+{person_research}
 
 Verified facts (each one is sourced):
 {facts}
@@ -297,7 +296,7 @@ def _call_model(system: str, user: str) -> str:
         response = client.messages.create(
             model=config.LLM_MODEL,
             max_tokens=400,
-            temperature=0.4,
+            # temperature is not a parameter of messages.create in the 1.x SDK.
             system=system,
             messages=[{"role": "user", "content": user}],
         )
@@ -362,15 +361,17 @@ def generate_linkedin_message(req: LinkedinMessageRequest):
         req.job_title,
         f"at {req.company}" if req.company else None,
     ) if p) or "(no details)"
+    research = (req.person_research or "").strip()
     user = USER_PROMPT_TEMPLATE.format(
         profile=profile,
+        person_research=research or "(none)",
         facts=json.dumps(facts, ensure_ascii=False) if facts else "(none)",
         angle=angle,
     )
     # Everything the model was shown: a number outside this text is invented.
     source_text = " ".join([
         req.first_name or "", req.last_name or "", req.job_title or "",
-        req.company or "", angle, json.dumps(facts, ensure_ascii=False),
+        req.company or "", angle, research, json.dumps(facts, ensure_ascii=False),
     ])
 
     message = ""

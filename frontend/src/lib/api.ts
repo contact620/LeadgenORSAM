@@ -104,6 +104,9 @@ export interface LinkedinMessageLead {
   location?: string
   conversion_angle?: string
   facts_json?: string
+  /** Sourced research on the contact. Without it the writer has nothing
+   *  personal but the job title, and opens by reciting it back. */
+  person_research?: string
 }
 
 /** What a language came from: the country fact, the declared location, the
@@ -129,6 +132,7 @@ function linkedinBody(lead: LinkedinMessageLead, langue?: string) {
     location: lead.location,
     conversion_angle: lead.conversion_angle,
     facts_json: lead.facts_json,
+    person_research: lead.person_research,
     langue,
   })
 }
