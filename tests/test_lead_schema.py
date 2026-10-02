@@ -34,6 +34,14 @@ def test_email_cascade_columns_are_exported():
         assert column in CSV_COLUMNS
 
 
+def test_the_verification_provider_is_exported():
+    """email_source names a branch of the cascade, never a vendor: on
+    "pattern_verified" rows the export said nothing about who gave the
+    verdict, which is how the client concluded GetProspect was never called.
+    """
+    assert "email_verification_provider" in CSV_COLUMNS
+
+
 def test_prescore_column_is_exported():
     """Pass-1 spending prioritisation — never a verdict, see
     processors/prescore.py."""
@@ -147,6 +155,22 @@ def test_pool_round_trip_keeps_the_apollo_cells_and_the_company_name_flag(
     assert by_name["El Lyazidi"]["name_looks_like_company"] is False
     assert by_name["Btp"]["name_looks_like_company"] is True
     assert by_name["Btp"]["apollo_industry"] is None
+
+
+def test_pool_round_trip_keeps_the_verification_provider(tmp_path, monkeypatch):
+    """The enrich-only flow exports from the pool, so a column the pool drops
+    reads as empty in half the exports — email_source is stored for exactly
+    that reason and its companion must be too."""
+    import api.leads_db as db
+
+    monkeypatch.setattr(db, "_DB_PATH", str(tmp_path / "verifier.db"))
+    db.init_leads_table()
+    pool_id = db.create_pool("test", "url", "job", [
+        {"first_name": "Karim", "last_name": "El Amrani", "company": "Acme",
+         "email": "k.elamrani@acme.ma", "email_source": "pattern_verified",
+         "email_verification_provider": "getprospect"},
+    ])
+    assert db.get_pool_leads(pool_id)[0]["email_verification_provider"] == "getprospect"
 
 
 def test_pool_round_trip_keeps_unchecked_website_as_unknown(tmp_path, monkeypatch):

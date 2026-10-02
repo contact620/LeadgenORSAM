@@ -94,6 +94,10 @@ _LEAD_POOL_ADDED_COLUMNS = {
     "apollo_industry": "TEXT",
     "employee_count": "INTEGER",
     "name_looks_like_company": "INTEGER",
+    # Which provider gave the verification verdict. Stored next to
+    # email_source for the same reason: the enrich-only flow exports from the
+    # pool, so a column the pool drops reads as empty in half the exports.
+    "email_verification_provider": "TEXT",
 }
 
 _CREATE_POOL_META = """
@@ -296,21 +300,23 @@ def create_pool(name: str, apollo_url: str, scrape_job_id: str, leads: list[dict
                     email, phone, linkedin_url, website,
                     website_coherent, website_rejected, website_check_reason,
                     email_status, email_confidence,
-                    email_source, email_type, contact_source_url,
+                    email_source, email_type, email_verification_provider,
+                    contact_source_url,
                     domain_catch_all, domain_mx_provider, domain_mismatch,
                     phone_type, phone_source, whatsapp,
                     facebook_url, instagram_url, linkedin_company_url,
                     prescore, apollo_industry, employee_count,
                     name_looks_like_company, reachable, contact_level,
                     hit_score, is_hit, is_duplicate, first_seen_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (pool_id, lead.get("first_name"), lead.get("last_name"),
                  lead.get("company"), lead.get("job_title"), lead.get("location"),
                  lead.get("email"), lead.get("phone"), lead.get("linkedin_url"), lead.get("website"),
                  _bool_or_none("website_coherent"),
                  lead.get("website_rejected"), lead.get("website_check_reason"),
                  lead.get("email_status"), lead.get("email_confidence"),
-                 lead.get("email_source"), lead.get("email_type"), lead.get("contact_source_url"),
+                 lead.get("email_source"), lead.get("email_type"),
+                 lead.get("email_verification_provider"), lead.get("contact_source_url"),
                  _bool_or_none("domain_catch_all"), lead.get("domain_mx_provider"),
                  _bool_or_none("domain_mismatch"),
                  lead.get("phone_type"), lead.get("phone_source"), _bool_or_none("whatsapp"),

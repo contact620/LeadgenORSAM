@@ -31,8 +31,12 @@ CSV_COLUMNS: list[str] = [
     "website_unreachable",
     # Reachability — a boolean and its best route, never a score (2026-09-25).
     "reachable", "contact_level",
-    # Email acquisition — which branch of the cascade produced this address.
-    "email_source", "email_type", "contact_source_url",
+    # Email acquisition — which branch of the cascade produced this address,
+    # and, when it went through the verification step, which provider gave the
+    # verdict. email_source alone names a branch ("pattern_verified"), never a
+    # vendor: reading it, the client concluded GetProspect was never called.
+    "email_source", "email_type", "email_verification_provider",
+    "contact_source_url",
     # Domain-level facts, shared by every lead on the same domain.
     "domain_catch_all", "domain_mx_provider", "domain_mismatch",
     # Phones and social, all extracted from the company's own site.

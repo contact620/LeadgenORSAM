@@ -76,12 +76,16 @@ def _domain_of(lead: dict) -> str:
 
 
 def _set(lead: dict, *, email=None, status="not_found", source=None,
-         email_type=None, mismatch=False) -> None:
+         email_type=None, mismatch=False, verified_by=None) -> None:
     lead["email"] = email
     lead["email_status"] = status
     lead["email_source"] = source
     lead["email_type"] = email_type
     lead["domain_mismatch"] = mismatch
+    # Reset on every write, never only on success: an address replaced later in
+    # the cascade must not inherit the name of the provider that verified the
+    # one before it.
+    lead["email_verification_provider"] = verified_by
 
 
 def _keep_generic(lead: dict, generic) -> dict:
@@ -144,13 +148,34 @@ def _call(provider: str, fn: Callable, *args) -> Optional[EmailResult]:
     return result
 
 
-def _verify(candidate: str) -> Optional[EmailResult]:
-    """Try each verifier in order until one gives a usable verdict."""
+def _record(registry, provider: str, status: str,
+            reason: Optional[str] = None, leads: int = 0) -> None:
+    """Report one provider call to the run's status panel, if there is one."""
+    if registry is not None:
+        registry.record(StepOutcome(provider, status, reason, leads))
+
+
+def _verify(candidate: str, registry=None) -> Optional[EmailResult]:
+    """Try each verifier in order until one gives a usable verdict.
+
+    Every attempt is reported. Until this function recorded anything, the
+    status panel knew nothing of the verification half of the cascade:
+    registry.record was called from _finders alone. The operator read an empty
+    GetProspect line and concluded it was never called, while it was in fact
+    the first verifier on every candidate and paid for the catch-all probe of
+    every domain — 9 credits on the 2026-09-25 demo, with no trace anywhere.
+    """
     for provider, fn, cost in VERIFIER_ORDER:
         if not quota_db.can_spend(provider, cost):
+            _record(registry, provider, "skipped", "crédit insuffisant")
             continue
         result = _call(provider, fn, candidate)
-        if result is not None and result.status in (VALID, ACCEPT_ALL, NOT_FOUND):
+        if result is None:
+            _record(registry, provider, "degraded", "appel en échec")
+            continue
+        usable = result.status in (VALID, ACCEPT_ALL, NOT_FOUND)
+        _record(registry, provider, "ok", None, 1 if usable else 0)
+        if usable:
             return result
     return None
 
@@ -206,7 +231,7 @@ def resolve_email(lead: dict, is_priority: bool, registry=None) -> dict:
             _finders(lead, first, last, domain, is_priority, registry), generic)
 
     # ── c. Verification, unless the domain accepts everything ────────────────
-    catch_all = domain_intel.is_catch_all(domain, _probe_verifier())
+    catch_all = domain_intel.is_catch_all(domain, _probe_verifier(registry))
     lead["domain_catch_all"] = catch_all
     if catch_all is True:
         # Verifying here buys no information: the domain says yes to anything.
@@ -223,26 +248,38 @@ def resolve_email(lead: dict, is_priority: bool, registry=None) -> dict:
         return lead
 
     for candidate in candidates:
-        result = _verify(candidate)
+        result = _verify(candidate, registry)
         if result is None:
             break
+        # email_source says which branch of the cascade produced the address;
+        # it has never said who did the work. The client read a column that
+        # names no provider and concluded GetProspect was never called, when
+        # it is the first verifier of every candidate. result.provider is the
+        # verifier that actually answered.
         if result.status == VALID:
             _set(lead, email=candidate, status="valid_nominatif",
-                 source="pattern_verified", email_type="nominatif_lead")
+                 source="pattern_verified", email_type="nominatif_lead",
+                 verified_by=result.provider)
             return lead
         if result.status == ACCEPT_ALL:
             _set(lead, email=candidate, status="catch_all",
-                 source="pattern_verified", email_type="nominatif_lead")
+                 source="pattern_verified", email_type="nominatif_lead",
+                 verified_by=result.provider)
             return lead
 
     return _keep_generic(
         _finders(lead, first, last, domain, is_priority, registry), generic)
 
 
-def _probe_verifier() -> Callable[[str], str]:
-    """Adapter handing domain_intel a plain status string."""
+def _probe_verifier(registry=None) -> Callable[[str], str]:
+    """Adapter handing domain_intel a plain status string.
+
+    The probe is a paid call like any other — one getprospect_verify credit
+    per domain — so it carries the registry too: it was the single biggest
+    unrecorded spend of the cascade.
+    """
     def _probe(email: str) -> str:
-        result = _verify(email)
+        result = _verify(email, registry)
         return result.status if result is not None else "unknown"
     return _probe
 

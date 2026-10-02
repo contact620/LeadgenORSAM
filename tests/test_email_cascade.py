@@ -2,6 +2,7 @@ import pytest
 
 import config
 from api import quota_db
+from api.provider_status import ProviderRegistry
 from enrichers import email_cascade
 from enrichers.contact_extractor import ExtractedEmail
 from enrichers.providers.base import ACCEPT_ALL, NOT_FOUND, UNKNOWN, VALID, EmailResult
@@ -541,6 +542,100 @@ def test_a_cached_wrong_domain_result_replays_the_mismatch_flag(monkeypatch):
     email_cascade.resolve_email(lead, is_priority=True)
     assert lead["email"] == "karim@autre-societe.ma"
     assert lead["domain_mismatch"] is True
+
+
+# ── Qui a fait le travail ─────────────────────────────────────────────────────
+
+def test_a_verified_address_names_its_verifier(monkeypatch):
+    """email_source names a branch of the cascade ("pattern_verified"), never
+    a vendor. Reading it, the client concluded GetProspect was never called —
+    when it is the first verifier of every candidate."""
+    monkeypatch.setattr(email_cascade.getprospect, "verify_email",
+                        lambda e: EmailResult(email=e, status=VALID, provider="getprospect",
+                                              billed=True, cost=1.0))
+    lead = _lead()
+    email_cascade.resolve_email(lead, is_priority=True)
+
+    assert lead["email_status"] == "valid_nominatif"
+    assert lead["email_source"] == "pattern_verified"
+    assert lead["email_verification_provider"] == "getprospect"
+
+
+def test_an_address_that_went_through_no_verifier_names_none(monkeypatch):
+    """The column must stay empty rather than borrow a name: a site address
+    was never verified by anyone, and a finder is named by email_source."""
+    lead = _lead(_site_contacts=_site(("karim.elamrani@acme.ma", "nominatif_lead")))
+    email_cascade.resolve_email(lead, is_priority=True)
+    assert lead["email_verification_provider"] is None
+
+    monkeypatch.setattr(email_cascade.getprospect, "find_email",
+                        lambda *a: EmailResult(email="k@acme.ma", status=VALID,
+                                               provider="getprospect",
+                                               billed=True, cost=1.0))
+    found = _lead()
+    email_cascade.resolve_email(found, is_priority=True)
+    assert found["email_source"] == "getprospect"
+    assert found["email_verification_provider"] is None
+
+
+def test_the_verifier_name_does_not_survive_a_later_overwrite(monkeypatch):
+    """A candidate verified as not_found, then replaced by the generic net,
+    must not keep the verifier's name on an address it never touched."""
+    monkeypatch.setattr(email_cascade.getprospect, "verify_email",
+                        lambda e: EmailResult(email=e, status=NOT_FOUND,
+                                              provider="getprospect", billed=True, cost=1.0))
+    lead = _lead(_site_contacts=_site(("contact@acme.ma", "generique")))
+    email_cascade.resolve_email(lead, is_priority=True)
+    assert lead["email_status"] == "valid_generique"
+    assert lead["email_verification_provider"] is None
+
+
+def test_the_verification_step_reports_to_the_status_panel(monkeypatch):
+    """registry.record was called from _finders alone: the panel was blind to
+    the whole verification half of the cascade."""
+    registry = ProviderRegistry()
+    monkeypatch.setattr(email_cascade.getprospect, "verify_email",
+                        lambda e: EmailResult(email=e, status=VALID, provider="getprospect",
+                                              billed=True, cost=1.0))
+    lead = _lead()
+    email_cascade.resolve_email(lead, is_priority=True, registry=registry)
+
+    reported = registry.to_dict()
+    assert "getprospect_verify" in reported
+    assert reported["getprospect_verify"]["status"] == "ok"
+
+
+def test_the_catch_all_probe_is_recorded_too(monkeypatch):
+    """One getprospect_verify credit per domain — 9 on the 2026-09-25 demo —
+    spent with no trace anywhere."""
+    registry = ProviderRegistry()
+    monkeypatch.setattr(email_cascade.domain_intel, "is_catch_all",
+                        lambda d, fn: fn("probe@acme.ma") == "accept_all")
+    monkeypatch.setattr(email_cascade.getprospect, "verify_email",
+                        lambda e: EmailResult(email=e, status=ACCEPT_ALL,
+                                              provider="getprospect", billed=True, cost=1.0))
+    lead = _lead()
+    email_cascade.resolve_email(lead, is_priority=True, registry=registry)
+
+    assert lead["domain_catch_all"] is True
+    assert registry.to_dict()["getprospect_verify"]["status"] == "ok"
+
+
+def test_a_verifier_without_credit_is_reported_as_skipped(monkeypatch):
+    """An exhausted verification quota is not an outage, but the panel must
+    not show it as a provider that worked either."""
+    registry = ProviderRegistry()
+    quota_db.sync_remaining("getprospect_verify", 0.0, "2026-11-01")
+    monkeypatch.setattr(email_cascade.hunter, "verify_email",
+                        lambda e: EmailResult(email=e, status=VALID, provider="hunter",
+                                              billed=True, cost=0.5))
+    lead = _lead()
+    email_cascade.resolve_email(lead, is_priority=True, registry=registry)
+
+    reported = registry.to_dict()
+    assert reported["getprospect_verify"]["status"] == "skipped"
+    assert reported["hunter"]["status"] == "ok"
+    assert lead["email_verification_provider"] == "hunter"
 
 
 def test_a_network_timeout_does_not_kill_the_run(monkeypatch):
