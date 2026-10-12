@@ -72,6 +72,11 @@ def retry_api_call(
             # this branch on purpose — those are transient by definition and
             # retrying them is the whole point of this function.
             raise
+        except TypeError:
+            # A bad call signature (e.g. an SDK that dropped a keyword
+            # argument) fails identically on every attempt — retrying only
+            # delays the error.
+            raise
         except requests.exceptions.HTTPError as e:
             resp = e.response
             status = resp.status_code if resp is not None else None

@@ -97,3 +97,17 @@ def test_retryable_failure_is_actually_retried_then_succeeds():
 
     assert retry_api_call(fn, max_retries=3, base_delay=0, operation_name="test") == "ok"
     assert len(attempts) == 3
+
+
+def test_type_error_is_never_retried():
+    """A TypeError is a bad call signature (e.g. anthropic 1.x dropping the
+    `temperature` kwarg): it fails identically on every attempt."""
+    calls = []
+
+    def fn():
+        calls.append(1)
+        raise TypeError("create() got an unexpected keyword argument 'temperature'")
+
+    with pytest.raises(TypeError):
+        retry_api_call(fn, max_retries=3, base_delay=0, operation_name="test")
+    assert len(calls) == 1
